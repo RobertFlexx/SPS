@@ -1,0 +1,98 @@
+.TH SPS.CONF 5 "2026-08-30" "SPS 1.0" "SPS File Formats"
+.SH NAME
+sps.conf, repos.conf \- SPS configuration and repository declarations
+.SH DESCRIPTION
+SPS configuration is line-oriented text, not shell code. Blank lines and lines
+beginning with
+.B #
+are ignored. Each setting is a key followed by whitespace and its value.
+.SH GENERAL SETTINGS
+.TP
+.BI root " path"
+Target filesystem root; default
+.BR / .
+.TP
+.BI db " path"
+Installed package database; default
+.BR /var/lib/sps .
+.TP
+.BI cache " path"
+Source, repository-index, and built-package cache; default
+.BR /var/cache/sps .
+.TP
+.BI build " path"
+Temporary build/staging root; default
+.BR /var/tmp/sps .
+.TP
+.BI makejobs " count"
+Positive per-package build parallelism exported to recipes as
+.BR MAKEJOBS .
+.TP
+.BI compression " type"
+Package compression:
+.BR auto ,
+.BR none ,
+.BR gzip ,
+.BR xz ,
+or
+.BR zstd .
+.B zst
+is accepted as an alias for zstd.
+.TP
+.BI arch " name"
+Target/build architecture. The default is the local result of
+.BR "uname -m" .
+Packages marked
+.B any
+or
+.B noarch
+are architecture-independent.
+.TP
+.BI preserve " prefixes"
+Comma-separated package-relative path prefixes whose locally modified regular
+files are not silently replaced/deleted. Default:
+.BR etc .
+Use
+.B none
+to disable the policy.
+.SH REPOSITORIES
+A declaration has the form:
+.PP
+.nf
+repo NAME PATH [PRIORITY]
+.fi
+.PP
+PATH is a local directory tree. Larger numeric priorities win; configuration
+order breaks equal priorities. Repository transport is outside SPS.
+.SH ENVIRONMENT
+.BR SPS_ROOT ,
+.BR SPS_DB ,
+.BR SPS_CACHE ,
+.BR SPS_BUILD ,
+.BR SPS_MAKEJOBS ,
+.BR SPS_COMPRESSION ,
+.BR SPS_ARCH ,
+and
+.B SPS_PRESERVE
+override corresponding file settings. Set
+.B SPS_CONFIG
+or
+.B SPS_REPOS_CONFIG
+to select alternate files.
+.SH EXAMPLE
+.nf
+root /
+db /var/lib/sps
+cache /var/cache/sps
+build /var/tmp/sps
+makejobs 8
+compression zstd
+preserve etc
+
+repo core  /usr/src/core  100
+repo local /usr/src/local 200
+.fi
+.SH SEE ALSO
+.BR src (1),
+.BR sget (1),
+.BR mkpkg (1)

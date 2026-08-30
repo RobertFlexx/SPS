@@ -1,0 +1,90 @@
+#!/bin/sh
+# Change whether installed packages are explicit roots.
+
+sps_prog=pkmark
+sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
+if [ -z "${SPS_LIBDIR+x}" ]; then
+    if [ -r "$sps_bin_dir/../lib/common.sh" ]; then
+        SPS_LIBDIR=$sps_bin_dir/../lib
+    else
+        SPS_LIBDIR=$sps_bin_dir/../lib/sps
+    fi
+fi
+if ! . "$SPS_LIBDIR/common.sh"; then
+    printf '%s\n' "pkmark: cannot load $SPS_LIBDIR/common.sh" >&2
+    exit 1
+fi
+sps_load_config || exit $?
+
+usage()
+{
+    printf '%s\n' 'usage: pkmark explicit PACKAGE...'
+    printf '%s\n' '       pkmark dependency PACKAGE...'
+}
+
+case ${1-} in
+    explicit|dependency) mode=$1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit "$SPS_EX_USAGE" ;;
+esac
+[ "$#" -gt 0 ] || { usage >&2; exit "$SPS_EX_USAGE"; }
+
+[ -d "$SPS_DB/installed" ] && [ ! -L "$SPS_DB/installed" ] ||
+    sps_die "$SPS_EX_DATABASE" "installed database is missing or unsafe"
+[ -f "$SPS_DB/world" ] && [ ! -L "$SPS_DB/world" ] ||
+    sps_die "$SPS_EX_DATABASE" "world database is missing or unsafe"
+awk -v sps_action=world-validate -v sps_program=pkmark \
+    -f "$SPS_LIBDIR/db.awk" "$SPS_DB/world" ||
+    sps_die "$SPS_EX_DATABASE" "world database is malformed"
+
+requested=
+for package
+do
+    sps_validate_package_name "$package" ||
+        sps_die "$SPS_EX_USAGE" "invalid package name '$package'"
+    [ -d "$SPS_DB/installed/$package" ] && [ ! -L "$SPS_DB/installed/$package" ] ||
+        sps_die "$SPS_EX_NOTFOUND" "package '$package' is not installed"
+    case " $requested " in
+        *" $package "*) sps_die "$SPS_EX_USAGE" "package '$package' was specified more than once" ;;
+    esac
+    requested="$requested $package"
+done
+
+sps_lock_owned=0
+trap 'status=$?; sps_lock_release; [ -n "${tmp-}" ] && rm -f "$tmp"; exit "$status"' 0
+trap 'exit 130' 1 2 3 15
+sps_lock_acquire "$SPS_DB" ||
+    sps_die "$SPS_EX_DATABASE" "package database is locked: '$SPS_DB/.lock'"
+
+tmp=$(mktemp "$SPS_DB/.world-new.XXXXXX") ||
+    sps_die "$SPS_EX_DATABASE" "cannot stage world database"
+cp "$SPS_DB/world" "$tmp" || sps_die "$SPS_EX_DATABASE" "cannot stage world database"
+
+for package
+do
+    if [ "$mode" = explicit ]; then
+        if ! grep -F -x -e "$package" "$tmp" >/dev/null 2>&1; then
+            printf '%s\n' "$package" >>"$tmp" ||
+                sps_die "$SPS_EX_DATABASE" "cannot update world database"
+        fi
+    else
+        next=$(mktemp "$SPS_DB/.world-filter.XXXXXX") ||
+            sps_die "$SPS_EX_DATABASE" "cannot stage world database"
+        awk -v p="$package" '$0 != p { print }' "$tmp" >"$next" || {
+            rm -f "$next"
+            sps_die "$SPS_EX_DATABASE" "cannot update world database"
+        }
+        mv -f "$next" "$tmp" || sps_die "$SPS_EX_DATABASE" "cannot update world database"
+    fi
+done
+LC_ALL=C sort -u "$tmp" -o "$tmp" || sps_die "$SPS_EX_DATABASE" "cannot sort world database"
+mv -f "$tmp" "$SPS_DB/world" || sps_die "$SPS_EX_DATABASE" "cannot commit world database"
+tmp=
+
+sps_date=$(date '+%Y-%m-%d' 2>/dev/null || printf '%s' unknown)
+for package
+do
+    printf '%s mark %s %s\n' "$sps_date" "$package" "$mode" >>"$SPS_DB/history" 2>/dev/null || :
+    printf '%s: marked %s as %s\n' "$sps_prog" "$package" "$mode"
+done
+exit 0

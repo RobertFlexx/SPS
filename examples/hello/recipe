@@ -1,0 +1,14 @@
+# Tiny offline package used by the examples and tests.
+name        hello-sps
+version     1.0
+release     1
+arch        any
+description Minimal hello-world package used by the SPS examples
+
+source      hello.sh
+hash        sha256:25576de85c3f0b4dc3e7847956daf896c450318a00bb1b818869accf8fdc7268
+
+install     mkdir -p \
+            "$PKG/usr/bin"
+install     cp "$SRC/hello.sh" "$PKG/usr/bin/hello-sps"
+install     chmod 755 "$PKG/usr/bin/hello-sps"

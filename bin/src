@@ -1,0 +1,277 @@
+#!/bin/sh
+
+sps_prog=src
+sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) ||
+    exit 1
+if [ -z "${SPS_LIBDIR+x}" ]; then
+    if [ -r "$sps_bin_dir/../lib/common.sh" ]; then
+        SPS_LIBDIR=$sps_bin_dir/../lib
+    else
+        SPS_LIBDIR=$sps_bin_dir/../lib/sps
+    fi
+fi
+if ! . "$SPS_LIBDIR/common.sh"; then
+    printf '%s\n' "src: cannot load $SPS_LIBDIR/common.sh" >&2
+    exit 1
+fi
+sps_load_config || exit $?
+
+sps_index_dir=$SPS_CACHE/indexes
+sps_index=$sps_index_dir/packages.index
+sps_tab=$(printf '\tX')
+sps_tab=${sps_tab%X}
+
+src_usage()
+{
+    printf '%s\n' 'usage: src update'
+    printf '%s\n' '       src search PATTERN [--raw]'
+    printf '%s\n' '       src show PACKAGE [--raw]'
+    printf '%s\n' '       src which PACKAGE'
+    printf '%s\n' '       src list [--raw]'
+    printf '%s\n' '       src status [--raw]'
+}
+
+src_need_index()
+{
+    [ -r "$sps_index" ] ||
+        sps_die "$SPS_EX_NOTFOUND" "repository index not found; run 'src update'"
+}
+
+src_cleanup_update()
+{
+    [ -n "${src_work:-}" ] || return
+    rm -f "$src_work/repos.raw" "$src_work/repos" \
+          "$src_work/recipes.unsorted" "$src_work/recipes" \
+          "$src_work/packages.index"
+    rmdir "$src_work" 2>/dev/null || :
+    src_work=
+}
+
+src_update()
+{
+    [ "$#" -eq 0 ] || {
+        src_usage >&2
+        exit "$SPS_EX_USAGE"
+    }
+
+    sps_mkdir "$sps_index_dir"
+    src_work=$(sps_mktemp_dir "$sps_index_dir" update)
+    trap src_cleanup_update 0
+    trap 'exit 129' 1
+    trap 'exit 130' 2
+    trap 'exit 131' 3
+    trap 'exit 143' 15
+
+    if ! sps_repo_lines > "$src_work/repos.raw"; then
+        sps_die "$SPS_EX_USAGE" "cannot read repository configuration"
+    fi
+    if ! awk -v action=normalize -v program=src \
+        -f "$SPS_LIBDIR/repository.awk" "$src_work/repos.raw" \
+        > "$src_work/repos"; then
+        sps_die "$SPS_EX_USAGE" "invalid repository configuration"
+    fi
+    : > "$src_work/packages.index" ||
+        sps_die "$SPS_EX_PERMISSION" "cannot create repository index"
+
+    src_default_arch=$SPS_ARCH
+    src_repo_count=0
+    src_package_count=0
+    src_failed=0
+
+    while IFS="$sps_tab" read -r src_repo_name src_repo_path \
+          src_repo_priority src_repo_order
+    do
+        [ -n "$src_repo_name" ] || continue
+        case $src_repo_path in
+            *://*|git@*:*)
+                printf "%s: repository '%s' uses an unsupported remote location: %s\n" \
+                    "$sps_prog" "$src_repo_name" "$src_repo_path" >&2
+                src_failed=1
+                break
+                ;;
+        esac
+        if [ ! -d "$src_repo_path" ]; then
+            printf "%s: repository '%s' is not a local directory: %s\n" \
+                "$sps_prog" "$src_repo_name" "$src_repo_path" >&2
+            src_failed=1
+            break
+        fi
+        src_repo_absolute=$(CDPATH= cd -P "$src_repo_path" 2>/dev/null &&
+                            pwd -P) || {
+            printf "%s: cannot enter repository '%s': %s\n" \
+                "$sps_prog" "$src_repo_name" "$src_repo_path" >&2
+            src_failed=1
+            break
+        }
+
+        if ! find "$src_repo_absolute" -type f -name recipe -print \
+            > "$src_work/recipes.unsorted"; then
+            printf "%s: cannot scan repository '%s': %s\n" \
+                "$sps_prog" "$src_repo_name" "$src_repo_absolute" >&2
+            src_failed=1
+            break
+        fi
+        if ! LC_ALL=C sort "$src_work/recipes.unsorted" \
+            > "$src_work/recipes"; then
+            printf "%s: cannot sort recipes for repository '%s'\n" \
+                "$sps_prog" "$src_repo_name" >&2
+            src_failed=1
+            break
+        fi
+
+        while IFS= read -r src_recipe || [ -n "$src_recipe" ]
+        do
+            [ -n "$src_recipe" ] || continue
+            if ! sps_tab_safe "$src_recipe"; then
+                printf "%s: recipe path contains a tab or newline: %s\n" \
+                    "$sps_prog" "$src_recipe" >&2
+                src_failed=1
+                break
+            fi
+            src_digest=$(sps_sha256 "$src_recipe") || {
+                printf "%s: cannot hash recipe: %s\n" \
+                    "$sps_prog" "$src_recipe" >&2
+                src_failed=1
+                break
+            }
+            case $src_digest in
+                ''|*[!0123456789abcdefABCDEF]*)
+                    printf "%s: invalid SHA-256 result for recipe: %s\n" \
+                        "$sps_prog" "$src_recipe" >&2
+                    src_failed=1
+                    break
+                    ;;
+            esac
+            if [ "${#src_digest}" -ne 64 ]; then
+                printf "%s: invalid SHA-256 result for recipe: %s\n" \
+                    "$sps_prog" "$src_recipe" >&2
+                src_failed=1
+                break
+            fi
+
+            if ! awk -v recipe_repo="$src_repo_name" \
+                -v recipe_priority="$src_repo_priority" \
+                -v recipe_path="$src_recipe" \
+                -v recipe_sha256="$src_digest" \
+                -v recipe_default_arch="$src_default_arch" \
+                -f "$SPS_LIBDIR/recipe.awk" "$src_recipe" \
+                >> "$src_work/packages.index"; then
+                src_failed=1
+                break
+            fi
+            src_package_count=$((src_package_count + 1))
+        done < "$src_work/recipes"
+
+        [ "$src_failed" -eq 0 ] || break
+        src_repo_count=$((src_repo_count + 1))
+    done < "$src_work/repos"
+
+    if [ "$src_failed" -ne 0 ]; then
+        sps_die "$SPS_EX_PACKAGE" \
+            "repository update failed; previous index was preserved"
+    fi
+    if ! awk -v action=validate -v program=src \
+        -f "$SPS_LIBDIR/index.awk" "$src_work/packages.index"; then
+        sps_die "$SPS_EX_PACKAGE" \
+            "generated repository index is malformed"
+    fi
+    if ! mv "$src_work/packages.index" "$sps_index"; then
+        sps_die "$SPS_EX_PERMISSION" "cannot commit repository index"
+    fi
+
+    printf 'updated %d repositories, %d package records\n' \
+        "$src_repo_count" "$src_package_count"
+    src_cleanup_update
+    trap - 0 1 2 3 15
+}
+
+src_repositories()
+{
+    src_repo_action=$1
+    shift
+    src_raw=0
+    case ${1-} in
+        --raw) src_raw=1; shift ;;
+    esac
+    [ "$#" -eq 0 ] || {
+        src_usage >&2
+        exit "$SPS_EX_USAGE"
+    }
+    if [ "$src_repo_action" = list ]; then
+        [ "$src_raw" -eq 0 ] || src_repo_action=raw
+    else
+        [ "$src_raw" -eq 0 ] || src_repo_action=status_raw
+    fi
+    sps_repo_lines |
+        awk -v action="$src_repo_action" -v program=src \
+            -v index_file="$sps_index" \
+            -f "$SPS_LIBDIR/repository.awk"
+}
+
+src_query()
+{
+    src_action=$1
+    shift
+    sps_need_arg "$src_action" "${1-}"
+    src_query_value=$1
+    shift
+    src_raw=0
+    case ${1-} in
+        --raw) src_raw=1; shift ;;
+    esac
+    [ "$#" -eq 0 ] || {
+        src_usage >&2
+        exit "$SPS_EX_USAGE"
+    }
+    src_need_index
+
+    case $src_action in
+        search)
+            sps_tab_safe "$src_query_value" ||
+                sps_die "$SPS_EX_USAGE" "search pattern contains a tab or newline"
+            [ "$src_raw" -eq 0 ] ||
+                src_action=search_raw
+            ;;
+        show)
+            sps_validate_package_name "$src_query_value" ||
+                sps_die "$SPS_EX_USAGE" \
+                    "invalid package name '$src_query_value'"
+            [ "$src_raw" -eq 0 ] ||
+                src_action=exact
+            ;;
+        which)
+            sps_validate_package_name "$src_query_value" ||
+                sps_die "$SPS_EX_USAGE" \
+                    "invalid package name '$src_query_value'"
+            [ "$src_raw" -eq 0 ] ||
+                sps_die "$SPS_EX_USAGE" "'src which' does not accept --raw"
+            ;;
+    esac
+
+    awk -v action="$src_action" -v query="$src_query_value" \
+        -v program=src -f "$SPS_LIBDIR/index.awk" "$sps_index"
+}
+
+case ${1-} in
+    update)
+        shift
+        src_update "$@"
+        ;;
+    search|show|which)
+        src_command=$1
+        shift
+        src_query "$src_command" "$@"
+        ;;
+    list|status)
+        src_command=$1
+        shift
+        src_repositories "$src_command" "$@"
+        ;;
+    -h|--help)
+        src_usage
+        ;;
+    *)
+        src_usage >&2
+        exit "$SPS_EX_USAGE"
+        ;;
+esac

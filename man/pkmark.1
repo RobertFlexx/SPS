@@ -1,0 +1,29 @@
+.TH PKMARK 1 "2026-08-30" "SPS 1.0" "SPS Commands"
+.SH NAME
+pkmark \- change SPS explicit package reasons
+.SH SYNOPSIS
+.nf
+pkmark explicit PACKAGE...
+pkmark dependency PACKAGE...
+.fi
+.SH DESCRIPTION
+.B pkmark
+changes whether already-installed packages are roots of the explicit
+.B world
+set without reinstalling them.
+.TP
+.B explicit
+Add each package to world.
+.TP
+.B dependency
+Remove each package from world. The package remains installed and may later be
+reported by
+.B pkstat --orphans
+if no explicit package reaches it.
+.SH EXIT STATUS
+Returns 0 on success, 2 for usage, 3 when a named package is not installed,
+and 11 for database/locking failure.
+.SH SEE ALSO
+.BR pkstat (1),
+.BR sget (1),
+.BR pkin (1)

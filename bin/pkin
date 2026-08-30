@@ -1,0 +1,763 @@
+#!/bin/sh
+
+# Install one already-built SPS package. Repository lookup and dependency
+# policy belong to sget.
+
+sps_prog=pkin
+sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
+if [ -z "${SPS_LIBDIR+x}" ]; then
+    if [ -r "$sps_bin_dir/../lib/common.sh" ]; then
+        SPS_LIBDIR=$sps_bin_dir/../lib
+    else
+        SPS_LIBDIR=$sps_bin_dir/../lib/sps
+    fi
+fi
+if ! . "$SPS_LIBDIR/common.sh"; then
+    printf '%s\n' "pkin: cannot load $SPS_LIBDIR/common.sh" >&2
+    exit 1
+fi
+sps_load_config || exit $?
+
+sps_usage()
+{
+    printf '%s\n' 'usage: pkin [--explicit|--dependency] PACKAGE'
+}
+
+sps_fail()
+{
+    sps_code=$1
+    shift
+    printf '%s: %s\n' "$sps_prog" "$*" >&2
+    exit "$sps_code"
+}
+
+sps_exists()
+{
+    [ -f "$1" ] || [ -d "$1" ] || [ -L "$1" ]
+}
+
+sps_target_path()
+{
+    case $SPS_ROOT in
+        /) sps_target=/$1 ;;
+        */) sps_target=$SPS_ROOT$1 ;;
+        *) sps_target=$SPS_ROOT/$1 ;;
+    esac
+}
+
+# Do not walk through a symlink or non-directory while resolving a payload path.
+# The same rule applies to alternate roots.
+sps_safe_parents()
+{
+    sps_parent_rel=${1%/*}
+    [ "$sps_parent_rel" != "$1" ] || return 0
+    sps_remainder=$sps_parent_rel
+    sps_prefix=
+    while [ -n "$sps_remainder" ]; do
+        case $sps_remainder in
+            */*) sps_component=${sps_remainder%%/*}; sps_remainder=${sps_remainder#*/} ;;
+            *) sps_component=$sps_remainder; sps_remainder= ;;
+        esac
+        if [ -n "$sps_prefix" ]; then
+            sps_prefix=$sps_prefix/$sps_component
+        else
+            sps_prefix=$sps_component
+        fi
+        sps_target_path "$sps_prefix"
+        if [ -L "$sps_target" ]; then
+            printf '%s: unsafe symlink in target path: /%s\n' "$sps_prog" "$sps_prefix" >&2
+            return 1
+        fi
+        if sps_exists "$sps_target" && [ ! -d "$sps_target" ]; then
+            printf '%s: non-directory in target path: /%s\n' "$sps_prog" "$sps_prefix" >&2
+            return 1
+        fi
+    done
+    return 0
+}
+
+# Check the staging tree too. Packages may contain symlinks, but another payload
+# entry cannot live underneath one.
+sps_safe_stage_parents()
+{
+    sps_stage_parent=${1%/*}
+    [ "$sps_stage_parent" != "$1" ] || return 0
+    sps_stage_rest=$sps_stage_parent
+    sps_stage_prefix=
+    while [ -n "$sps_stage_rest" ]; do
+        case $sps_stage_rest in
+            */*) sps_stage_component=${sps_stage_rest%%/*}; sps_stage_rest=${sps_stage_rest#*/} ;;
+            *) sps_stage_component=$sps_stage_rest; sps_stage_rest= ;;
+        esac
+        if [ -n "$sps_stage_prefix" ]; then
+            sps_stage_prefix=$sps_stage_prefix/$sps_stage_component
+        else
+            sps_stage_prefix=$sps_stage_component
+        fi
+        sps_stage_ancestor=$sps_stage/$sps_stage_prefix
+        if [ -L "$sps_stage_ancestor" ] || [ ! -d "$sps_stage_ancestor" ]; then
+            printf '%s: unsafe extracted parent for /%s\n' "$sps_prog" "$1" >&2
+            return 1
+        fi
+    done
+    return 0
+}
+
+sps_work=
+sps_record_tmp=
+sps_backup_dir=
+sps_owners_base=
+sps_owners_new=
+sps_world_base=
+sps_world_new=
+sps_lock=
+sps_lock_owned=0
+sps_commit_complete=0
+sps_record_backed_up=0
+sps_database_commit_started=0
+
+sps_cleanup()
+{
+    sps_status=$?
+    trap - 0 1 2 3 15
+    if [ "$sps_commit_complete" -eq 0 ] && [ "$sps_database_commit_started" -eq 1 ] &&
+       [ -n "$sps_backup_dir" ] && [ -d "$sps_backup_dir" ]; then
+        if [ -n "${sps_old_record-}" ]; then
+            rm -rf "$sps_old_record"
+            if [ "$sps_record_backed_up" -eq 1 ]; then
+                mv "$sps_backup_dir/record" "$sps_old_record" 2>/dev/null || :
+            fi
+        fi
+        if [ -f "$sps_backup_dir/owners" ]; then
+            cp "$sps_backup_dir/owners" "$SPS_DB/.owners-restore.$$" 2>/dev/null &&
+                mv -f "$SPS_DB/.owners-restore.$$" "$SPS_DB/owners" 2>/dev/null || :
+        fi
+        if [ -f "$sps_backup_dir/world" ]; then
+            cp "$sps_backup_dir/world" "$SPS_DB/.world-restore.$$" 2>/dev/null &&
+                mv -f "$SPS_DB/.world-restore.$$" "$SPS_DB/world" 2>/dev/null || :
+        fi
+        sps_record_backed_up=0
+        sps_database_commit_started=0
+    fi
+    if [ -n "$sps_record_tmp" ] && [ -d "$sps_record_tmp" ]; then
+        rm -rf "$sps_record_tmp"
+    fi
+    for sps_temp_file in "$sps_owners_base" "$sps_owners_new" \
+        "$sps_world_base" "$sps_world_new"; do
+        [ -n "$sps_temp_file" ] && rm -f "$sps_temp_file"
+    done
+    if [ -n "$sps_backup_dir" ] && [ -d "$sps_backup_dir" ]; then
+        rm -rf "$sps_backup_dir"
+    fi
+    if [ -n "$sps_work" ] && [ -d "$sps_work" ]; then
+        rm -rf "$sps_work"
+    fi
+    sps_lock_release
+    exit "$sps_status"
+}
+trap sps_cleanup 0
+trap 'exit 130' 1 2 3 15
+
+sps_reason=${SPS_INSTALL_REASON:-explicit}
+case ${1-} in
+    --explicit) sps_reason=explicit; shift ;;
+    --dependency) sps_reason=dependency; shift ;;
+    -h|--help) sps_usage; exit 0 ;;
+esac
+case $sps_reason in
+    explicit|dependency) ;;
+    *) sps_fail 2 "invalid install reason '$sps_reason'" ;;
+esac
+[ "$#" -eq 1 ] || { sps_usage >&2; exit 2; }
+sps_archive=$1
+[ -f "$sps_archive" ] && [ -r "$sps_archive" ] ||
+    sps_fail 3 "cannot read package archive '$sps_archive'"
+
+case $sps_archive in
+    /*) ;;
+    *)
+        sps_archive_dir=$(CDPATH= cd -P "$(dirname "$sps_archive")" 2>/dev/null && pwd) ||
+            sps_fail 3 "cannot resolve package archive '$sps_archive'"
+        sps_archive=$sps_archive_dir/$(basename "$sps_archive")
+        ;;
+esac
+
+sps_archive_list()
+{
+    case $sps_archive in
+        *.tar.gz|*.tgz)
+            command -v gzip >/dev/null 2>&1 ||
+                sps_fail 4 "gzip is required to read '$sps_archive'"
+            gzip -dc "$sps_archive" | tar -tf -
+            ;;
+        *.tar.xz|*.txz)
+            command -v xz >/dev/null 2>&1 ||
+                sps_fail 4 "xz is required to read '$sps_archive'"
+            xz -dc "$sps_archive" | tar -tf -
+            ;;
+        *.tar.zst|*.tzst)
+            command -v zstd >/dev/null 2>&1 ||
+                sps_fail 4 "zstd is required to read '$sps_archive'"
+            zstd -q -dc "$sps_archive" | tar -tf -
+            ;;
+        *)
+            tar -tf "$sps_archive"
+            ;;
+    esac
+}
+
+sps_archive_extract()
+{
+    case $sps_archive in
+        *.tar.gz|*.tgz) gzip -dc "$sps_archive" | tar -xf - -C "$sps_stage" ;;
+        *.tar.xz|*.txz) xz -dc "$sps_archive" | tar -xf - -C "$sps_stage" ;;
+        *.tar.zst|*.tzst) zstd -q -dc "$sps_archive" | tar -xf - -C "$sps_stage" ;;
+        *) tar -xf "$sps_archive" -C "$sps_stage" ;;
+    esac
+}
+
+mkdir -p "$SPS_BUILD" || sps_fail 8 "cannot create build directory '$SPS_BUILD'"
+sps_work=$(sps_mktemp_dir "$SPS_BUILD" install) ||
+    sps_fail 8 "cannot create a secure installation workspace"
+sps_stage=$sps_work/stage
+mkdir "$sps_stage" || sps_fail 8 "cannot create package staging directory"
+
+if ! sps_archive_list >"$sps_work/members.raw" 2>"$sps_work/tar.error"; then
+    sed 's/^/pkin: tar: /' "$sps_work/tar.error" >&2
+    sps_fail 4 "invalid package archive '$sps_archive'"
+fi
+if ! awk -v sps_action=normalize-members -v sps_program=pkin \
+    -f "$SPS_LIBDIR/package.awk" "$sps_work/members.raw" >"$sps_work/members"; then
+    sps_fail 4 "unsafe package archive '$sps_archive'"
+fi
+for sps_control in .SPS/meta .SPS/files .SPS/hashes; do
+    if ! awk -v wanted="$sps_control" '
+        { value=$0; sub(/\/$/, "", value); if (value == wanted) found=1 }
+        END { exit !found }
+    ' "$sps_work/members"; then
+        sps_fail 4 "package archive is missing $sps_control"
+    fi
+done
+
+# Extract only after member names pass validation, and always into a fresh tree.
+if ! sps_archive_extract 2>"$sps_work/tar.error"; then
+    sed 's/^/pkin: tar: /' "$sps_work/tar.error" >&2
+    sps_fail 4 "cannot extract package archive '$sps_archive'"
+fi
+for sps_control in meta files hashes; do
+    [ -f "$sps_stage/.SPS/$sps_control" ] &&
+        [ ! -L "$sps_stage/.SPS/$sps_control" ] ||
+        sps_fail 4 "package control file .SPS/$sps_control is not a regular file"
+done
+if [ -e "$sps_stage/.SPS/hooks" ] || [ -L "$sps_stage/.SPS/hooks" ]; then
+    [ -d "$sps_stage/.SPS/hooks" ] && [ ! -L "$sps_stage/.SPS/hooks" ] ||
+        sps_fail 4 "package hook control is not a real directory"
+    for sps_hook in pre-install post-install pre-remove post-remove; do
+        [ ! -e "$sps_stage/.SPS/hooks/$sps_hook" ] &&
+            [ ! -L "$sps_stage/.SPS/hooks/$sps_hook" ] && continue
+        [ -f "$sps_stage/.SPS/hooks/$sps_hook" ] &&
+            [ ! -L "$sps_stage/.SPS/hooks/$sps_hook" ] ||
+            sps_fail 4 "package hook '$sps_hook' is not a regular file"
+    done
+fi
+
+if ! awk -v sps_action=validate-meta -v sps_program=pkin \
+    -f "$SPS_LIBDIR/package.awk" "$sps_stage/.SPS/meta"; then
+    sps_fail 4 "invalid package metadata"
+fi
+if ! awk -v sps_action=validate-paths -v sps_program=pkin \
+    -f "$SPS_LIBDIR/package.awk" "$sps_stage/.SPS/files"; then
+    sps_fail 4 "invalid package manifest"
+fi
+if ! awk -v sps_action=validate-hashes -v sps_program=pkin \
+    -f "$SPS_LIBDIR/package.awk" "$sps_stage/.SPS/hashes"; then
+    sps_fail 4 "invalid package hashes"
+fi
+
+sps_id=$(awk -v sps_action=meta-id -v sps_program=pkin \
+    -f "$SPS_LIBDIR/package.awk" "$sps_stage/.SPS/meta") ||
+    sps_fail 4 "cannot read package identity"
+sps_tab=$(printf '\tX')
+sps_tab=${sps_tab%X}
+sps_saved_ifs=$IFS
+IFS=$sps_tab
+set -- $sps_id
+IFS=$sps_saved_ifs
+[ "$#" -eq 4 ] || sps_fail 4 "malformed package identity"
+sps_name=$1
+sps_version=$2
+sps_release=$3
+sps_arch=$4
+case $sps_arch in
+    any|noarch|"$SPS_ARCH") ;;
+    *) sps_fail 4 "package architecture '$sps_arch' does not match target '$SPS_ARCH'" ;;
+esac
+
+# The manifest is the package file list. Reject extra payload and missing
+# manifest entries before installation.
+awk '
+    {
+        value=$0
+        sub(/\/$/, "", value)
+        if (value == ".SPS" || value ~ /^\.SPS\//) next
+        print value
+    }
+' "$sps_work/members" | LC_ALL=C sort -u >"$sps_work/archive.payload"
+sed 's:/$::' "$sps_stage/.SPS/files" | LC_ALL=C sort -u >"$sps_work/manifest.payload"
+if ! cmp -s "$sps_work/archive.payload" "$sps_work/manifest.payload"; then
+    sps_fail 4 "archive payload does not match .SPS/files"
+fi
+
+: >"$sps_work/regulars"
+: >"$sps_work/owned"
+while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+    sps_path=${sps_entry%/}
+    sps_source=$sps_stage/$sps_path
+    sps_safe_stage_parents "$sps_path" ||
+        sps_fail 4 "unsafe extracted payload path /$sps_path"
+    case $sps_entry in
+        */)
+            [ -d "$sps_source" ] && [ ! -L "$sps_source" ] ||
+                sps_fail 4 "manifest directory has the wrong type: /$sps_path"
+            ;;
+        *)
+            if [ -f "$sps_source" ] && [ ! -L "$sps_source" ]; then
+                printf '%s\n' "$sps_path" >>"$sps_work/regulars"
+            elif [ -L "$sps_source" ]; then
+                :
+            else
+                sps_fail 4 "unsupported or missing payload entry: /$sps_path"
+            fi
+            printf '%s\n' "$sps_path" >>"$sps_work/owned"
+            ;;
+    esac
+done <"$sps_stage/.SPS/files"
+LC_ALL=C sort -u "$sps_work/regulars" -o "$sps_work/regulars"
+LC_ALL=C sort -u "$sps_work/owned" -o "$sps_work/owned"
+awk -v sps_action=hash-paths -v sps_program=pkin \
+    -f "$SPS_LIBDIR/package.awk" "$sps_stage/.SPS/hashes" |
+    LC_ALL=C sort -u >"$sps_work/hash.paths" ||
+    sps_fail 4 "invalid package hashes"
+if ! cmp -s "$sps_work/regulars" "$sps_work/hash.paths"; then
+    sps_fail 4 "hash records do not match the regular-file payload"
+fi
+
+while IFS="$sps_tab" read -r sps_algorithm sps_expected sps_path; do
+    [ -n "$sps_algorithm" ] || continue
+    sps_actual=$(sps_sha256 "$sps_stage/$sps_path") ||
+        sps_fail 6 "cannot hash payload file /$sps_path"
+    set -- $sps_actual
+    sps_actual=$1
+    [ "$sps_actual" = "$sps_expected" ] ||
+        sps_fail 6 "checksum mismatch for /$sps_path"
+done <"$sps_stage/.SPS/hashes"
+
+mkdir -p "$SPS_DB" || sps_fail 8 "cannot create package database '$SPS_DB'"
+if sps_exists "$SPS_DB/installed"; then
+    [ -d "$SPS_DB/installed" ] && [ ! -L "$SPS_DB/installed" ] ||
+        sps_fail 11 "installed database is not a real directory"
+else
+    mkdir "$SPS_DB/installed" || sps_fail 8 "cannot create installed database"
+fi
+for sps_db_file in owners world history; do
+    if sps_exists "$SPS_DB/$sps_db_file"; then
+        [ -f "$SPS_DB/$sps_db_file" ] && [ ! -L "$SPS_DB/$sps_db_file" ] ||
+            sps_fail 11 "database control '$sps_db_file' is not a regular file"
+    else
+        : >"$SPS_DB/$sps_db_file" || sps_fail 8 "cannot create database file '$SPS_DB/$sps_db_file'"
+    fi
+done
+if ! sps_lock_acquire "$SPS_DB"; then
+    sps_fail 11 "package database is locked: '$SPS_DB/.lock'"
+fi
+
+if ! awk -v sps_action=owners-validate -v sps_program=pkin \
+    -f "$SPS_LIBDIR/db.awk" "$SPS_DB/owners"; then
+    sps_fail 11 "installed ownership database is malformed"
+fi
+if ! awk -v sps_action=world-validate -v sps_program=pkin \
+    -f "$SPS_LIBDIR/db.awk" "$SPS_DB/world"; then
+    sps_fail 11 "installed world database is malformed"
+fi
+
+# Validate the old installed record before using it for upgrade cleanup. A bad
+# old manifest must never turn into a removal path.
+sps_old_record=$SPS_DB/installed/$sps_name
+sps_old_version=
+: >"$sps_work/old-owned"
+if sps_exists "$sps_old_record" &&
+   { [ ! -d "$sps_old_record" ] || [ -L "$sps_old_record" ]; }; then
+    sps_fail 11 "installed record for '$sps_name' is not a real directory"
+fi
+if [ -d "$sps_old_record" ]; then
+    for sps_old_control in meta files hashes; do
+        [ -f "$sps_old_record/$sps_old_control" ] &&
+            [ ! -L "$sps_old_record/$sps_old_control" ] ||
+            sps_fail 11 "installed record for '$sps_name' is missing $sps_old_control"
+    done
+    awk -v sps_action=validate-meta -v sps_program=pkin \
+        -f "$SPS_LIBDIR/package.awk" "$sps_old_record/meta" ||
+        sps_fail 11 "installed metadata for '$sps_name' is malformed"
+    awk -v sps_action=validate-paths -v sps_program=pkin \
+        -f "$SPS_LIBDIR/package.awk" "$sps_old_record/files" ||
+        sps_fail 11 "installed manifest for '$sps_name' is malformed"
+    awk -v sps_action=validate-hashes -v sps_program=pkin \
+        -f "$SPS_LIBDIR/package.awk" "$sps_old_record/hashes" ||
+        sps_fail 11 "installed hashes for '$sps_name' are malformed"
+    sps_old_name=$(awk -v sps_action=meta-get -v sps_key_name=name \
+        -v sps_program=pkin -f "$SPS_LIBDIR/package.awk" "$sps_old_record/meta") ||
+        sps_fail 11 "cannot read installed package identity"
+    [ "$sps_old_name" = "$sps_name" ] ||
+        sps_fail 11 "installed record name '$sps_old_name' does not match '$sps_name'"
+    sps_old_version=$(awk -v sps_action=meta-get -v sps_key_name=version \
+        -v sps_program=pkin -f "$SPS_LIBDIR/package.awk" "$sps_old_record/meta") ||
+        sps_fail 11 "installed metadata for '$sps_name' is malformed"
+    while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+        case $sps_entry in */) ;; *) printf '%s\n' "$sps_entry" >>"$sps_work/old-owned" ;; esac
+    done <"$sps_old_record/files"
+    LC_ALL=C sort -u "$sps_work/old-owned" -o "$sps_work/old-owned"
+fi
+
+sps_run_hook()
+{
+    sps_hook_name=$1
+    sps_hook_file=$sps_stage/.SPS/hooks/$sps_hook_name
+    [ -f "$sps_hook_file" ] || return 0
+    printf '%s: running %s hook for %s\n' "$sps_prog" "$sps_hook_name" "$sps_name" >&2
+    SPS_ACTION=$sps_install_action
+    SPS_PACKAGE=$sps_name
+    SPS_VERSION=$sps_version
+    SPS_RELEASE=$sps_release
+    SPS_PACKAGE_ARCH=$sps_arch
+    export SPS_ACTION SPS_PACKAGE SPS_VERSION SPS_RELEASE SPS_PACKAGE_ARCH
+    sh -eu "$sps_hook_file"
+}
+
+# True when a protected regular file was changed since it was installed.
+sps_old_file_modified()
+{
+    sps_preserve_path=$1
+    sps_preserve_target=$2
+    [ -d "$sps_old_record" ] || return 1
+    sps_is_preserved_path "$sps_preserve_path" || return 1
+    [ -f "$sps_preserve_target" ] && [ ! -L "$sps_preserve_target" ] || return 1
+    sps_preserve_expected=$(awk -F "$sps_tab" -v path="$sps_preserve_path"         '$3 == path && $1 == "sha256" { print $2; exit }' "$sps_old_record/hashes")
+    [ -n "$sps_preserve_expected" ] || return 1
+    sps_preserve_actual=$(sps_sha256 "$sps_preserve_target") || return 0
+    [ "$sps_preserve_actual" != "$sps_preserve_expected" ]
+}
+
+if [ -d "$sps_old_record" ]; then
+    sps_install_action=upgrade
+else
+    sps_install_action=install
+fi
+sps_run_hook pre-install ||
+    sps_fail 10 "$sps_install_action pre-install hook failed for '$sps_name'"
+
+: >"$sps_work/self-owned"
+: >"$sps_work/conflicts"
+awk -F "$sps_tab" -v package="$sps_name" \
+    -v paths="$sps_work/owned" -v self="$sps_work/self-owned" \
+    -v conflicts="$sps_work/conflicts" '
+    BEGIN {
+        while ((getline path < paths) > 0) wanted[path] = 1
+        close(paths)
+    }
+    ($1 in wanted) {
+        if ($2 == package) print $1 > self
+        else print $1 "\t" $2 > conflicts
+    }
+' "$SPS_DB/owners"
+if [ -s "$sps_work/conflicts" ]; then
+    while IFS="$sps_tab" read -r sps_path sps_owner; do
+        printf '%s: /%s is owned by %s\n' "$sps_prog" "$sps_path" "$sps_owner" >&2
+    done <"$sps_work/conflicts"
+    sps_fail 7 "cannot install $sps_name-$sps_version-$sps_release"
+fi
+LC_ALL=C sort -u "$sps_work/self-owned" -o "$sps_work/self-owned"
+comm -23 "$sps_work/owned" "$sps_work/self-owned" >"$sps_work/unowned"
+
+while IFS= read -r sps_path || [ -n "$sps_path" ]; do
+    sps_target_path "$sps_path"
+    if sps_exists "$sps_target"; then
+        sps_fail 7 "/$sps_path exists and is not owned by an installed package"
+    fi
+done <"$sps_work/unowned"
+
+while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+    sps_path=${sps_entry%/}
+    sps_safe_parents "$sps_path" || sps_fail 7 "unsafe target path /$sps_path"
+    sps_target_path "$sps_path"
+    case $sps_entry in
+        */)
+            if sps_exists "$sps_target" &&
+               { [ ! -d "$sps_target" ] || [ -L "$sps_target" ]; }; then
+                sps_fail 7 "/$sps_path exists and is not a directory"
+            fi
+            ;;
+        *)
+            if [ -d "$sps_target" ] && [ ! -L "$sps_target" ]; then
+                sps_fail 7 "/$sps_path is a directory"
+            fi
+            ;;
+    esac
+done <"$sps_stage/.SPS/files"
+
+mkdir -p "$SPS_ROOT" || sps_fail 8 "cannot create target root '$SPS_ROOT'"
+
+# Create directories first. Existing directories are shared, not exclusively
+# owned by a package.
+while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+    case $sps_entry in
+        */)
+            sps_path=${sps_entry%/}
+            sps_safe_parents "$sps_path" || sps_fail 7 "unsafe target path /$sps_path"
+            sps_target_path "$sps_path"
+            if [ ! -d "$sps_target" ]; then
+                mkdir -p "$sps_target" || sps_fail 8 "cannot create /$sps_path"
+                sps_source_dir=$sps_stage/$sps_path
+                sps_dir_mode=$(sps_mode_of "$sps_source_dir") ||
+                    sps_fail 4 "cannot determine directory mode for /$sps_path"
+                sps_normalize_owner "$sps_target" ||
+                    sps_fail 8 "cannot normalize owner of /$sps_path"
+                chmod "$sps_dir_mode" "$sps_target" ||
+                    sps_fail 8 "cannot set mode on /$sps_path"
+            fi
+            ;;
+    esac
+done <"$sps_stage/.SPS/files"
+
+while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+    case $sps_entry in */) continue ;; esac
+    sps_path=$sps_entry
+    sps_source=$sps_stage/$sps_path
+    sps_safe_stage_parents "$sps_path" || sps_fail 4 "unsafe extracted payload path /$sps_path"
+    sps_safe_parents "$sps_path" || sps_fail 7 "unsafe target path /$sps_path"
+    sps_target_path "$sps_path"
+    sps_parent=${sps_target%/*}
+    [ -n "$sps_parent" ] || sps_parent=/
+    mkdir -p "$sps_parent" || sps_fail 8 "cannot create parent of /$sps_path"
+    if [ -L "$sps_source" ]; then
+        sps_link_tmp=$(sps_mktemp_dir "$sps_parent" link) ||
+            sps_fail 8 "cannot stage symlink /$sps_path"
+        if ! cp -P "$sps_source" "$sps_link_tmp/item"; then
+            rm -rf "$sps_link_tmp"
+            sps_fail 8 "cannot copy symlink /$sps_path"
+        fi
+        if ! mv -f "$sps_link_tmp/item" "$sps_target"; then
+            rm -rf "$sps_link_tmp"
+            sps_fail 8 "cannot install symlink /$sps_path"
+        fi
+        rmdir "$sps_link_tmp" 2>/dev/null || :
+    else
+        # Keep the local file and leave the new packaged copy beside it as .sps-new.
+        if sps_old_file_modified "$sps_path" "$sps_target"; then
+            sps_old_expected=$(awk -F "$sps_tab" -v path="$sps_path"                 '$3 == path && $1 == "sha256" { print $2; exit }' "$sps_old_record/hashes")
+            sps_new_digest=$(sps_sha256 "$sps_source") ||
+                sps_fail 6 "cannot hash new protected file /$sps_path"
+            if [ "$sps_new_digest" = "$sps_old_expected" ]; then
+                sps_warn "/$sps_path is locally modified; packaged default is unchanged, keeping local file"
+                continue
+            fi
+            sps_new_target=$sps_target.sps-new
+            if [ -e "$sps_new_target" ] || [ -L "$sps_new_target" ]; then
+                if [ -f "$sps_new_target" ] && [ ! -L "$sps_new_target" ] &&
+                   [ "$(sps_sha256 "$sps_new_target" 2>/dev/null || :)" = "$sps_new_digest" ]; then
+                    sps_warn "/$sps_path is locally modified; matching .sps-new already exists"
+                    continue
+                fi
+                sps_new_target=$sps_target.sps-new.$sps_version-$sps_release
+            fi
+            sps_new_parent=${sps_new_target%/*}
+            sps_file_tmp=$(mktemp "$sps_new_parent/.sps-file.XXXXXX") ||
+                sps_fail 8 "cannot stage preserved update for /$sps_path"
+            if ! cp -p "$sps_source" "$sps_file_tmp"; then
+                rm -f "$sps_file_tmp"
+                sps_fail 8 "cannot stage preserved update for /$sps_path"
+            fi
+            if sps_is_root; then
+                # chown can clear setuid/setgid, so remember the mode only for those files.
+                sps_file_mode=
+                if [ -u "$sps_source" ] || [ -g "$sps_source" ]; then
+                    sps_file_mode=$(sps_mode_of "$sps_source") ||
+                        sps_fail 4 "cannot determine file mode for /$sps_path"
+                fi
+                sps_normalize_owner "$sps_file_tmp" ||
+                    sps_fail 8 "cannot normalize owner of /$sps_path"
+                if [ -n "$sps_file_mode" ]; then
+                    chmod "$sps_file_mode" "$sps_file_tmp" ||
+                        sps_fail 8 "cannot restore mode on /$sps_path"
+                fi
+            fi
+            mv -f "$sps_file_tmp" "$sps_new_target" || {
+                rm -f "$sps_file_tmp"
+                sps_fail 8 "cannot write preserved update for /$sps_path"
+            }
+            sps_warn "/$sps_path is locally modified; kept it and wrote ${sps_new_target#${SPS_ROOT%/}}"
+            continue
+        fi
+
+        sps_file_tmp=$(mktemp "$sps_parent/.sps-file.XXXXXX") ||
+            sps_fail 8 "cannot stage file /$sps_path"
+        if ! cp -p "$sps_source" "$sps_file_tmp"; then
+            rm -f "$sps_file_tmp"
+            sps_fail 8 "cannot install file /$sps_path"
+        fi
+        if sps_is_root; then
+            # chown can clear setuid/setgid, so remember the mode only for those files.
+            sps_file_mode=
+            if [ -u "$sps_source" ] || [ -g "$sps_source" ]; then
+                sps_file_mode=$(sps_mode_of "$sps_source") ||
+                    sps_fail 4 "cannot determine file mode for /$sps_path"
+            fi
+            sps_normalize_owner "$sps_file_tmp" ||
+                sps_fail 8 "cannot normalize owner of /$sps_path"
+            if [ -n "$sps_file_mode" ]; then
+                chmod "$sps_file_mode" "$sps_file_tmp" ||
+                    sps_fail 8 "cannot restore mode on /$sps_path"
+            fi
+        fi
+        if ! mv -f "$sps_file_tmp" "$sps_target"; then
+            rm -f "$sps_file_tmp"
+            sps_fail 8 "cannot install file /$sps_path"
+        fi
+    fi
+done <"$sps_stage/.SPS/files"
+
+comm -23 "$sps_work/old-owned" "$sps_work/owned" >"$sps_work/obsolete.candidates"
+# Read this package's owner entries once before cleaning obsolete files.
+awk -F "$sps_tab" -v package="$sps_name" '$2 == package { print $1 }' \
+    "$SPS_DB/owners" | LC_ALL=C sort -u >"$sps_work/current-owned" ||
+    sps_fail 11 "cannot inspect current owner index"
+comm -12 "$sps_work/obsolete.candidates" "$sps_work/current-owned" >"$sps_work/obsolete"
+while IFS= read -r sps_path || [ -n "$sps_path" ]; do
+    sps_safe_parents "$sps_path" || sps_fail 7 "unsafe target path /$sps_path"
+    sps_target_path "$sps_path"
+    if [ -f "$sps_target" ] && [ ! -L "$sps_target" ] &&
+       sps_old_file_modified "$sps_path" "$sps_target"; then
+        sps_warn "/$sps_path is locally modified and obsolete; keeping it unowned"
+        continue
+    fi
+    if [ -L "$sps_target" ] || [ -f "$sps_target" ]; then
+        rm -f "$sps_target" || sps_fail 8 "cannot remove obsolete file /$sps_path"
+    fi
+done <"$sps_work/obsolete"
+if [ -d "$sps_old_record" ]; then
+    LC_ALL=C sort -r "$sps_old_record/files" >"$sps_work/old-files.reverse"
+    while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+        case $sps_entry in
+            */)
+                sps_path=${sps_entry%/}
+                if ! awk -v wanted="$sps_path" '
+                    { value=$0; sub(/\/$/, "", value); if (value == wanted) found=1 }
+                    END { exit !found }
+                ' "$sps_stage/.SPS/files"; then
+                    sps_safe_parents "$sps_path" || continue
+                    sps_target_path "$sps_path"
+                    rmdir "$sps_target" 2>/dev/null || :
+                fi
+                ;;
+        esac
+    done <"$sps_work/old-files.reverse"
+fi
+
+sps_record_tmp=$(sps_mktemp_dir "$SPS_DB/installed" record) ||
+    sps_fail 11 "cannot stage installed package record"
+cp "$sps_stage/.SPS/meta" "$sps_record_tmp/meta" &&
+cp "$sps_stage/.SPS/files" "$sps_record_tmp/files" &&
+cp "$sps_stage/.SPS/hashes" "$sps_record_tmp/hashes" ||
+    sps_fail 11 "cannot stage installed package metadata"
+if [ -d "$sps_stage/.SPS/hooks" ]; then
+    mkdir "$sps_record_tmp/hooks" || sps_fail 11 "cannot stage package hooks"
+    for sps_hook in pre-install post-install pre-remove post-remove; do
+        [ -f "$sps_stage/.SPS/hooks/$sps_hook" ] || continue
+        cp "$sps_stage/.SPS/hooks/$sps_hook" "$sps_record_tmp/hooks/$sps_hook" ||
+            sps_fail 11 "cannot stage package hook '$sps_hook'"
+    done
+fi
+
+sps_owners_base=$(mktemp "$SPS_DB/.owners-base.XXXXXX") || sps_fail 11 "cannot stage owner index"
+sps_owners_new=$(mktemp "$SPS_DB/.owners-new.XXXXXX") || sps_fail 11 "cannot stage owner index"
+if ! awk -v sps_action=owners-remove -v sps_package="$sps_name" -v sps_program=pkin \
+    -f "$SPS_LIBDIR/db.awk" "$SPS_DB/owners" >"$sps_owners_base"; then
+    sps_fail 11 "installed ownership database is malformed"
+fi
+while IFS= read -r sps_path || [ -n "$sps_path" ]; do
+    printf '%s\t%s\n' "$sps_path" "$sps_name" >>"$sps_owners_base"
+done <"$sps_work/owned"
+LC_ALL=C sort "$sps_owners_base" -o "$sps_owners_new" || sps_fail 11 "cannot stage owner index"
+
+sps_world_base=$(mktemp "$SPS_DB/.world-base.XXXXXX") || sps_fail 11 "cannot stage world database"
+sps_world_new=$(mktemp "$SPS_DB/.world-new.XXXXXX") || sps_fail 11 "cannot stage world database"
+sps_was_explicit=0
+if awk -v package="$sps_name" '$0 == package { found=1 } END { exit !found }' "$SPS_DB/world"; then
+    sps_was_explicit=1
+fi
+if ! awk -v sps_action=world-remove -v sps_package="$sps_name" -v sps_program=pkin \
+    -f "$SPS_LIBDIR/db.awk" "$SPS_DB/world" >"$sps_world_base"; then
+    sps_fail 11 "installed world database is malformed"
+fi
+if [ "$sps_reason" = explicit ] || [ "$sps_was_explicit" -eq 1 ]; then
+    printf '%s\n' "$sps_name" >>"$sps_world_base"
+fi
+LC_ALL=C sort -u "$sps_world_base" -o "$sps_world_new" || sps_fail 11 "cannot stage world database"
+
+sps_backup_dir=$(sps_mktemp_dir "$SPS_DB/installed" backup) ||
+    sps_fail 11 "cannot create database rollback area"
+cp -p "$SPS_DB/owners" "$sps_backup_dir/owners" &&
+cp -p "$SPS_DB/world" "$sps_backup_dir/world" ||
+    sps_fail 11 "cannot preserve database state"
+sps_had_old=0
+if [ -d "$sps_old_record" ]; then
+    mv "$sps_old_record" "$sps_backup_dir/record" || sps_fail 11 "cannot preserve old package record"
+    sps_had_old=1
+    sps_record_backed_up=1
+fi
+
+sps_database_commit_started=1
+sps_commit_failed=0
+mv "$sps_record_tmp" "$sps_old_record" || sps_commit_failed=1
+if [ "$sps_commit_failed" -eq 0 ]; then sps_record_tmp=; fi
+if [ "$sps_commit_failed" -eq 0 ]; then
+    mv -f "$sps_owners_new" "$SPS_DB/owners" || sps_commit_failed=1
+fi
+if [ "$sps_commit_failed" -eq 0 ]; then
+    mv -f "$sps_world_new" "$SPS_DB/world" || sps_commit_failed=1
+fi
+if [ "$sps_commit_failed" -ne 0 ]; then
+    rm -rf "$sps_old_record"
+    if [ "$sps_had_old" -eq 1 ]; then
+        mv "$sps_backup_dir/record" "$sps_old_record" 2>/dev/null || :
+    fi
+    cp "$sps_backup_dir/owners" "$SPS_DB/.owners-restore.$$" 2>/dev/null &&
+        mv -f "$SPS_DB/.owners-restore.$$" "$SPS_DB/owners" 2>/dev/null || :
+    cp "$sps_backup_dir/world" "$SPS_DB/.world-restore.$$" 2>/dev/null &&
+        mv -f "$SPS_DB/.world-restore.$$" "$SPS_DB/world" 2>/dev/null || :
+    sps_record_backed_up=0
+    sps_database_commit_started=0
+    sps_fail 11 "database commit failed; previous metadata was restored"
+fi
+sps_commit_complete=1
+
+sps_date=$(date '+%Y-%m-%d' 2>/dev/null || printf '%s' unknown)
+if [ -n "$sps_old_version" ]; then
+    printf '%s upgrade %s %s %s\n' "$sps_date" "$sps_name" "$sps_old_version" "$sps_version" >>"$SPS_DB/history" ||
+        sps_warn "could not append package history"
+else
+    printf '%s install %s %s-%s\n' "$sps_date" "$sps_name" "$sps_version" "$sps_release" >>"$SPS_DB/history" ||
+        sps_warn "could not append package history"
+fi
+
+if ! sps_run_hook post-install; then
+    sps_warn "$sps_install_action completed, but post-install hook failed for '$sps_name'"
+    exit 10
+fi
+
+if [ -n "$sps_old_version" ]; then
+    printf '%s: upgraded %s %s -> %s-%s\n' "$sps_prog" "$sps_name" "$sps_old_version" "$sps_version" "$sps_release"
+else
+    printf '%s: installed %s %s-%s\n' "$sps_prog" "$sps_name" "$sps_version" "$sps_release"
+fi
+
+exit 0

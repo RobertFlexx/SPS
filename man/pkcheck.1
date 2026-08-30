@@ -1,0 +1,39 @@
+.TH PKCHECK 1 "2026-08-30" "SPS 1.0" "SPS Commands"
+.SH NAME
+pkcheck \- verify SPS installed package state
+.SH SYNOPSIS
+.nf
+pkcheck [PACKAGE]
+pkcheck --all
+pkcheck --missing [PACKAGE]
+pkcheck --modified [PACKAGE]
+pkcheck --database
+.fi
+.SH DESCRIPTION
+.B pkcheck
+compares installed package records with the target filesystem and validates
+database relationships. It reports facts and performs no repair.
+.SH OPTIONS
+.TP
+.B --all
+Verify all installed manifests and regular-file hashes.
+.TP
+.B --missing
+Report package-owned paths absent from the target root.
+.TP
+.B --modified
+Report regular files whose SHA-256 digest differs from the installed package
+record. Administrator-edited protected configuration therefore appears here by
+design.
+.TP
+.B --database
+Validate installed metadata, manifests, hashes, hooks, owner mappings, and the
+explicit world set without hashing live payload files.
+.SH EXIT STATUS
+Returns 0 when requested checks pass, 1 when missing/modified payload is found,
+2 for usage, 3 when a named package is absent, and 11 for malformed or
+inconsistent database state.
+.SH SEE ALSO
+.BR pkstat (1),
+.BR pkin (1),
+.BR sps.conf (5)

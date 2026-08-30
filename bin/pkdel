@@ -1,0 +1,331 @@
+#!/bin/sh
+
+sps_prog=pkdel
+sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
+if [ -z "${SPS_LIBDIR+x}" ]; then
+    if [ -r "$sps_bin_dir/../lib/common.sh" ]; then
+        SPS_LIBDIR=$sps_bin_dir/../lib
+    else
+        SPS_LIBDIR=$sps_bin_dir/../lib/sps
+    fi
+fi
+if ! . "$SPS_LIBDIR/common.sh"; then
+    printf '%s\n' "pkdel: cannot load $SPS_LIBDIR/common.sh" >&2
+    exit 1
+fi
+sps_load_config || exit $?
+
+sps_usage()
+{
+    printf '%s\n' 'usage: pkdel [--plan] PACKAGE'
+}
+
+sps_fail()
+{
+    sps_code=$1
+    shift
+    printf '%s: %s\n' "$sps_prog" "$*" >&2
+    exit "$sps_code"
+}
+
+sps_exists()
+{
+    [ -f "$1" ] || [ -d "$1" ] || [ -L "$1" ]
+}
+
+sps_target_path()
+{
+    case $SPS_ROOT in
+        /) sps_target=/$1 ;;
+        */) sps_target=$SPS_ROOT$1 ;;
+        *) sps_target=$SPS_ROOT/$1 ;;
+    esac
+}
+
+sps_safe_parents()
+{
+    sps_parent_rel=${1%/*}
+    [ "$sps_parent_rel" != "$1" ] || return 0
+    sps_remainder=$sps_parent_rel
+    sps_prefix=
+    while [ -n "$sps_remainder" ]; do
+        case $sps_remainder in
+            */*) sps_component=${sps_remainder%%/*}; sps_remainder=${sps_remainder#*/} ;;
+            *) sps_component=$sps_remainder; sps_remainder= ;;
+        esac
+        if [ -n "$sps_prefix" ]; then
+            sps_prefix=$sps_prefix/$sps_component
+        else
+            sps_prefix=$sps_component
+        fi
+        sps_target_path "$sps_prefix"
+        if [ -L "$sps_target" ] ||
+           { sps_exists "$sps_target" && [ ! -d "$sps_target" ]; }; then
+            printf '%s: refusing unsafe target path /%s\n' "$sps_prog" "$sps_prefix" >&2
+            return 1
+        fi
+    done
+    return 0
+}
+
+sps_work=
+sps_backup_dir=
+sps_owners_new=
+sps_world_new=
+sps_lock=
+sps_lock_owned=0
+sps_commit_complete=0
+sps_database_commit_started=0
+sps_cleanup()
+{
+    sps_status=$?
+    trap - 0 1 2 3 15
+    if [ "$sps_commit_complete" -eq 0 ] && [ "$sps_database_commit_started" -eq 1 ] &&
+       [ -n "$sps_backup_dir" ] && [ -d "$sps_backup_dir" ]; then
+        if [ -n "${sps_record-}" ]; then
+            rm -rf "$sps_record"
+            mv "$sps_backup_dir/record" "$sps_record" 2>/dev/null || :
+        fi
+        cp "$sps_backup_dir/owners" "$SPS_DB/.owners-restore.$$" 2>/dev/null &&
+            mv -f "$SPS_DB/.owners-restore.$$" "$SPS_DB/owners" 2>/dev/null || :
+        cp "$sps_backup_dir/world" "$SPS_DB/.world-restore.$$" 2>/dev/null &&
+            mv -f "$SPS_DB/.world-restore.$$" "$SPS_DB/world" 2>/dev/null || :
+        sps_database_commit_started=0
+    fi
+    [ -n "$sps_owners_new" ] && rm -f "$sps_owners_new"
+    [ -n "$sps_world_new" ] && rm -f "$sps_world_new"
+    if [ -n "$sps_backup_dir" ] && [ -d "$sps_backup_dir" ]; then
+        rm -rf "$sps_backup_dir"
+    fi
+    if [ -n "$sps_work" ] && [ -d "$sps_work" ]; then
+        rm -rf "$sps_work"
+    fi
+    sps_lock_release
+    exit "$sps_status"
+}
+trap sps_cleanup 0
+trap 'exit 130' 1 2 3 15
+
+sps_plan=0
+case ${1-} in
+    --plan) sps_plan=1; shift ;;
+    -h|--help) sps_usage; exit 0 ;;
+esac
+[ "$#" -eq 1 ] || { sps_usage >&2; exit 2; }
+sps_name=$1
+if ! sps_validate_package_name "$sps_name"; then
+    sps_fail 2 "invalid package name '$sps_name'"
+fi
+sps_installed=$SPS_DB/installed
+[ -d "$sps_installed" ] && [ ! -L "$sps_installed" ] ||
+    sps_fail 11 "installed database is missing or is not a real directory"
+sps_record=$SPS_DB/installed/$sps_name
+if [ -L "$sps_record" ]; then
+    sps_fail 11 "installed record for '$sps_name' is not a real directory"
+fi
+[ -d "$sps_record" ] || sps_fail 3 "package '$sps_name' is not installed"
+if [ "$sps_plan" -eq 0 ]; then
+    if ! sps_lock_acquire "$SPS_DB"; then
+        sps_fail 11 "package database is locked or unavailable: '$SPS_DB/.lock'"
+    fi
+    [ -d "$sps_installed" ] && [ ! -L "$sps_installed" ] &&
+        [ -d "$sps_record" ] && [ ! -L "$sps_record" ] ||
+        sps_fail 11 "installed database changed while acquiring the lock"
+fi
+for sps_file in meta files hashes; do
+    [ -f "$sps_record/$sps_file" ] && [ ! -L "$sps_record/$sps_file" ] ||
+        sps_fail 11 "installed record for '$sps_name' is missing $sps_file"
+done
+if [ -e "$sps_record/hooks" ] || [ -L "$sps_record/hooks" ]; then
+    [ -d "$sps_record/hooks" ] && [ ! -L "$sps_record/hooks" ] ||
+        sps_fail 11 "installed hooks for '$sps_name' are unsafe"
+    for sps_hook in pre-install post-install pre-remove post-remove; do
+        [ ! -e "$sps_record/hooks/$sps_hook" ] && [ ! -L "$sps_record/hooks/$sps_hook" ] && continue
+        [ -f "$sps_record/hooks/$sps_hook" ] && [ ! -L "$sps_record/hooks/$sps_hook" ] ||
+            sps_fail 11 "installed hook '$sps_hook' for '$sps_name' is unsafe"
+    done
+fi
+if ! awk -v sps_action=validate-meta -v sps_program=pkdel \
+    -f "$SPS_LIBDIR/package.awk" "$sps_record/meta"; then
+    sps_fail 11 "installed metadata for '$sps_name' is malformed"
+fi
+if ! awk -v sps_action=validate-paths -v sps_program=pkdel \
+    -f "$SPS_LIBDIR/package.awk" "$sps_record/files"; then
+    sps_fail 11 "installed manifest for '$sps_name' is malformed"
+fi
+if ! awk -v sps_action=validate-hashes -v sps_program=pkdel \
+    -f "$SPS_LIBDIR/package.awk" "$sps_record/hashes"; then
+    sps_fail 11 "installed hashes for '$sps_name' are malformed"
+fi
+sps_record_name=$(awk -v sps_action=meta-get -v sps_key_name=name \
+    -v sps_program=pkdel -f "$SPS_LIBDIR/package.awk" "$sps_record/meta") ||
+    sps_fail 11 "cannot read installed package name"
+[ "$sps_record_name" = "$sps_name" ] ||
+    sps_fail 11 "record name '$sps_record_name' does not match '$sps_name'"
+sps_version=$(awk -v sps_action=meta-get -v sps_key_name=version \
+    -v sps_program=pkdel -f "$SPS_LIBDIR/package.awk" "$sps_record/meta") ||
+    sps_fail 11 "cannot read installed package version"
+
+for sps_db_control in owners world history; do
+    [ -f "$SPS_DB/$sps_db_control" ] && [ ! -L "$SPS_DB/$sps_db_control" ] ||
+        sps_fail 11 "database control '$sps_db_control' is missing or unsafe"
+done
+if ! awk -v sps_action=owners-validate -v sps_program=pkdel \
+    -f "$SPS_LIBDIR/db.awk" "$SPS_DB/owners"; then
+    sps_fail 11 "installed ownership database is malformed"
+fi
+if ! awk -v sps_action=world-validate -v sps_program=pkdel \
+    -f "$SPS_LIBDIR/db.awk" "$SPS_DB/world"; then
+    sps_fail 11 "installed world database is malformed"
+fi
+sps_tab=$(printf '\tX')
+sps_tab=${sps_tab%X}
+
+sps_record_file_modified()
+{
+    sps_preserve_path=$1
+    sps_preserve_target=$2
+    sps_is_preserved_path "$sps_preserve_path" || return 1
+    [ -f "$sps_preserve_target" ] && [ ! -L "$sps_preserve_target" ] || return 1
+    sps_preserve_expected=$(awk -F "$sps_tab" -v path="$sps_preserve_path"         '$3 == path && $1 == "sha256" { print $2; exit }' "$sps_record/hashes")
+    [ -n "$sps_preserve_expected" ] || return 1
+    sps_preserve_actual=$(sps_sha256 "$sps_preserve_target") || return 0
+    [ "$sps_preserve_actual" != "$sps_preserve_expected" ]
+}
+
+if [ "$sps_plan" -eq 1 ]; then
+    printf 'Remove plan\n\n'
+    printf 'package: %s %s\n' "$sps_name" "$sps_version"
+    while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+        case $sps_entry in */) continue ;; esac
+        sps_owner=$(awk -F "$sps_tab" -v path="$sps_entry" '$1 == path { print $2 }' "$SPS_DB/owners")
+        if [ "$sps_owner" = "$sps_name" ]; then
+            sps_target_path "$sps_entry"
+            if sps_record_file_modified "$sps_entry" "$sps_target"; then
+                printf 'keep:   /%s (locally modified protected file)\n' "$sps_entry"
+            else
+                printf 'remove: /%s\n' "$sps_entry"
+            fi
+        elif [ -n "$sps_owner" ]; then
+            printf 'keep:   /%s (owned by %s)\n' "$sps_entry" "$sps_owner"
+        else
+            printf 'keep:   /%s (not in owner index)\n' "$sps_entry"
+        fi
+    done <"$sps_record/files"
+    exit 0
+fi
+
+mkdir -p "$SPS_BUILD" || sps_fail 8 "cannot create work directory '$SPS_BUILD'"
+sps_work=$(sps_mktemp_dir "$SPS_BUILD" remove) ||
+    sps_fail 8 "cannot create a secure removal workspace"
+if [ -d "$sps_record/hooks" ]; then
+    mkdir "$sps_work/hooks" || sps_fail 8 "cannot stage removal hooks"
+    cp "$sps_record/hooks"/* "$sps_work/hooks/" 2>/dev/null || :
+fi
+
+# Join the manifest and owner index once instead of looking up every path
+# separately.
+awk -F "$sps_tab" 'NR == FNR { owner[$1]=$2; next }
+    $0 !~ /\/$/ { print $0 FS owner[$0] }' \
+    "$SPS_DB/owners" "$sps_record/files" >"$sps_work/manifest.owners" ||
+    sps_fail 11 "cannot map package ownership"
+
+sps_run_remove_hook()
+{
+    sps_hook_name=$1
+    sps_hook_file=$sps_work/hooks/$sps_hook_name
+    [ -f "$sps_hook_file" ] || return 0
+    printf '%s: running %s hook for %s\n' "$sps_prog" "$sps_hook_name" "$sps_name" >&2
+    SPS_ACTION=remove
+    SPS_PACKAGE=$sps_name
+    SPS_VERSION=$sps_version
+    export SPS_ACTION SPS_PACKAGE SPS_VERSION
+    sh -eu "$sps_hook_file"
+}
+
+sps_run_remove_hook pre-remove ||
+    sps_fail 10 "pre-remove hook failed for '$sps_name'"
+
+# Remove a file only if the owner index still says it belongs to this package.
+while IFS="$sps_tab" read -r sps_entry sps_owner || [ -n "$sps_entry" ]; do
+    if [ "$sps_owner" != "$sps_name" ]; then
+        if [ -n "$sps_owner" ]; then
+            sps_warn "/$sps_entry is now owned by $sps_owner; keeping it"
+        else
+            sps_warn "/$sps_entry has no owner record; keeping it"
+        fi
+        continue
+    fi
+    sps_safe_parents "$sps_entry" || sps_fail 7 "unsafe target path /$sps_entry"
+    sps_target_path "$sps_entry"
+    if [ -d "$sps_target" ] && [ ! -L "$sps_target" ]; then
+        sps_warn "/$sps_entry is now a directory; keeping it"
+    elif sps_record_file_modified "$sps_entry" "$sps_target"; then
+        sps_warn "/$sps_entry is locally modified; keeping it unowned"
+    elif sps_exists "$sps_target"; then
+        rm -f "$sps_target" || sps_fail 8 "cannot remove /$sps_entry"
+    fi
+done <"$sps_work/manifest.owners"
+
+# Reverse sort puts children before parents; rmdir leaves shared/non-empty
+# directories alone.
+LC_ALL=C sort -r "$sps_record/files" >"$sps_work/files.reverse"
+while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+    case $sps_entry in
+        */)
+            sps_path=${sps_entry%/}
+            sps_safe_parents "$sps_path" || continue
+            sps_target_path "$sps_path"
+            if [ -d "$sps_target" ] && [ ! -L "$sps_target" ]; then
+                rmdir "$sps_target" 2>/dev/null || :
+            fi
+            ;;
+    esac
+done <"$sps_work/files.reverse"
+
+sps_owners_new=$(mktemp "$SPS_DB/.owners-new.XXXXXX") || sps_fail 11 "cannot stage owner index"
+sps_world_new=$(mktemp "$SPS_DB/.world-new.XXXXXX") || sps_fail 11 "cannot stage world database"
+if ! awk -v sps_action=owners-remove -v sps_package="$sps_name" -v sps_program=pkdel \
+    -f "$SPS_LIBDIR/db.awk" "$SPS_DB/owners" >"$sps_owners_new"; then
+    sps_fail 11 "installed ownership database is malformed"
+fi
+if ! awk -v sps_action=world-remove -v sps_package="$sps_name" -v sps_program=pkdel \
+    -f "$SPS_LIBDIR/db.awk" "$SPS_DB/world" >"$sps_world_new"; then
+    sps_fail 11 "installed world database is malformed"
+fi
+
+sps_backup_dir=$(sps_mktemp_dir "$SPS_DB/installed" backup) ||
+    sps_fail 11 "cannot create database rollback area"
+cp -p "$SPS_DB/owners" "$sps_backup_dir/owners" &&
+cp -p "$SPS_DB/world" "$sps_backup_dir/world" ||
+    sps_fail 11 "cannot preserve database state"
+mv "$sps_record" "$sps_backup_dir/record" || sps_fail 11 "cannot preserve package record"
+sps_database_commit_started=1
+
+sps_commit_failed=0
+mv -f "$sps_owners_new" "$SPS_DB/owners" || sps_commit_failed=1
+if [ "$sps_commit_failed" -eq 0 ]; then
+    mv -f "$sps_world_new" "$SPS_DB/world" || sps_commit_failed=1
+fi
+if [ "$sps_commit_failed" -ne 0 ]; then
+    mv "$sps_backup_dir/record" "$sps_record" 2>/dev/null || :
+    cp "$sps_backup_dir/owners" "$SPS_DB/.owners-restore.$$" 2>/dev/null &&
+        mv -f "$SPS_DB/.owners-restore.$$" "$SPS_DB/owners" 2>/dev/null || :
+    cp "$sps_backup_dir/world" "$SPS_DB/.world-restore.$$" 2>/dev/null &&
+        mv -f "$SPS_DB/.world-restore.$$" "$SPS_DB/world" 2>/dev/null || :
+    sps_database_commit_started=0
+    sps_fail 11 "database commit failed; previous metadata was restored"
+fi
+sps_commit_complete=1
+
+sps_date=$(date '+%Y-%m-%d' 2>/dev/null || printf '%s' unknown)
+printf '%s remove %s %s\n' "$sps_date" "$sps_name" "$sps_version" >>"$SPS_DB/history" ||
+    sps_warn "could not append package history"
+
+if ! sps_run_remove_hook post-remove; then
+    sps_warn "package removal completed, but post-remove hook failed for '$sps_name'"
+    exit 10
+fi
+
+printf '%s: removed %s %s\n' "$sps_prog" "$sps_name" "$sps_version"
+exit 0

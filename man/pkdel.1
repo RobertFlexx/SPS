@@ -1,0 +1,35 @@
+.TH PKDEL 1 "2026-08-30" "SPS 1.0" "SPS Commands"
+.SH NAME
+pkdel \- remove one installed SPS package
+.SH SYNOPSIS
+.B pkdel
+.RB [ --plan ]
+.I package
+.SH DESCRIPTION
+.B pkdel
+is the low-level removal tool. It removes paths still owned by one package,
+prunes empty package directories where possible, and commits updated ownership
+and world state. It does no dependency solving; use
+.BR "sget remove"
+for dependency-aware administration.
+.SH OPTIONS
+.TP
+.B --plan
+Report which package paths would be removed or retained without changing the
+filesystem or database.
+.SH PROTECTED FILES
+A locally modified regular file under an
+.B SPS_PRESERVE
+prefix is retained and becomes unowned rather than being silently deleted.
+.SH HOOKS
+Visible pre-remove and post-remove package hooks may run. A failing pre-remove
+hook aborts removal. A failing post-remove hook returns status 10 after the
+removal and operation history have already committed.
+.SH EXIT STATUS
+Returns 0 on success, 2 for usage, 3 when the package is absent, 7 for unsafe
+filesystem conflict, 8 for permission failure, 10 for hook failure, and 11 for
+malformed/unavailable database state.
+.SH SEE ALSO
+.BR pkin (1),
+.BR pkstat (1),
+.BR sget (1)

@@ -1,0 +1,247 @@
+#!/bin/sh
+
+sps_prog=pkstat
+sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
+if [ -z "${SPS_LIBDIR+x}" ]; then
+    if [ -r "$sps_bin_dir/../lib/common.sh" ]; then
+        SPS_LIBDIR=$sps_bin_dir/../lib
+    else
+        SPS_LIBDIR=$sps_bin_dir/../lib/sps
+    fi
+fi
+if ! . "$SPS_LIBDIR/common.sh"; then
+    printf '%s\n' "pkstat: cannot load $SPS_LIBDIR/common.sh" >&2
+    exit 1
+fi
+sps_load_config || exit $?
+
+sps_usage()
+{
+    cat <<'EOF'
+usage: pkstat [PACKAGE]
+       pkstat --files PACKAGE
+       pkstat --owns PATH
+       pkstat --explicit
+       pkstat --orphans
+       pkstat --size PACKAGE
+EOF
+}
+
+sps_fail()
+{
+    sps_code=$1
+    shift
+    printf '%s: %s\n' "$sps_prog" "$*" >&2
+    exit "$sps_code"
+}
+
+sps_target_path()
+{
+    case $SPS_ROOT in
+        /) sps_target=/$1 ;;
+        */) sps_target=$SPS_ROOT$1 ;;
+        *) sps_target=$SPS_ROOT/$1 ;;
+    esac
+}
+
+sps_require_installed()
+{
+    [ -d "$SPS_DB/installed" ] && [ ! -L "$SPS_DB/installed" ] ||
+        sps_fail 11 "installed database is missing or is not a real directory"
+}
+
+sps_record_for()
+{
+    sps_lookup_name=$1
+    sps_validate_package_name "$sps_lookup_name" ||
+        sps_fail 2 "invalid package name '$sps_lookup_name'"
+    sps_require_installed
+    sps_record=$SPS_DB/installed/$sps_lookup_name
+    if [ -L "$sps_record" ]; then
+        sps_fail 11 "installed record for '$sps_lookup_name' is unsafe"
+    fi
+    [ -d "$sps_record" ] || sps_fail 3 "package '$sps_lookup_name' is not installed"
+    [ -f "$sps_record/meta" ] && [ ! -L "$sps_record/meta" ] ||
+        sps_fail 11 "installed metadata for '$sps_lookup_name' is missing"
+}
+
+sps_summary()
+{
+    sps_summary_name=$1
+    sps_summary_record=$SPS_DB/installed/$sps_summary_name
+    sps_summary_id=$(awk -v sps_action=meta-id -v sps_program=pkstat \
+        -f "$SPS_LIBDIR/package.awk" "$sps_summary_record/meta") ||
+        sps_fail 11 "installed metadata for '$sps_summary_name' is malformed"
+    sps_tab=$(printf '\tX')
+    sps_tab=${sps_tab%X}
+    sps_saved_ifs=$IFS
+    IFS=$sps_tab
+    set -- $sps_summary_id
+    IFS=$sps_saved_ifs
+    [ "$#" -eq 4 ] || sps_fail 11 "installed identity for '$sps_summary_name' is malformed"
+    printf '%s %s-%s %s\n' "$1" "$2" "$3" "$4"
+}
+
+sps_installed=$SPS_DB/installed
+sps_command=${1-}
+case $sps_command in
+    -h|--help)
+        sps_usage
+        exit 0
+        ;;
+    --files)
+        [ "$#" -eq 2 ] || { sps_usage >&2; exit 2; }
+        sps_record_for "$2"
+        [ -f "$sps_record/files" ] && [ ! -L "$sps_record/files" ] ||
+            sps_fail 11 "installed manifest for '$2' is missing"
+        awk -v sps_action=validate-paths -v sps_program=pkstat \
+            -f "$SPS_LIBDIR/package.awk" "$sps_record/files" ||
+            sps_fail 11 "installed manifest for '$2' is malformed"
+        awk '{ print "/" $0 }' "$sps_record/files"
+        ;;
+    --owns)
+        [ "$#" -eq 2 ] || { sps_usage >&2; exit 2; }
+        sps_query=$2
+        case $SPS_ROOT in
+            /) case $sps_query in /*) sps_path=${sps_query#/} ;; *) sps_path=$sps_query ;; esac ;;
+            *)
+                case $sps_query in
+                    "$SPS_ROOT"/*) sps_path=${sps_query#"$SPS_ROOT"/} ;;
+                    /*) sps_path=${sps_query#/} ;;
+                    *) sps_path=$sps_query ;;
+                esac
+                ;;
+        esac
+        sps_path=${sps_path%/}
+        [ -n "$sps_path" ] || sps_fail 3 "no package owns the filesystem root"
+        if ! printf '%s\n' "$sps_path" | awk -v sps_action=validate-paths \
+            -v sps_program=pkstat -f "$SPS_LIBDIR/package.awk"; then
+            sps_fail 2 "invalid ownership path '$sps_query'"
+        fi
+        [ -f "$SPS_DB/owners" ] && [ ! -L "$SPS_DB/owners" ] ||
+            sps_fail 11 "ownership database is missing or unsafe"
+        sps_owner=$(awk -v sps_action=owners-query -v sps_path="$sps_path" \
+            -v sps_program=pkstat -f "$SPS_LIBDIR/db.awk" "$SPS_DB/owners") ||
+            sps_fail 11 "ownership database is malformed"
+        [ -n "$sps_owner" ] || sps_fail 3 "no installed package owns /$sps_path"
+        sps_summary "$sps_owner"
+        ;;
+    --explicit)
+        [ "$#" -eq 1 ] || { sps_usage >&2; exit 2; }
+        sps_require_installed
+        [ -f "$SPS_DB/world" ] && [ ! -L "$SPS_DB/world" ] ||
+            sps_fail 11 "world database is missing or unsafe"
+        awk -v sps_action=world-validate -v sps_program=pkstat \
+            -f "$SPS_LIBDIR/db.awk" "$SPS_DB/world" ||
+            sps_fail 11 "world database is malformed"
+        while IFS= read -r sps_name || [ -n "$sps_name" ]; do
+            [ -n "$sps_name" ] || continue
+            [ -d "$sps_installed/$sps_name" ] ||
+                sps_fail 11 "explicit package '$sps_name' has no installed record"
+            sps_summary "$sps_name"
+        done <"$SPS_DB/world"
+        ;;
+    --orphans)
+        [ "$#" -eq 1 ] || { sps_usage >&2; exit 2; }
+        sps_require_installed
+        [ -f "$SPS_DB/world" ] && [ ! -L "$SPS_DB/world" ] ||
+            sps_fail 11 "world database is missing or unsafe"
+        awk -v sps_action=world-validate -v sps_program=pkstat \
+            -f "$SPS_LIBDIR/db.awk" "$SPS_DB/world" ||
+            sps_fail 11 "world database is malformed"
+        set -- "$sps_installed"/*/meta
+        [ -f "$1" ] || exit 0
+        awk -v world="$SPS_DB/world" '
+            function depname(spec,    p) {
+                p=match(spec, />=|<=|=|>|</)
+                if (p) spec=substr(spec,1,RSTART-1)
+                return spec
+            }
+            function visit(pkg,    k,a) {
+                if (reachable[pkg]++) return
+                for (k in edge) {
+                    split(k,a,SUBSEP)
+                    if (a[1] == pkg && (a[2] in installed)) visit(a[2])
+                }
+            }
+            BEGIN {
+                while ((getline name < world) > 0) if (name != "") root[name]=1
+                close(world)
+            }
+            FNR == 1 {
+                package=FILENAME
+                sub(/\/meta$/, "", package)
+                sub(/^.*\//, "", package)
+                installed[package]=1
+            }
+            {
+                pos=match($0, /[[:space:]]/)
+                if (!pos) next
+                key=substr($0,1,pos-1)
+                if (key != "depend") next
+                value=substr($0,pos)
+                sub(/^[[:space:]]+/, "", value)
+                gsub(/,/, " ", value)
+                n=split(value, part, /[[:space:]]+/)
+                for (i=1;i<=n;i++) {
+                    d=depname(part[i])
+                    if (d != "") edge[package SUBSEP d]=1
+                }
+            }
+            END {
+                for (package in root) if (package in installed) visit(package)
+                for (package in installed) if (!(package in reachable)) print package
+            }
+        ' "$@" | LC_ALL=C sort
+        ;;
+    --size)
+        [ "$#" -eq 2 ] || { sps_usage >&2; exit 2; }
+        sps_record_for "$2"
+        [ -f "$sps_record/files" ] && [ ! -L "$sps_record/files" ] ||
+            sps_fail 11 "installed manifest for '$2' is missing"
+        awk -v sps_action=validate-paths -v sps_program=pkstat \
+            -f "$SPS_LIBDIR/package.awk" "$sps_record/files" ||
+            sps_fail 11 "installed manifest for '$2' is malformed"
+        sps_size=0
+        while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+            case $sps_entry in */) continue ;; esac
+            sps_target_path "$sps_entry"
+            if [ -f "$sps_target" ] && [ ! -L "$sps_target" ]; then
+                sps_bytes=$(wc -c <"$sps_target") || sps_fail 8 "cannot read /$sps_entry"
+                sps_size=$((sps_size + sps_bytes))
+            fi
+        done <"$sps_record/files"
+        printf '%s %s\n' "$2" "$sps_size"
+        ;;
+    --*)
+        sps_usage >&2
+        exit 2
+        ;;
+    '')
+        sps_require_installed
+        for sps_record in "$sps_installed"/*; do
+            [ -d "$sps_record" ] || continue
+            [ ! -L "$sps_record" ] || sps_fail 11 "unsafe installed record '${sps_record##*/}'"
+            sps_name=${sps_record##*/}
+            sps_summary "$sps_name"
+        done
+        ;;
+    *)
+        [ "$#" -eq 1 ] || { sps_usage >&2; exit 2; }
+        sps_record_for "$1"
+        awk -v sps_action=validate-meta -v sps_program=pkstat \
+            -f "$SPS_LIBDIR/package.awk" "$sps_record/meta" ||
+            sps_fail 11 "installed metadata for '$1' is malformed"
+        awk '
+            {
+                pos = match($0, /[[:space:]]/)
+                if (!pos) { print; next }
+                key = substr($0, 1, pos - 1)
+                value = substr($0, pos)
+                sub(/^[[:space:]]+/, "", value)
+                printf "%-12s %s\n", key, value
+            }
+        ' "$sps_record/meta"
+        ;;
+esac
+exit 0

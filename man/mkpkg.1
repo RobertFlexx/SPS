@@ -1,0 +1,82 @@
+.TH MKPKG 1 "2026-08-30" "SPS 1.0" "SPS Commands"
+.SH NAME
+mkpkg \- build an SPS source recipe into a binary package
+.SH SYNOPSIS
+.B mkpkg
+.RI [ options ]
+.RI [ recipe ]
+.SH DESCRIPTION
+.B mkpkg
+reads declarative metadata from a recipe, verifies sources, executes only the
+named build phase records, stages installation away from the live root,
+generates SPS metadata, manifests, and hashes, then writes a standard tar package.
+The default recipe is
+.BR ./recipe .
+A directory argument means its
+.B recipe
+file.
+.SH OPTIONS
+.TP
+.BI "-o, --output " dir
+Write the completed package to DIR.
+.TP
+.BI "-C, --compression " type
+Select
+.BR auto ,
+.BR none ,
+.BR gzip ,
+.BR xz ,
+or
+.BR zstd .
+.TP
+.B --no-download
+Require remote sources to already exist in the source cache.
+.TP
+.B --keep-build
+Keep build and staging directories for inspection after exit.
+.SH RECIPES
+Required keys are
+.BR name ,
+.BR version ,
+and
+.BR release .
+Common repeatable keys include
+.BR source ,
+.BR hash ,
+.BR depend ,
+.BR builddep ,
+.B optional
+and the phase records
+.BR prepare ,
+.BR configure ,
+.BR build ,
+and
+.BR install .
+Metadata parsing never executes these phase records.
+.PP
+A recipe directory may provide explicit lifecycle scripts in
+.B hooks/pre-install,
+hooks/post-install, hooks/pre-remove, and hooks/post-remove. No other hook
+names are accepted.
+.SH ENVIRONMENT
+.B SPS_ARCH
+provides the default architecture.
+.B SPS_MAKEJOBS
+provides per-package parallelism and is exposed to build commands as
+.BR MAKEJOBS .
+.B SPS_CACHE
+contains downloaded sources;
+.B SPS_BUILD
+contains temporary build/staging trees.
+.SH OUTPUT
+On success the final stdout line is the absolute or requested path of the
+created package artifact, suitable for consumption by
+.BR sget (1).
+.SH EXIT STATUS
+Returns 0 on success, 2 for usage, 3 for missing recipe/source, 4 for invalid
+metadata/package content, 6 for checksum failure, 8 for filesystem failure,
+9 for download failure, and 10 for build failure.
+.SH SEE ALSO
+.BR sget (1),
+.BR pkin (1),
+.BR sps.conf (5)

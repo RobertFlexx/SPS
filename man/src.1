@@ -1,0 +1,61 @@
+.TH SRC 1 "2026-08-30" "SPS 1.0" "SPS Commands"
+.SH NAME
+src \- update and query SPS source repository indexes
+.SH SYNOPSIS
+.nf
+src update
+src search PATTERN [--raw]
+src show PACKAGE [--raw]
+src which PACKAGE
+src list [--raw]
+src status [--raw]
+.fi
+.SH DESCRIPTION
+.B src
+manages source repository metadata. It never builds or installs packages.
+Configured repositories are local directory trees. Use git, rsync, a release
+archive, or a distribution update script to put repository data on disk.
+.SH COMMANDS
+.TP
+.B update
+Scan configured repositories, validate recipes, and atomically replace the
+local package index. Invalid input leaves the previous index in place.
+.TP
+.BI search " pattern"
+Search indexed names and descriptions.
+.TP
+.BI show " package"
+Display the selected package record.
+.TP
+.BI which " package"
+Show the selected repository and lower-priority candidates.
+.TP
+.B list
+List configured repositories.
+.TP
+.B status
+Show repository paths, priorities, and index state.
+.PP
+.B --raw
+selects stable tab-separated output where supported.
+.SH SELECTION
+Higher numeric repository priority wins. Configuration order breaks equal
+priority, followed by lexical recipe path for deterministic selection.
+.SH FILES
+.TP
+.B /etc/sps/sps.conf
+General SPS configuration.
+.TP
+.B /etc/sps/repos.conf
+Repository declarations.
+.TP
+.B $SPS_CACHE/indexes/packages.index
+Generated local package index.
+.SH EXIT STATUS
+Returns 0 on success, 2 for usage/configuration, 3 for missing index/package,
+4 for malformed recipes/indexes, 6 for hashing failure, and 8 for permission
+failure.
+.SH SEE ALSO
+.BR sget (1),
+.BR mkpkg (1),
+.BR sps.conf (5)

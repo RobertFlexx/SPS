@@ -1,0 +1,783 @@
+#!/bin/sh
+# Build one SPS package from a recipe.
+
+set -eu
+
+prog=${0##*/}
+keep_build=0
+no_download=0
+compression=
+compression_set=0
+output_dir=.
+recipe=
+build_dir=
+stage_dir=
+
+usage()
+{
+	cat <<EOF
+usage: $prog [options] [recipe]
+
+Build the given recipe (default: ./recipe) into an SPS package archive.
+
+options:
+  -o, --output DIR          write the package to DIR
+  -C, --compression TYPE   auto, none, gzip, xz, or zstd
+      --no-download        use only local sources and cached downloads
+      --keep-build         retain build and staging directories
+  -h, --help               show this help
+EOF
+}
+
+say()
+{
+	printf '%s: %s\n' "$prog" "$*" >&2
+}
+
+die()
+{
+	say "$*"
+	exit 1
+}
+
+die_status()
+{
+	die_code=$1
+	shift
+	say "$*"
+	exit "$die_code"
+}
+
+cleanup()
+{
+	cleanup_status=$?
+	trap - 0 HUP INT TERM
+	if [ "$keep_build" -eq 1 ]; then
+		[ -z "$build_dir" ] || say "build directory retained at $build_dir"
+		[ -z "$stage_dir" ] || say "stage directory retained at $stage_dir"
+	else
+		[ -z "$build_dir" ] || rm -rf "$build_dir"
+		[ -z "$stage_dir" ] || rm -rf "$stage_dir"
+	fi
+	exit "$cleanup_status"
+}
+
+trap cleanup 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+while [ "$#" -gt 0 ]; do
+	case $1 in
+		-o|--output)
+			[ "$#" -ge 2 ] || die_status 2 "$1 requires a directory"
+			output_dir=$2
+			shift 2
+			;;
+		--output=*)
+			output_dir=${1#*=}
+			[ -n "$output_dir" ] || die_status 2 "--output requires a directory"
+			shift
+			;;
+		-C|--compression)
+			[ "$#" -ge 2 ] || die_status 2 "$1 requires a type"
+			compression=$2
+			compression_set=1
+			shift 2
+			;;
+		--compression=*)
+			compression=${1#*=}
+			compression_set=1
+			[ -n "$compression" ] || die_status 2 "--compression requires a type"
+			shift
+			;;
+		--no-download)
+			no_download=1
+			shift
+			;;
+		--keep-build)
+			keep_build=1
+			shift
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		-*)
+			die_status 2 "unknown option: $1"
+			;;
+		*)
+			[ -z "$recipe" ] || die_status 2 "only one recipe may be specified"
+			recipe=$1
+			shift
+			;;
+	esac
+done
+
+if [ "$#" -gt 0 ]; then
+	[ -z "$recipe" ] || die_status 2 "only one recipe may be specified"
+	[ "$#" -eq 1 ] || die_status 2 "only one recipe may be specified"
+	recipe=$1
+fi
+
+[ -n "$recipe" ] || recipe=./recipe
+if [ -d "$recipe" ]; then
+	recipe=$recipe/recipe
+fi
+[ -f "$recipe" ] || die_status 3 "recipe not found: $recipe"
+[ -r "$recipe" ] || die_status 8 "recipe is not readable: $recipe"
+
+script_dir=$(CDPATH= cd "$(dirname "$0")" 2>/dev/null && pwd) ||
+	die "cannot determine program directory"
+common_file=
+if [ -n "${SPS_LIBDIR:-}" ] && [ -r "$SPS_LIBDIR/common.sh" ]; then
+	common_file=$SPS_LIBDIR/common.sh
+elif [ -r "$script_dir/../lib/common.sh" ]; then
+	# Running from the source tree.
+	common_file=$script_dir/../lib/common.sh
+elif [ -r "$script_dir/../lib/sps/common.sh" ]; then
+	# Normal installed layout.
+	common_file=$script_dir/../lib/sps/common.sh
+elif [ -r /usr/lib/sps/common.sh ]; then
+	common_file=/usr/lib/sps/common.sh
+elif [ -r /usr/local/lib/sps/common.sh ]; then
+	common_file=/usr/local/lib/sps/common.sh
+fi
+[ -n "$common_file" ] || die "cannot locate lib/common.sh (set SPS_LIBDIR)"
+
+# shellcheck source=../lib/common.sh
+. "$common_file"
+command -v sps_load_config >/dev/null 2>&1 ||
+	die "lib/common.sh does not provide sps_load_config"
+sps_load_config
+
+if [ "$compression_set" -eq 0 ]; then
+	compression=${SPS_COMPRESSION:-auto}
+fi
+case $compression in
+	zst) compression=zstd ;;
+esac
+case $compression in
+	auto|none|gzip|xz|zstd) ;;
+	*) die_status 2 "unsupported compression type '$compression'" ;;
+esac
+
+: "${SPS_ROOT:=/}"
+: "${SPS_DB:=$SPS_ROOT/var/lib/sps}"
+: "${SPS_CACHE:=$SPS_ROOT/var/cache/sps}"
+: "${SPS_BUILD:=${TMPDIR:-/tmp}/sps}"
+
+makejobs=${MAKEJOBS:-${SPS_MAKEJOBS:-1}}
+case $makejobs in
+	''|*[!0-9]*|0) die_status 2 "MAKEJOBS must be a positive integer" ;;
+esac
+
+command -v awk >/dev/null 2>&1 || die "awk is required"
+command -v tar >/dev/null 2>&1 || die "tar is required"
+command -v mktemp >/dev/null 2>&1 || die "mktemp is required"
+
+recipe_dir=$(CDPATH= cd "$(dirname "$recipe")" 2>/dev/null && pwd) ||
+	die "cannot enter recipe directory"
+recipe_file=$recipe_dir/$(basename "$recipe")
+default_arch=${SPS_ARCH:-}
+if [ -z "$default_arch" ]; then
+    default_arch=$(uname -m 2>/dev/null) || die "cannot determine build architecture"
+fi
+
+mkdir -p "$SPS_BUILD/build" "$SPS_BUILD/stage" "$SPS_CACHE/sources" ||
+	die_status 8 "cannot create SPS build directories"
+build_dir=$(mktemp -d "$SPS_BUILD/build/mkpkg.XXXXXX") ||
+	die_status 8 "cannot create a secure build directory"
+stage_dir=$(mktemp -d "$SPS_BUILD/stage/mkpkg.XXXXXX") ||
+	die_status 8 "cannot create a secure stage directory"
+
+records=$build_dir/recipe.records
+parse_errors=$build_dir/recipe.errors
+
+# Fold continued recipe lines into key/value records. Metadata stays data here;
+# build commands are handled later.
+if ! awk -v err="$parse_errors" '
+function report(n, message) {
+	print FILENAME ":" n ": " message > err
+	bad = 1
+}
+function allowed(key) {
+	return key == "name" || key == "version" || key == "release" ||
+	       key == "arch" || key == "description" || key == "source" ||
+	       key == "hash" || key == "depend" || key == "builddep" ||
+	       key == "optional" || key == "prepare" || key == "configure" ||
+	       key == "build" || key == "install"
+}
+function emit(text, n, key, value, at) {
+	sub(/^[[:space:]]+/, "", text)
+	if (text == "" || text ~ /^#/) return
+	at = match(text, /[[:space:]]/)
+	if (!at) {
+		report(n, "expected a key followed by a value")
+		return
+	}
+	key = substr(text, 1, at - 1)
+	value = substr(text, at + 1)
+	sub(/^[[:space:]]+/, "", value)
+	sub(/[[:space:]]+$/, "", value)
+	if (!allowed(key)) {
+		report(n, "unknown recipe key \047" key "\047")
+		return
+	}
+	if (value == "") {
+		report(n, "empty value for \047" key "\047")
+		return
+	}
+	if (value ~ /\t/) {
+		report(n, "tab characters are not permitted in values")
+		return
+	}
+	print key "\t" value
+}
+{
+	line = $0
+	sub(/\r$/, "", line)
+	if (continued) {
+		sub(/^[[:space:]]+/, "", line)
+		logical = logical line
+	} else {
+		logical = line
+		start = NR
+	}
+	if (logical ~ /\\[[:space:]]*$/) {
+		sub(/\\[[:space:]]*$/, "", logical)
+		logical = logical " "
+		continued = 1
+		next
+	}
+	emit(logical, start)
+	logical = ""
+	continued = 0
+}
+END {
+	if (continued) report(start, "unterminated continuation")
+	if (bad) exit 1
+}
+' "$recipe_file" >"$records"; then
+	[ ! -s "$parse_errors" ] || cat "$parse_errors" >&2
+	die_status 4 "invalid recipe"
+fi
+
+# Read name/version/release/arch without sourcing the recipe.
+expanded=$build_dir/recipe.expanded
+validation_errors=$build_dir/validation.errors
+if ! awk -F '\t' -v err="$validation_errors" -v default_arch="$default_arch" '
+function report(message) {
+	print FILENAME ": " message > err
+	bad = 1
+}
+function replace(text, token, value, at, out) {
+	out = ""
+	while ((at = index(text, token)) != 0) {
+		out = out substr(text, 1, at - 1) value
+		text = substr(text, at + length(token))
+	}
+	return out text
+}
+NR == FNR {
+	key = $1
+	value = substr($0, index($0, "\t") + 1)
+	if (key == "name" || key == "version" || key == "release" ||
+	    key == "arch" || key == "description") {
+		count[key]++
+		if (count[key] > 1) report("duplicate \047" key "\047 record")
+		value_for[key] = value
+	}
+	if (key == "source") source_count++
+	if (key == "hash") hash_count++
+	if (key == "install") install_count++
+	next
+}
+{
+	if (!second_file) {
+		second_file = 1
+		if (!("arch" in value_for)) {
+			value_for["arch"] = default_arch
+			print "arch\t" default_arch
+		}
+	}
+	key = $1
+	value = substr($0, index($0, "\t") + 1)
+	value = replace(value, "${name}", value_for["name"])
+	value = replace(value, "${version}", value_for["version"])
+	value = replace(value, "${release}", value_for["release"])
+	value = replace(value, "${arch}", value_for["arch"])
+	print key "\t" value
+}
+END {
+	if (!("name" in value_for)) report("missing required \047name\047 record")
+	if (!("version" in value_for)) report("missing required \047version\047 record")
+	if (!("release" in value_for)) report("missing required \047release\047 record")
+	if (source_count != hash_count)
+		report("each source must have one corresponding hash")
+	if (!install_count) report("missing required \047install\047 command")
+	if (bad) exit 1
+}
+' "$records" "$records" >"$expanded"; then
+	[ ! -s "$validation_errors" ] || cat "$validation_errors" >&2
+	die_status 4 "invalid recipe"
+fi
+
+record_values()
+{
+	awk -F '\t' -v wanted="$1" '
+	$1 == wanted { print substr($0, index($0, "\t") + 1) }
+	' "$expanded"
+}
+
+name=$(record_values name)
+version=$(record_values version)
+release=$(record_values release)
+arch=$(record_values arch)
+
+for field in name version release arch; do
+	case $field in
+		name) value=$name ;;
+		version) value=$version ;;
+		release) value=$release ;;
+		arch) value=$arch ;;
+	esac
+	if [ "$field" = name ]; then
+		case $value in
+			''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+-]*)
+				die_status 4 "invalid $field '$value'"
+				;;
+		esac
+	else
+		case $value in
+			''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+~-]*)
+				die_status 4 "invalid $field '$value'"
+				;;
+		esac
+	fi
+	case $value in
+		[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]*) ;;
+		*) die_status 4 "$field must begin with an alphanumeric character" ;;
+	esac
+done
+
+sources=$build_dir/sources.list
+hashes=$build_dir/source-hashes.list
+record_values source >"$sources"
+record_values hash >"$hashes"
+
+if ! awk -v err="$validation_errors" '
+{
+	value = $0
+	if (value !~ /^sha256:/) {
+		print "unsupported source hash \047" value "\047 (expected sha256:<hex>)" > err
+		bad = 1
+		next
+	}
+	hex = substr(value, 8)
+	if (length(hex) != 64 || hex !~ /^[0123456789abcdefABCDEF]+$/) {
+		print "invalid sha256 hash \047" value "\047" > err
+		bad = 1
+	}
+}
+END { if (bad) exit 1 }
+' "$hashes"; then
+	cat "$validation_errors" >&2
+	die_status 4 "invalid recipe"
+fi
+
+sha256_file()
+{
+    sps_sha256 "$1"
+}
+
+verify_source()
+{
+	verify_file=$1
+	verify_record=$2
+	verify_expected=${verify_record#sha256:}
+	verify_expected=$(printf '%s\n' "$verify_expected" | tr 'ABCDEF' 'abcdef')
+	verify_actual=$(sha256_file "$verify_file") ||
+		die_status 10 "cannot hash source $verify_file"
+	verify_actual=$(printf '%s\n' "$verify_actual" | tr 'ABCDEF' 'abcdef')
+	[ "$verify_actual" = "$verify_expected" ] ||
+		die_status 6 "checksum failure for ${verify_file##*/}: expected $verify_expected, got $verify_actual"
+}
+
+source_name()
+{
+	source_value=$1
+	case $source_value in
+		http://*|https://*)
+			source_leaf=${source_value%%\?*}
+			source_leaf=${source_leaf%%\#*}
+			;;
+		file://*) source_leaf=${source_value#file://} ;;
+		*) source_leaf=$source_value ;;
+	esac
+	source_leaf=${source_leaf%/}
+	source_leaf=${source_leaf##*/}
+	case $source_leaf in
+		''|.|..|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+~-]*)
+			die_status 4 "source has an unsafe or unusable file name: $source_value"
+			;;
+	esac
+	printf '%s\n' "$source_leaf"
+}
+
+download_http()
+{
+	download_url=$1
+	download_dest=$2
+	if command -v curl >/dev/null 2>&1; then
+		curl -fL -o "$download_dest" "$download_url"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -O "$download_dest" "$download_url"
+	else
+		die_status 9 "cannot download $download_url: curl or wget is required"
+	fi
+}
+
+source_dir=$build_dir/sources
+unpack_dir=$build_dir/work
+mkdir -p "$source_dir" "$unpack_dir"
+source_pairs=$build_dir/source-pairs
+awk 'NR == FNR { source[NR] = $0; next }
+     { print source[FNR] "\t" $0 }' "$sources" "$hashes" >"$source_pairs"
+acquired=$build_dir/acquired.list
+: >"$acquired"
+
+while IFS='	' read -r source hash_record; do
+	[ -n "$source" ] || continue
+	leaf=$(source_name "$source")
+	destination=$source_dir/$leaf
+	if [ -e "$destination" ] || [ -L "$destination" ]; then
+		die_status 4 "duplicate source file name '$leaf'"
+	fi
+
+	case $source in
+		http://*|https://*)
+			expected=${hash_record#sha256:}
+			cache_file=$SPS_CACHE/sources/$expected-$leaf
+			if [ -f "$cache_file" ]; then
+				verify_source "$cache_file" "$hash_record"
+				cp "$cache_file" "$destination" || die "cannot copy cached source $leaf"
+			else
+				[ "$no_download" -eq 0 ] ||
+					die_status 9 "source is not cached and downloads are disabled: $source"
+				download_tmp=$(mktemp "$SPS_CACHE/sources/.download.XXXXXX") ||
+					die_status 8 "cannot create source download file"
+				if ! download_http "$source" "$download_tmp"; then
+					rm -f "$download_tmp"
+					die_status 9 "download failed: $source"
+				fi
+				if ! verify_source "$download_tmp" "$hash_record"; then
+					rm -f "$download_tmp"
+					exit 1
+				fi
+				chmod 644 "$download_tmp"
+				if ! mv "$download_tmp" "$cache_file"; then
+					rm -f "$download_tmp"
+					die "cannot commit source to cache: $cache_file"
+				fi
+				cp "$cache_file" "$destination" || die "cannot copy downloaded source $leaf"
+			fi
+			;;
+		file://*)
+			local_source=${source#file://}
+			[ -f "$local_source" ] || die_status 3 "local source not found: $source"
+			cp "$local_source" "$destination" || die "cannot copy source $source"
+			verify_source "$destination" "$hash_record"
+			;;
+		*)
+			case $source in
+				/*) local_source=$source ;;
+				*) local_source=$recipe_dir/$source ;;
+			esac
+			[ -f "$local_source" ] || die_status 3 "local source not found: $source"
+			cp "$local_source" "$destination" || die "cannot copy source $source"
+			verify_source "$destination" "$hash_record"
+			;;
+	esac
+	printf '%s\n' "$destination" >>"$acquired"
+done <"$source_pairs"
+
+for support in files patches; do
+	if [ -d "$recipe_dir/$support" ] || [ -L "$recipe_dir/$support" ]; then
+		[ -d "$recipe_dir/$support" ] || die "$recipe_dir/$support is not a directory"
+		if [ -e "$source_dir/$support" ] || [ -L "$source_dir/$support" ]; then
+			die_status 4 "source conflicts with recipe $support directory"
+		fi
+		cp -R "$recipe_dir/$support" "$source_dir/$support" ||
+			die "cannot copy recipe $support directory"
+	fi
+done
+
+archive_list()
+{
+	archive=$1
+	case $archive in
+		*.tar) tar -tf "$archive" ;;
+		*.tar.gz|*.tgz) gzip -dc "$archive" | tar -tf - ;;
+		*.tar.xz|*.txz) xz -dc "$archive" | tar -tf - ;;
+		*.tar.zst|*.tzst) zstd -q -dc "$archive" | tar -tf - ;;
+		*.tar.bz2|*.tbz2) bzip2 -dc "$archive" | tar -tf - ;;
+		*) return 2 ;;
+	esac
+}
+
+archive_extract()
+{
+	archive=$1
+	case $archive in
+		*.tar) tar -xf "$archive" -C "$unpack_dir" ;;
+		*.tar.gz|*.tgz) gzip -dc "$archive" | tar -xf - -C "$unpack_dir" ;;
+		*.tar.xz|*.txz) xz -dc "$archive" | tar -xf - -C "$unpack_dir" ;;
+		*.tar.zst|*.tzst) zstd -q -dc "$archive" | tar -xf - -C "$unpack_dir" ;;
+		*.tar.bz2|*.tbz2) bzip2 -dc "$archive" | tar -xf - -C "$unpack_dir" ;;
+		*) return 2 ;;
+	esac
+}
+
+while IFS= read -r archive; do
+	case $archive in
+		*.tar|*.tar.gz|*.tgz|*.tar.xz|*.txz|*.tar.zst|*.tzst|*.tar.bz2|*.tbz2)
+			members=$build_dir/archive.members
+			if ! archive_list "$archive" >"$members"; then
+				die "cannot list source archive ${archive##*/}"
+			fi
+			if ! awk '
+			{
+				path = $0
+				while (sub(/^\.\//, "", path)) { }
+				if (path == "" || path == ".") next
+				if (path ~ /^\// || path ~ /(^|\/)\.\.($|\/)/) {
+					print "unsafe archive member: " $0
+					bad = 1
+				}
+			}
+			END { if (bad) exit 1 }
+			' "$members" >"$build_dir/archive.errors"; then
+				cat "$build_dir/archive.errors" >&2
+				die_status 4 "refusing unsafe source archive ${archive##*/}"
+			fi
+			archive_extract "$archive" || die "cannot extract source archive ${archive##*/}"
+			;;
+	esac
+done <"$acquired"
+
+top_entries=$build_dir/top.entries
+(CDPATH= cd "$unpack_dir" && find . ! -name . -prune -print) |
+	LC_ALL=C sort >"$top_entries"
+top_count=$(awk 'END { print NR + 0 }' "$top_entries")
+if [ "$top_count" -eq 1 ]; then
+	top_entry=$(sed -n '1p' "$top_entries")
+	top_entry=${top_entry#./}
+	if [ -d "$unpack_dir/$top_entry" ]; then
+		work_dir=$unpack_dir/$top_entry
+	else
+		work_dir=$unpack_dir
+	fi
+else
+	work_dir=$unpack_dir
+fi
+
+# Write each build phase to a temporary script. These are the recipe fields we
+# actually execute.
+for phase in prepare configure build install; do
+	record_values "$phase" >"$build_dir/$phase.sh"
+done
+
+PKG=$stage_dir
+SRC=$source_dir
+WORK=$work_dir
+MAKEJOBS=$makejobs
+export PKG SRC WORK MAKEJOBS
+
+run_phase()
+{
+	phase_name=$1
+	phase_file=$build_dir/$phase_name.sh
+	[ -s "$phase_file" ] || return 0
+	say "running $phase_name phase"
+	if ! (CDPATH= cd "$WORK" && sh -eu "$phase_file"); then
+		die_status 10 "$phase_name phase failed"
+	fi
+}
+
+run_phase prepare
+run_phase configure
+run_phase build
+run_phase install
+
+if [ -e "$stage_dir/.SPS" ] || [ -L "$stage_dir/.SPS" ]; then
+	die_status 10 "install phase attempted to provide reserved .SPS metadata"
+fi
+
+# Hooks live beside the recipe. Only the four documented hook names are valid.
+if [ -e "$recipe_dir/hooks" ] || [ -L "$recipe_dir/hooks" ]; then
+    [ -d "$recipe_dir/hooks" ] && [ ! -L "$recipe_dir/hooks" ] ||
+        die_status 4 "recipe hooks must be a real directory"
+    hook_list=$build_dir/hooks.list
+    (CDPATH= cd "$recipe_dir/hooks" && find . ! -name . -prune -print) >"$hook_list"
+    while IFS= read -r hook_entry || [ -n "$hook_entry" ]; do
+        hook_name=${hook_entry#./}
+        case $hook_name in
+            pre-install|post-install|pre-remove|post-remove) ;;
+            *) die_status 4 "unsupported recipe hook '$hook_name'" ;;
+        esac
+        [ -f "$recipe_dir/hooks/$hook_name" ] && [ ! -L "$recipe_dir/hooks/$hook_name" ] ||
+            die_status 4 "hook '$hook_name' must be a regular file"
+    done <"$hook_list"
+fi
+
+special_files=$build_dir/special-files
+(CDPATH= cd "$stage_dir" &&
+	find . ! -type d ! -type f ! -type l -print) >"$special_files"
+if [ -s "$special_files" ]; then
+	sed 's#^./##; s#^#unsupported staged file type: #' "$special_files" >&2
+	die_status 10 "package contains unsupported filesystem objects"
+fi
+
+payload_count=$(CDPATH= cd "$stage_dir" && find . ! -name . -prune -print |
+	awk 'END { print NR + 0 }')
+[ "$payload_count" -gt 0 ] || die_status 10 "install phase produced an empty package"
+
+mkdir "$stage_dir/.SPS" || die "cannot create package metadata directory"
+if [ -d "$recipe_dir/hooks" ]; then
+    mkdir "$stage_dir/.SPS/hooks" || die "cannot create hook metadata directory"
+    for hook_name in pre-install post-install pre-remove post-remove; do
+        [ -f "$recipe_dir/hooks/$hook_name" ] || continue
+        cp "$recipe_dir/hooks/$hook_name" "$stage_dir/.SPS/hooks/$hook_name" ||
+            die "cannot copy hook '$hook_name'"
+        chmod 0644 "$stage_dir/.SPS/hooks/$hook_name" ||
+            die "cannot set hook mode '$hook_name'"
+    done
+fi
+meta=$stage_dir/.SPS/meta
+files=$stage_dir/.SPS/files
+file_hashes=$stage_dir/.SPS/hashes
+
+awk -F '\t' '
+BEGIN { print "format\t1" }
+$1 == "name" || $1 == "version" || $1 == "release" || $1 == "arch" ||
+$1 == "description" {
+	scalar[$1] = $0
+	next
+}
+$1 == "source" || $1 == "hash" || $1 == "depend" ||
+$1 == "builddep" || $1 == "optional" {
+	repeated[++count] = $0
+}
+END {
+	key[1] = "name"
+	key[2] = "version"
+	key[3] = "release"
+	key[4] = "arch"
+	key[5] = "description"
+	for (i = 1; i <= 5; i++)
+		if (key[i] in scalar) print scalar[key[i]]
+	for (i = 1; i <= count; i++) print repeated[i]
+}
+' "$expanded" >"$meta"
+
+(
+	CDPATH= cd "$stage_dir"
+	find . -type d -print | awk '
+	$0 != "." && $0 !~ /^\.\/\.SPS($|\/)/ {
+		sub(/^\.\//, "")
+		print $0 "/"
+	}'
+	find . ! -type d -print | awk '
+	$0 !~ /^\.\/\.SPS($|\/)/ {
+		sub(/^\.\//, "")
+		print
+	}'
+) | LC_ALL=C sort >"$files"
+
+: >"$file_hashes"
+while IFS= read -r payload; do
+	case $payload in
+		*/) continue ;;
+	esac
+	payload_file=$stage_dir/$payload
+	if [ -f "$payload_file" ] && [ ! -L "$payload_file" ]; then
+		payload_hash=$(sha256_file "$payload_file") ||
+			die_status 10 "cannot hash staged file $payload"
+		printf 'sha256\t%s\t%s\n' "$payload_hash" "$payload" >>"$file_hashes"
+	fi
+done <"$files"
+
+if [ "$compression" = auto ]; then
+	if command -v zstd >/dev/null 2>&1; then
+		compression=zstd
+	elif command -v xz >/dev/null 2>&1; then
+		compression=xz
+	elif command -v gzip >/dev/null 2>&1; then
+		compression=gzip
+	else
+		compression=none
+	fi
+fi
+
+case $compression in
+	zstd) command -v zstd >/dev/null 2>&1 || die_status 10 "zstd compression requested but zstd is unavailable" ;;
+	xz) command -v xz >/dev/null 2>&1 || die_status 10 "xz compression requested but xz is unavailable" ;;
+	gzip) command -v gzip >/dev/null 2>&1 || die_status 10 "gzip compression requested but gzip is unavailable" ;;
+esac
+
+mkdir -p "$output_dir" || die "cannot create output directory: $output_dir"
+output_dir=$(CDPATH= cd "$output_dir" 2>/dev/null && pwd) ||
+	die "cannot enter output directory"
+base=$name-$version-$release-$arch.pkg.tar
+case $compression in
+	none) suffix= ;;
+	gzip) suffix=.gz ;;
+	xz) suffix=.xz ;;
+	zstd) suffix=.zst ;;
+esac
+artifact=$output_dir/$base$suffix
+[ ! -e "$artifact" ] || die_status 7 "output package already exists: $artifact"
+
+plain_archive=$build_dir/$base
+if ! tar -cf "$plain_archive" -C "$stage_dir" .; then
+	die_status 10 "cannot create package archive"
+fi
+
+output_tmp=$(mktemp "$output_dir/.mkpkg.XXXXXX") ||
+	die_status 8 "cannot create temporary output file"
+case $compression in
+	none)
+		if ! cp "$plain_archive" "$output_tmp"; then
+			rm -f "$output_tmp"
+			die_status 10 "cannot write package archive"
+		fi
+		;;
+	gzip)
+		if ! gzip -n -c "$plain_archive" >"$output_tmp"; then
+			rm -f "$output_tmp"
+			die_status 10 "gzip compression failed"
+		fi
+		;;
+	xz)
+		if ! xz -c "$plain_archive" >"$output_tmp"; then
+			rm -f "$output_tmp"
+			die_status 10 "xz compression failed"
+		fi
+		;;
+	zstd)
+		if ! zstd -q -c "$plain_archive" >"$output_tmp"; then
+			rm -f "$output_tmp"
+			die_status 10 "zstd compression failed"
+		fi
+		;;
+esac
+chmod 644 "$output_tmp"
+mv "$output_tmp" "$artifact" || die "cannot commit package archive: $artifact"
+
+# Keep stdout clean for sget: one artifact path.
+printf '%s\n' "$artifact"

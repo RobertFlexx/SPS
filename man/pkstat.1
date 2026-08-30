@@ -1,0 +1,42 @@
+.TH PKSTAT 1 "2026-08-30" "SPS 1.0" "SPS Commands"
+.SH NAME
+pkstat \- inspect locally installed SPS package state
+.SH SYNOPSIS
+.nf
+pkstat [PACKAGE]
+pkstat --files PACKAGE
+pkstat --owns PATH
+pkstat --explicit
+pkstat --orphans
+pkstat --size PACKAGE
+.fi
+.SH DESCRIPTION
+.B pkstat
+answers installed-state queries entirely from local metadata. It does not
+refresh repositories or access the network.
+.SH OPTIONS
+.TP
+.BI --files " package"
+List the package manifest.
+.TP
+.BI --owns " path"
+Print the package owning a non-directory payload path.
+.TP
+.B --explicit
+List the explicit world set.
+.TP
+.B --orphans
+List dependency-installed packages unreachable from every explicit world root
+through installed runtime dependency records. This is graph reachability, so
+entire abandoned dependency chains are reported.
+.TP
+.BI --size " package"
+Print the current byte size of regular files in the package manifest.
+.SH EXIT STATUS
+Returns 0 on success, 2 for usage, 3 for missing package/owner, 8 for
+unreadable filesystem state, and 11 for malformed/unavailable database state.
+.SH SEE ALSO
+.BR pkcheck (1),
+.BR pkmark (1),
+.BR pkin (1),
+.BR pkdel (1)

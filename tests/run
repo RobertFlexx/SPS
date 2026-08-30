@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+case $0 in
+	*/*) test_dir=${0%/*} ;;
+	*) test_dir=. ;;
+esac
+test_dir=$(CDPATH= cd -- "$test_dir" 2>/dev/null && pwd)
+
+status=0
+count=0
+for test_file in "$test_dir"/test_*.sh; do
+	[ -f "$test_file" ] || continue
+	count=$((count + 1))
+	printf '%s\n' "==> ${test_file##*/}"
+	if "${TEST_SHELL:-/bin/sh}" "$test_file"; then
+		printf '%s\n' "ok - ${test_file##*/}"
+	else
+		printf '%s\n' "not ok - ${test_file##*/}" >&2
+		status=1
+	fi
+done
+
+[ "$count" -gt 0 ] || {
+	printf '%s\n' 'tests/run: no tests found' >&2
+	exit 1
+}
+
+exit "$status"
+

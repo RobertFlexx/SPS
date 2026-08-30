@@ -1,0 +1,330 @@
+#!/bin/sh
+
+sps_prog=pkcheck
+sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
+if [ -z "${SPS_LIBDIR+x}" ]; then
+    if [ -r "$sps_bin_dir/../lib/common.sh" ]; then
+        SPS_LIBDIR=$sps_bin_dir/../lib
+    else
+        SPS_LIBDIR=$sps_bin_dir/../lib/sps
+    fi
+fi
+if ! . "$SPS_LIBDIR/common.sh"; then
+    printf '%s\n' "pkcheck: cannot load $SPS_LIBDIR/common.sh" >&2
+    exit 1
+fi
+sps_load_config || exit $?
+
+sps_usage()
+{
+    cat <<'EOF'
+usage: pkcheck [PACKAGE]
+       pkcheck --all
+       pkcheck --missing [PACKAGE]
+       pkcheck --modified [PACKAGE]
+       pkcheck --database
+EOF
+}
+
+sps_fail()
+{
+    sps_code=$1
+    shift
+    printf '%s: %s\n' "$sps_prog" "$*" >&2
+    exit "$sps_code"
+}
+
+sps_exists()
+{
+    [ -f "$1" ] || [ -d "$1" ] || [ -L "$1" ]
+}
+
+sps_target_path()
+{
+    case $SPS_ROOT in
+        /) sps_target=/$1 ;;
+        */) sps_target=$SPS_ROOT$1 ;;
+        *) sps_target=$SPS_ROOT/$1 ;;
+    esac
+}
+
+sps_db_issue()
+{
+    printf 'database: %s\n' "$*"
+    sps_db_bad=1
+}
+
+sps_work=$(sps_mktemp_dir "${TMPDIR:-/tmp}" check) ||
+    sps_fail 8 "cannot create a secure verification workspace"
+sps_cleanup()
+{
+    sps_status=$?
+    trap - 0 1 2 3 15
+    [ -n "$sps_work" ] && [ -d "$sps_work" ] && rm -rf "$sps_work"
+    exit "$sps_status"
+}
+trap sps_cleanup 0
+trap 'exit 130' 1 2 3 15
+
+sps_tab=$(printf '\tX')
+sps_tab=${sps_tab%X}
+sps_installed=$SPS_DB/installed
+sps_db_bad=0
+sps_fs_bad=0
+
+sps_validate_record()
+{
+    sps_check_name=$1
+    sps_check_record=$sps_installed/$sps_check_name
+    if [ ! -d "$sps_check_record" ] || [ -L "$sps_check_record" ]; then
+        sps_db_issue "missing or unsafe installed record for '$sps_check_name'"
+        return 1
+    fi
+    for sps_control in meta files hashes; do
+        if [ ! -f "$sps_check_record/$sps_control" ] ||
+           [ -L "$sps_check_record/$sps_control" ]; then
+            sps_db_issue "$sps_check_name: missing or unsafe $sps_control"
+            return 1
+        fi
+    done
+    if [ -e "$sps_check_record/hooks" ] || [ -L "$sps_check_record/hooks" ]; then
+        if [ ! -d "$sps_check_record/hooks" ] || [ -L "$sps_check_record/hooks" ]; then
+            sps_db_issue "$sps_check_name: unsafe hooks directory"
+            return 1
+        fi
+        for sps_hook_path in "$sps_check_record/hooks"/*; do
+            [ -e "$sps_hook_path" ] || [ -L "$sps_hook_path" ] || continue
+            sps_hook_name=${sps_hook_path##*/}
+            case $sps_hook_name in
+                pre-install|post-install|pre-remove|post-remove) ;;
+                *) sps_db_issue "$sps_check_name: unknown hook '$sps_hook_name'"; return 1 ;;
+            esac
+            if [ ! -f "$sps_hook_path" ] || [ -L "$sps_hook_path" ]; then
+                sps_db_issue "$sps_check_name: unsafe hook '$sps_hook_name'"
+                return 1
+            fi
+        done
+    fi
+    if ! awk -v sps_action=validate-meta -v sps_program=pkcheck \
+        -f "$SPS_LIBDIR/package.awk" "$sps_check_record/meta"; then
+        sps_db_issue "$sps_check_name: malformed metadata"
+        return 1
+    fi
+    if ! awk -v sps_action=validate-paths -v sps_program=pkcheck \
+        -f "$SPS_LIBDIR/package.awk" "$sps_check_record/files"; then
+        sps_db_issue "$sps_check_name: malformed manifest"
+        return 1
+    fi
+    if ! awk -v sps_action=validate-hashes -v sps_program=pkcheck \
+        -f "$SPS_LIBDIR/package.awk" "$sps_check_record/hashes"; then
+        sps_db_issue "$sps_check_name: malformed hashes"
+        return 1
+    fi
+    sps_meta_name=$(awk -v sps_action=meta-get -v sps_key_name=name \
+        -v sps_program=pkcheck -f "$SPS_LIBDIR/package.awk" "$sps_check_record/meta") || {
+        sps_db_issue "$sps_check_name: cannot read metadata name"
+        return 1
+    }
+    if [ "$sps_meta_name" != "$sps_check_name" ]; then
+        sps_db_issue "$sps_check_name: metadata names package '$sps_meta_name'"
+        return 1
+    fi
+
+    # Hash records must point at non-directory entries in the manifest.
+    if ! awk -F "$sps_tab" -v manifest="$sps_check_record/files" '
+        BEGIN {
+            while ((getline path < manifest) > 0) {
+                if (path !~ /\/$/) payload[path] = 1
+            }
+            close(manifest)
+        }
+        !($3 in payload) { bad=1 }
+        END { exit bad }
+    ' "$sps_check_record/hashes"; then
+        sps_db_issue "$sps_check_name: hash path is absent from its manifest"
+        return 1
+    fi
+    return 0
+}
+
+sps_check_database()
+{
+    if [ ! -d "$sps_installed" ] || [ -L "$sps_installed" ]; then
+        sps_db_issue "installed database is missing or is not a real directory"
+        return
+    fi
+    for sps_db_control in owners world history; do
+        if [ ! -f "$SPS_DB/$sps_db_control" ] || [ -L "$SPS_DB/$sps_db_control" ]; then
+            sps_db_issue "$sps_db_control is missing or is not a regular file"
+        fi
+    done
+    [ "$sps_db_bad" -eq 0 ] || return
+    if ! awk -v sps_action=owners-validate -v sps_program=pkcheck \
+        -f "$SPS_LIBDIR/db.awk" "$SPS_DB/owners"; then
+        sps_db_issue "owner index is malformed"
+    fi
+    if ! awk -v sps_action=world-validate -v sps_program=pkcheck \
+        -f "$SPS_LIBDIR/db.awk" "$SPS_DB/world"; then
+        sps_db_issue "world file is malformed"
+    fi
+
+    : >"$sps_work/expected.owners"
+    : >"$sps_work/packages"
+    for sps_record in "$sps_installed"/* "$sps_installed"/.[!.]* "$sps_installed"/..?*; do
+        sps_exists "$sps_record" || continue
+        sps_name=${sps_record##*/}
+        case $sps_name in .|..) continue ;; esac
+        if [ ! -d "$sps_record" ] || [ -L "$sps_record" ]; then
+            sps_db_issue "unexpected entry installed/$sps_name"
+            continue
+        fi
+        if ! sps_validate_package_name "$sps_name"; then
+            sps_db_issue "invalid installed record name '$sps_name'"
+            continue
+        fi
+        printf '%s\n' "$sps_name" >>"$sps_work/packages"
+        if sps_validate_record "$sps_name"; then
+            while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+                case $sps_entry in
+                    */) ;;
+                    *) printf '%s\t%s\n' "$sps_entry" "$sps_name" >>"$sps_work/expected.owners" ;;
+                esac
+            done <"$sps_record/files"
+        fi
+    done
+    LC_ALL=C sort "$sps_work/packages" -o "$sps_work/packages"
+    LC_ALL=C sort "$sps_work/expected.owners" -o "$sps_work/expected.owners"
+    LC_ALL=C sort "$SPS_DB/owners" >"$sps_work/actual.owners"
+    if ! cmp -s "$sps_work/expected.owners" "$sps_work/actual.owners"; then
+        sps_db_issue "owner index does not match installed manifests"
+    fi
+    if ! cmp -s "$SPS_DB/owners" "$sps_work/actual.owners"; then
+        sps_db_issue "owner index is not in deterministic sorted order"
+    fi
+    while IFS= read -r sps_name || [ -n "$sps_name" ]; do
+        [ -n "$sps_name" ] || continue
+        if ! awk -v wanted="$sps_name" '$0 == wanted { found=1 } END { exit !found }' \
+            "$sps_work/packages"; then
+            sps_db_issue "world names uninstalled package '$sps_name'"
+        fi
+    done <"$SPS_DB/world"
+}
+
+sps_check_files()
+{
+    sps_name=$1
+    sps_file_mode=$2
+    sps_record=$sps_installed/$sps_name
+    if ! sps_validate_record "$sps_name"; then
+        return
+    fi
+    case $sps_file_mode in
+        both|missing)
+            while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
+                sps_path=${sps_entry%/}
+                sps_target_path "$sps_path"
+                case $sps_entry in
+                    */)
+                        if [ ! -d "$sps_target" ] || [ -L "$sps_target" ]; then
+                            printf 'missing /%s %s\n' "$sps_path" "$sps_name"
+                            sps_fs_bad=1
+                        fi
+                        ;;
+                    *)
+                        if ! sps_exists "$sps_target"; then
+                            printf 'missing /%s %s\n' "$sps_path" "$sps_name"
+                            sps_fs_bad=1
+                        elif [ -d "$sps_target" ] && [ ! -L "$sps_target" ]; then
+                            printf 'modified /%s %s (wrong type)\n' "$sps_path" "$sps_name"
+                            sps_fs_bad=1
+                        fi
+                        ;;
+                esac
+            done <"$sps_record/files"
+            ;;
+    esac
+    case $sps_file_mode in
+        both|modified)
+            while IFS="$sps_tab" read -r sps_algorithm sps_expected sps_path; do
+                [ -n "$sps_algorithm" ] || continue
+                sps_target_path "$sps_path"
+                if ! sps_exists "$sps_target"; then
+                    continue
+                fi
+                if [ ! -f "$sps_target" ] || [ -L "$sps_target" ]; then
+                    printf 'modified /%s %s (wrong type)\n' "$sps_path" "$sps_name"
+                    sps_fs_bad=1
+                    continue
+                fi
+                sps_actual=$(sps_sha256 "$sps_target") || {
+                    printf 'modified /%s %s (unreadable)\n' "$sps_path" "$sps_name"
+                    sps_fs_bad=1
+                    continue
+                }
+                set -- $sps_actual
+                sps_actual=$1
+                if [ "$sps_actual" != "$sps_expected" ]; then
+                    printf 'modified /%s %s\n' "$sps_path" "$sps_name"
+                    sps_fs_bad=1
+                fi
+            done <"$sps_record/hashes"
+            ;;
+    esac
+}
+
+sps_mode=both
+sps_scope=one
+sps_name=
+case ${1-} in
+    -h|--help) sps_usage; exit 0 ;;
+    --database)
+        [ "$#" -eq 1 ] || { sps_usage >&2; exit 2; }
+        sps_mode=database
+        ;;
+    --all)
+        [ "$#" -eq 1 ] || { sps_usage >&2; exit 2; }
+        sps_mode=both
+        sps_scope=all
+        ;;
+    --missing|--modified)
+        sps_mode=${1#--}
+        shift
+        case $# in
+            0) sps_scope=all ;;
+            1) sps_scope=one; sps_name=$1 ;;
+            *) sps_usage >&2; exit 2 ;;
+        esac
+        ;;
+    --*) sps_usage >&2; exit 2 ;;
+    '') sps_usage >&2; exit 2 ;;
+    *)
+        [ "$#" -eq 1 ] || { sps_usage >&2; exit 2; }
+        sps_name=$1
+        ;;
+esac
+
+if [ "$sps_mode" = database ]; then
+    sps_check_database
+    [ "$sps_db_bad" -eq 0 ] || exit 11
+    printf '%s\n' 'database: ok'
+    exit 0
+fi
+
+if [ "$sps_scope" = all ]; then
+    sps_check_database
+    [ "$sps_db_bad" -eq 0 ] || exit 11
+    while IFS= read -r sps_name || [ -n "$sps_name" ]; do
+        [ -n "$sps_name" ] || continue
+        sps_check_files "$sps_name" "$sps_mode"
+    done <"$sps_work/packages"
+else
+    sps_validate_package_name "$sps_name" || sps_fail 2 "invalid package name '$sps_name'"
+    [ -d "$sps_installed" ] && [ ! -L "$sps_installed" ] ||
+        sps_fail 11 "installed database is missing or unsafe"
+    [ -d "$sps_installed/$sps_name" ] && [ ! -L "$sps_installed/$sps_name" ] ||
+        sps_fail 3 "package '$sps_name' is not installed"
+    sps_check_files "$sps_name" "$sps_mode"
+    [ "$sps_db_bad" -eq 0 ] || exit 11
+fi
+[ "$sps_fs_bad" -eq 0 ] || exit 1
+exit 0

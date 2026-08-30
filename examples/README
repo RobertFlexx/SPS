@@ -1,0 +1,18 @@
+SPS recipe examples
+===================
+
+hello/ is a small offline package used by the test suite and as a starting
+point for new recipes.
+
+    cd examples/hello
+    mkpkg --no-download --compression none
+
+Local source paths are resolved from the recipe directory. Downloaded or copied
+sources are available below $SRC. Tar sources are unpacked below $WORK; when an
+archive contains one top-level directory, that directory becomes $WORK.
+
+The install phase writes into $PKG. It must not install directly into the live
+root.
+
+If files/ or patches/ exist beside the recipe, mkpkg copies them to $SRC/files
+and $SRC/patches.

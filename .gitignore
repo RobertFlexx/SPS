@@ -1,0 +1,7 @@
+*.pkg.tar
+*.pkg.tar.gz
+*.pkg.tar.xz
+*.pkg.tar.zst
+*.tmp
+.sps-*
+

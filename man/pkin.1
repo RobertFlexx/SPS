@@ -1,0 +1,59 @@
+.TH PKIN 1 "2026-08-30" "SPS 1.0" "SPS Commands"
+.SH NAME
+pkin \- install or upgrade one SPS binary package
+.SH SYNOPSIS
+.B pkin
+.RB [ --explicit | --dependency ]
+.I package
+.SH DESCRIPTION
+.B pkin
+is the low-level SPS binary installer. It validates one SPS tar archive,
+checks payload hashes, architecture, target paths and ownership conflicts,
+installs below
+.BR SPS_ROOT ,
+and commits plain-text package state. It does not search repositories or solve
+dependencies.
+.SH OPTIONS
+.TP
+.B --explicit
+Add the package to the explicit world set. This is the default.
+.TP
+.B --dependency
+Install without adding the package to the explicit world set.
+.SH CONFIGURATION PRESERVATION
+Regular files below prefixes configured by
+.B SPS_PRESERVE
+(default
+.BR etc )
+are protected when locally modified. On upgrade the local file remains. If the
+new packaged default changed, it is written beside the file as
+.B .sps-new
+(or a versioned .sps-new name when necessary).
+.SH HOOKS
+Visible package hooks may run before/after install or upgrade. A failing
+pre-install hook aborts before payload installation. A failing post-install
+hook returns status 10 after committed package state and history are retained.
+.SH OWNERSHIP
+When run as uid 0, new payload files and package-created directories are
+normalized to uid/gid 0 while keeping their packaged modes. Existing shared
+directories keep their current ownership and mode.
+.SH DATABASE
+Installed records live below
+.BR $SPS_DB/installed .
+.B owners
+maps non-directory payload paths to packages and
+.B world
+contains explicit roots. SPS serializes writers with
+.BR $SPS_DB/.lock
+and can recover a stale lock only when its recorded numeric PID is verifiably
+not alive.
+.SH EXIT STATUS
+Returns 0 on success, 2 for usage, 3 for unavailable archive, 4 for invalid or
+wrong-architecture package, 6 for payload checksum failure, 7 for conflict or
+unsafe target path, 8 for permission/filesystem failure, 10 for hook failure,
+and 11 for package database failure.
+.SH SEE ALSO
+.BR mkpkg (1),
+.BR pkdel (1),
+.BR pkstat (1),
+.BR pkmark (1)

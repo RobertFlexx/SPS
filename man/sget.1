@@ -1,0 +1,100 @@
+.TH SGET 1 "2026-08-30" "SPS 1.0" "SPS Commands"
+.SH NAME
+sget \- resolve and coordinate SPS source packages
+.SH SYNOPSIS
+.nf
+sget search PATTERN [--raw]
+sget info PACKAGE [--raw]
+sget depends PACKAGE [--raw] [--build]
+sget dependees PACKAGE [--build]
+sget why PACKAGE DEPENDENCY [--build]
+sget install [--plan] [--nodeps] [--reinstall] PACKAGE...
+sget upgrade [--plan] [--downgrade]
+sget remove [--plan] [--nodeps] PACKAGE...
+.fi
+.SH DESCRIPTION
+.B sget
+is the high-level SPS coordinator.  It reads the repository index produced by
+.BR src (1),
+resolves package graphs, calls
+.BR mkpkg (1)
+when a binary artifact is not already cached, and hands archives to
+.BR pkin (1).
+It does not refresh repositories implicitly.
+.SH COMMANDS
+.TP
+.BI search " pattern"
+Search selected package names and descriptions.  With
+.B --raw
+print stable tab-separated records.
+.TP
+.BI info " package"
+Show the selected indexed package record.
+.TP
+.BI depends " package"
+Show the runtime dependency closure.  With
+.B --build
+also include build dependencies; with
+.B --raw
+print dependency build order.
+.TP
+.BI dependees " package"
+List selected packages that directly depend on the package.  With
+.B --build
+include build dependencies.
+.TP
+.BI why " package dependency"
+Print one selected dependency path from PACKAGE to DEPENDENCY.  With
+.B --build
+build dependencies may participate.
+.TP
+.BI install " package..."
+Resolve and install requested packages. Requested roots are explicit; packages
+needed only by the graph are dependency-installed. Exact installed roots are
+promoted to explicit without an unnecessary reinstall.
+.TP
+.B upgrade
+Resolve the installed explicit world set and upgrade its selected dependency
+closure. A locally newer installed version is kept unless
+.B --downgrade
+is supplied.
+.TP
+.BI remove " package..."
+Remove packages through
+.BR pkdel (1).
+By default SPS refuses a removal when another installed package outside the
+requested removal set directly requires it.
+.SH OPTIONS
+.TP
+.B --plan
+Print package-level actions without building, installing, removing, or changing
+package state.
+.TP
+.B --nodeps
+For install, operate only on the explicitly named packages. For remove, bypass
+the reverse-dependency safety check. This is an explicit administrator
+override.
+.TP
+.B --reinstall
+With install, rebuild/reinstall an exact selected package when necessary;
+an exact cached binary artifact may be reused.
+.TP
+.B --downgrade
+With upgrade, permit the configured repository selection to replace a newer
+installed version.
+.SH CACHE
+Completed binary artifacts are kept below
+.BR $SPS_CACHE/packages .
+An exact name-version-release-architecture archive may be reused. Distributions
+must increment a package release when build inputs or package behavior change
+without an upstream version change.
+.SH EXIT STATUS
+Returns 0 on success, 2 for usage, 3 for missing package/index state, 4 for
+invalid package metadata or architecture, 5 for dependency failure, and
+otherwise propagates meaningful lower-level build/install/remove statuses.
+.SH SEE ALSO
+.BR src (1),
+.BR mkpkg (1),
+.BR pkin (1),
+.BR pkdel (1),
+.BR pkmark (1)

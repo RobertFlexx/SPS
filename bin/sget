@@ -1,0 +1,616 @@
+#!/bin/sh
+# High-level package and dependency coordinator.
+
+sps_prog=sget
+sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
+if [ -z "${SPS_LIBDIR+x}" ]; then
+    if [ -r "$sps_bin_dir/../lib/common.sh" ]; then
+        SPS_LIBDIR=$sps_bin_dir/../lib
+    else
+        SPS_LIBDIR=$sps_bin_dir/../lib/sps
+    fi
+fi
+if ! . "$SPS_LIBDIR/common.sh"; then
+    printf '%s\n' "sget: cannot load $SPS_LIBDIR/common.sh" >&2
+    exit 1
+fi
+sps_load_config || exit $?
+
+sps_index=$SPS_CACHE/indexes/packages.index
+sps_tab=$(printf '\tX')
+sps_tab=${sps_tab%X}
+
+sget_begin_transaction()
+{
+    if [ -e "$SPS_DB" ] || [ -L "$SPS_DB" ]; then
+        [ -d "$SPS_DB" ] && [ ! -L "$SPS_DB" ] ||
+            sps_die "$SPS_EX_DATABASE" "package database is not a real directory: $SPS_DB"
+    else
+        mkdir -p "$SPS_DB" ||
+            sps_die "$SPS_EX_PERMISSION" "cannot create package database '$SPS_DB'"
+        [ -d "$SPS_DB" ] && [ ! -L "$SPS_DB" ] ||
+            sps_die "$SPS_EX_DATABASE" "package database is not a real directory: $SPS_DB"
+    fi
+    sps_lock_acquire "$SPS_DB" .transaction ||
+        sps_die "$SPS_EX_DATABASE" "another high-level SPS transaction is active: '$SPS_DB/.transaction'"
+}
+
+sget_usage()
+{
+    cat <<'EOF_USAGE'
+usage: sget search PATTERN [--raw]
+       sget info PACKAGE [--raw]
+       sget depends PACKAGE [--raw] [--build]
+       sget dependees PACKAGE [--build]
+       sget why PACKAGE DEPENDENCY [--build]
+       sget install [--plan] [--nodeps] [--reinstall] PACKAGE...
+       sget upgrade [--plan] [--downgrade]
+       sget remove [--plan] [--nodeps] PACKAGE...
+EOF_USAGE
+}
+
+sget_need_index()
+{
+    [ -r "$sps_index" ] ||
+        sps_die "$SPS_EX_NOTFOUND" "repository index not found; run 'src update'"
+}
+
+sget_query()
+{
+    sget_action=$1
+    shift
+    sps_need_arg "$sget_action" "${1-}"
+    sget_value=$1
+    shift
+    sget_raw=0
+    case ${1-} in
+        --raw) sget_raw=1; shift ;;
+    esac
+    [ "$#" -eq 0 ] || { sget_usage >&2; exit "$SPS_EX_USAGE"; }
+    sget_need_index
+
+    case $sget_action in
+        search)
+            sps_tab_safe "$sget_value" ||
+                sps_die "$SPS_EX_USAGE" "search pattern contains a tab or newline"
+            [ "$sget_raw" -eq 0 ] || sget_action=search_raw
+            ;;
+        info)
+            sps_validate_package_name "$sget_value" ||
+                sps_die "$SPS_EX_USAGE" "invalid package name '$sget_value'"
+            [ "$sget_raw" -eq 0 ] && sget_action=show || sget_action=exact
+            ;;
+    esac
+
+    awk -v action="$sget_action" -v query="$sget_value" \
+        -v program=sget -f "$SPS_LIBDIR/index.awk" "$sps_index"
+}
+
+sget_depends()
+{
+    sps_need_arg depends "${1-}"
+    sget_package=$1
+    shift
+    sps_validate_package_name "$sget_package" ||
+        sps_die "$SPS_EX_USAGE" "invalid package name '$sget_package'"
+    sget_dep_action=tree
+    sget_include_build=0
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            --raw) sget_dep_action=order ;;
+            --build) sget_include_build=1 ;;
+            *) sget_usage >&2; exit "$SPS_EX_USAGE" ;;
+        esac
+        shift
+    done
+    sget_need_index
+    awk -v action="$sget_dep_action" -v roots="$sget_package" \
+        -v include_build="$sget_include_build" -v program=sget \
+        -f "$SPS_LIBDIR/version.awk" -f "$SPS_LIBDIR/deps.awk" \
+        "$sps_index"
+}
+
+sget_dependees()
+{
+    sps_need_arg dependees "${1-}"
+    sget_package=$1
+    shift
+    sps_validate_package_name "$sget_package" ||
+        sps_die "$SPS_EX_USAGE" "invalid package name '$sget_package'"
+    sget_include_build=0
+    case ${1-} in --build) sget_include_build=1; shift ;; esac
+    [ "$#" -eq 0 ] || { sget_usage >&2; exit "$SPS_EX_USAGE"; }
+    sget_need_index
+    awk -v action=dependees -v query="$sget_package" \
+        -v include_build="$sget_include_build" -v program=sget \
+        -f "$SPS_LIBDIR/relations.awk" "$sps_index"
+}
+
+sget_why()
+{
+    [ "$#" -ge 2 ] || { sget_usage >&2; exit "$SPS_EX_USAGE"; }
+    sget_root=$1
+    sget_dependency=$2
+    shift 2
+    sps_validate_package_name "$sget_root" ||
+        sps_die "$SPS_EX_USAGE" "invalid package name '$sget_root'"
+    sps_validate_package_name "$sget_dependency" ||
+        sps_die "$SPS_EX_USAGE" "invalid package name '$sget_dependency'"
+    sget_include_build=0
+    case ${1-} in --build) sget_include_build=1; shift ;; esac
+    [ "$#" -eq 0 ] || { sget_usage >&2; exit "$SPS_EX_USAGE"; }
+    sget_need_index
+    awk -v action=why -v root="$sget_root" -v query="$sget_dependency" \
+        -v include_build="$sget_include_build" -v program=sget \
+        -f "$SPS_LIBDIR/relations.awk" "$sps_index"
+}
+
+sget_read_installed()
+{
+    sget_installed_name=$1
+    sget_installed_record=$SPS_DB/installed/$sget_installed_name
+    if [ -L "$sget_installed_record" ] ||
+       { [ -f "$sget_installed_record" ] && [ ! -d "$sget_installed_record" ]; }; then
+        sps_die "$SPS_EX_DATABASE" "installed record for '$sget_installed_name' is unsafe"
+    fi
+    [ -d "$sget_installed_record" ] || return 1
+    [ -f "$sget_installed_record/meta" ] && [ ! -L "$sget_installed_record/meta" ] ||
+        sps_die "$SPS_EX_DATABASE" "installed metadata for '$sget_installed_name' is missing or unsafe"
+    sget_installed_id=$(awk -v sps_action=meta-id -v sps_program=sget \
+        -f "$SPS_LIBDIR/package.awk" "$sget_installed_record/meta") ||
+        sps_die "$SPS_EX_DATABASE" "installed metadata for '$sget_installed_name' is malformed"
+    sget_saved_ifs=$IFS
+    IFS=$sps_tab
+    set -- $sget_installed_id
+    IFS=$sget_saved_ifs
+    [ "$#" -eq 4 ] ||
+        sps_die "$SPS_EX_DATABASE" "installed identity for '$sget_installed_name' is malformed"
+    [ "$1" = "$sget_installed_name" ] ||
+        sps_die "$SPS_EX_DATABASE" "installed record '$sget_installed_name' identifies package '$1'"
+    sget_installed_version=$2
+    sget_installed_release=$3
+    sget_installed_arch=$4
+    return 0
+}
+
+# Compare the selected version/release with what is installed. Prints -1, 0, or 1.
+sget_compare_selected()
+{
+    sget_cmp=$(awk -v version_action=compare -v version_a="$1" -v version_b="$3" \
+        -f "$SPS_LIBDIR/version.awk" /dev/null) || return 1
+    if [ "$sget_cmp" -eq 0 ]; then
+        sget_cmp=$(awk -v version_action=compare -v version_a="$2" -v version_b="$4" \
+            -f "$SPS_LIBDIR/version.awk" /dev/null) || return 1
+    fi
+    printf '%s\n' "$sget_cmp"
+}
+
+sget_cleanup_install()
+{
+    if [ -n "${sget_work:-}" ]; then
+        rm -rf "$sget_work"
+        sget_work=
+    fi
+    sps_lock_release
+}
+
+sget_verify_artifact_identity()
+{
+    sget_verify_archive=$1
+    sget_verify_name=$2
+    sget_verify_version=$3
+    sget_verify_release=$4
+    sget_verify_arch=$5
+
+    case $sget_verify_archive in
+        *.tar.gz|*.tgz)
+            sps_require_cmd gzip
+            sget_verify_meta=$(gzip -dc "$sget_verify_archive" 2>/dev/null |
+                tar -xOf - ./.SPS/meta 2>/dev/null) || return 1
+            ;;
+        *.tar.xz|*.txz)
+            sps_require_cmd xz
+            sget_verify_meta=$(xz -dc "$sget_verify_archive" 2>/dev/null |
+                tar -xOf - ./.SPS/meta 2>/dev/null) || return 1
+            ;;
+        *.tar.zst|*.tzst)
+            sps_require_cmd zstd
+            sget_verify_meta=$(zstd -q -dc "$sget_verify_archive" 2>/dev/null |
+                tar -xOf - ./.SPS/meta 2>/dev/null) || return 1
+            ;;
+        *)
+            sget_verify_meta=$(tar -xOf "$sget_verify_archive" ./.SPS/meta 2>/dev/null) || return 1
+            ;;
+    esac
+    sget_verify_id=$(printf '%s\n' "$sget_verify_meta" |
+        awk -v sps_action=meta-id -v sps_program=sget \
+            -f "$SPS_LIBDIR/package.awk") || return 1
+    sget_verify_saved_ifs=$IFS
+    IFS=$sps_tab
+    set -- $sget_verify_id
+    IFS=$sget_verify_saved_ifs
+    [ "$#" -eq 4 ] || return 1
+    [ "$1" = "$sget_verify_name" ] &&
+    [ "$2" = "$sget_verify_version" ] &&
+    [ "$3" = "$sget_verify_release" ] &&
+    [ "$4" = "$sget_verify_arch" ]
+}
+
+# Set by the upgrade path.
+sget_upgrade_mode=${sget_upgrade_mode:-0}
+
+sget_install()
+{
+    sget_plan=0
+    sget_nodeps=0
+    sget_reinstall=0
+    sget_allow_downgrade=0
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            --plan) sget_plan=1; shift ;;
+            --nodeps) sget_nodeps=1; shift ;;
+            --reinstall) sget_reinstall=1; shift ;;
+            --downgrade) sget_allow_downgrade=1; shift ;;
+            --) shift; break ;;
+            -*) sps_die "$SPS_EX_USAGE" "unknown option '$1'" ;;
+            *) break ;;
+        esac
+    done
+    [ "$#" -gt 0 ] || { sget_usage >&2; exit "$SPS_EX_USAGE"; }
+    sget_need_index
+
+    sget_roots=
+    for sget_package
+    do
+        sps_validate_package_name "$sget_package" ||
+            sps_die "$SPS_EX_USAGE" "invalid package name '$sget_package'"
+        case ,$sget_roots, in
+            *,"$sget_package",*)
+                sps_die "$SPS_EX_USAGE" "package '$sget_package' was requested more than once" ;;
+        esac
+        [ -n "$sget_roots" ] && sget_roots=$sget_roots,$sget_package || sget_roots=$sget_package
+    done
+
+    sget_work=$(sps_mktemp_dir "${TMPDIR:-/tmp}" sget)
+    trap sget_cleanup_install 0
+    trap 'exit 129' 1
+    trap 'exit 130' 2
+    trap 'exit 131' 3
+    trap 'exit 143' 15
+    : >"$sget_work/resolution"
+    : >"$sget_work/todo"
+    : >"$sget_work/mark-explicit"
+    sps_mkdir "$SPS_CACHE/packages"
+
+    if [ "$sget_nodeps" -eq 1 ]; then
+        for sget_package
+        do
+            awk -v action=install_record -v query="$sget_package" \
+                -v program=sget -f "$SPS_LIBDIR/index.awk" "$sps_index" \
+                >>"$sget_work/resolution" || exit $?
+        done
+    else
+        if ! awk -v action=plan -v roots="$sget_roots" \
+            -v include_build=1 -v program=sget \
+            -f "$SPS_LIBDIR/version.awk" -f "$SPS_LIBDIR/deps.awk" \
+            "$sps_index" >"$sget_work/resolution"; then
+            sps_die "$SPS_EX_DEPENDENCY" "cannot resolve requested packages"
+        fi
+    fi
+
+    sget_count=0
+    while IFS="$sps_tab" read -r sget_package sget_recipe sget_recipe_hash \
+          sget_version sget_release sget_arch || [ -n "$sget_package" ]
+    do
+        [ -n "$sget_package" ] || continue
+        case $sget_arch in
+            any|noarch|"$SPS_ARCH") ;;
+            *) sps_die "$SPS_EX_PACKAGE" "'$sget_package' targets '$sget_arch', not '$SPS_ARCH'" ;;
+        esac
+
+        sget_action=install
+        if sget_read_installed "$sget_package"; then
+            sget_cmp=$(sget_compare_selected "$sget_version" "$sget_release" \
+                       "$sget_installed_version" "$sget_installed_release") ||
+                sps_die "$SPS_EX_PACKAGE" "cannot compare package versions"
+            if [ "$sget_cmp" -eq 0 ] && [ "$sget_installed_arch" = "$sget_arch" ]; then
+                case ,$sget_roots, in
+                    *,"$sget_package",*)
+                        if [ ! -r "$SPS_DB/world" ] ||
+                           ! grep -F -x -e "$sget_package" "$SPS_DB/world" >/dev/null 2>&1; then
+                            printf '%s\n' "$sget_package" >>"$sget_work/mark-explicit"
+                        fi
+                        ;;
+                esac
+                if [ "$sget_reinstall" -eq 1 ] && [ "$sget_upgrade_mode" -eq 0 ]; then
+                    sget_action=reinstall
+                else
+                    continue
+                fi
+            elif [ "$sget_cmp" -gt 0 ]; then
+                sget_action=upgrade
+            else
+                sget_action=downgrade
+                if [ "$sget_upgrade_mode" -eq 1 ] && [ "$sget_allow_downgrade" -eq 0 ]; then
+                    printf "%s: keeping newer installed %s %s-%s (repository has %s-%s)\n" \
+                        "$sps_prog" "$sget_package" "$sget_installed_version" \
+                        "$sget_installed_release" "$sget_version" "$sget_release" >&2
+                    continue
+                fi
+            fi
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$sget_action" "$sget_package" "$sget_recipe" "$sget_recipe_hash" \
+            "$sget_version" "$sget_release" "$sget_arch" >>"$sget_work/todo"
+        sget_count=$((sget_count + 1))
+    done <"$sget_work/resolution"
+
+    sget_mark_count=$(awk 'END { print NR + 0 }' "$sget_work/mark-explicit")
+    if [ "$sget_plan" -eq 1 ]; then
+        if [ "$sget_upgrade_mode" -eq 1 ]; then
+            printf 'Upgrade plan\n\n'
+        else
+            printf 'Install plan\n\n'
+        fi
+        if [ "$sget_count" -eq 0 ] && [ "$sget_mark_count" -eq 0 ]; then
+            printf '%s\n' 'No changes are needed.'
+        else
+            while IFS="$sps_tab" read -r sget_action sget_package sget_recipe \
+                  sget_recipe_hash sget_version sget_release sget_arch || [ -n "$sget_action" ]
+            do
+                [ -n "$sget_action" ] && printf '  %-10s %s %s-%s\n' \
+                    "$sget_action" "$sget_package" "$sget_version" "$sget_release"
+            done <"$sget_work/todo"
+            while IFS= read -r sget_package || [ -n "$sget_package" ]; do
+                [ -n "$sget_package" ] && printf '  %-10s %s\n' explicit "$sget_package"
+            done <"$sget_work/mark-explicit"
+            printf '\n%d package builds, %d reason changes\n' "$sget_count" "$sget_mark_count"
+        fi
+        sget_cleanup_install
+        trap - 0 1 2 3 15
+        return 0
+    fi
+
+    if [ "$sget_count" -gt 0 ]; then
+        sps_require_cmd mkpkg
+        sps_require_cmd pkin
+        while IFS="$sps_tab" read -r sget_action sget_package sget_recipe \
+              sget_recipe_hash sget_version sget_release sget_arch || [ -n "$sget_action" ]
+        do
+            [ -n "$sget_action" ] || continue
+            [ -f "$sget_recipe" ] ||
+                sps_die "$SPS_EX_NOTFOUND" "recipe for '$sget_package' is missing: $sget_recipe"
+            sget_current_hash=$(sps_sha256 "$sget_recipe") ||
+                sps_die "$SPS_EX_CHECKSUM" "cannot hash recipe for '$sget_package'"
+            [ "$sget_current_hash" = "$sget_recipe_hash" ] ||
+                sps_die "$SPS_EX_CHECKSUM" "recipe for '$sget_package' changed since indexing; run 'src update'"
+            sget_recipe_dir=${sget_recipe%/*}
+            sget_recipe_name=${sget_recipe##*/}
+
+            printf '%s %s\n' "$sget_action" "$sget_package"
+            sget_cache_base=$SPS_CACHE/packages/$sget_package-$sget_version-$sget_release-$sget_arch.pkg.tar
+            sget_artifact=
+            for sget_candidate in "$sget_cache_base.zst" "$sget_cache_base.xz" \
+                                  "$sget_cache_base.gz" "$sget_cache_base"; do
+                if [ -f "$sget_candidate" ] && [ ! -L "$sget_candidate" ]; then
+                    sget_artifact=$sget_candidate
+                    break
+                fi
+            done
+            if [ -n "$sget_artifact" ]; then
+                sget_verify_artifact_identity "$sget_artifact" "$sget_package" \
+                    "$sget_version" "$sget_release" "$sget_arch" ||
+                    sps_die "$SPS_EX_PACKAGE" "cached artifact identity is invalid for '$sget_package': $sget_artifact"
+                printf 'using cached %s\n' "${sget_artifact##*/}"
+            else
+                sget_mkpkg_output=$(cd "$sget_recipe_dir" &&
+                                    mkpkg --output "$SPS_CACHE/packages" "./$sget_recipe_name")
+                sget_mkpkg_status=$?
+                [ "$sget_mkpkg_status" -eq 0 ] ||
+                    sps_die "$SPS_EX_BUILD" "build failed for '$sget_package'"
+                sget_artifact=$(printf '%s\n' "$sget_mkpkg_output" |
+                               awk 'NF { result = $0 } END { print result }')
+                [ -n "$sget_artifact" ] ||
+                    sps_die "$SPS_EX_BUILD" "mkpkg did not report an artifact for '$sget_package'"
+                case $sget_artifact in /*) ;; *) sget_artifact=$sget_recipe_dir/$sget_artifact ;; esac
+                [ -f "$sget_artifact" ] ||
+                    sps_die "$SPS_EX_BUILD" "mkpkg artifact for '$sget_package' is missing: $sget_artifact"
+                sget_verify_artifact_identity "$sget_artifact" "$sget_package" \
+                    "$sget_version" "$sget_release" "$sget_arch" ||
+                    sps_die "$SPS_EX_PACKAGE" "mkpkg produced the wrong package identity for '$sget_package'"
+            fi
+
+            case ,$sget_roots, in *,"$sget_package",*) sget_reason=explicit ;; *) sget_reason=dependency ;; esac
+            SPS_INSTALL_REASON=$sget_reason pkin "$sget_artifact" ||
+                sps_die $? "installation failed for '$sget_package'"
+        done <"$sget_work/todo"
+    fi
+
+    if [ "$sget_mark_count" -gt 0 ]; then
+        sps_require_cmd pkmark
+        # Package names cannot contain spaces, so splitting this list is safe.
+        set -- $(cat "$sget_work/mark-explicit")
+        [ "$#" -eq 0 ] || pkmark explicit "$@" || exit $?
+    fi
+
+    if [ "$sget_count" -eq 0 ] && [ "$sget_mark_count" -eq 0 ]; then
+        [ "$sget_upgrade_mode" -eq 1 ] && printf '%s\n' 'System packages are up to date.' ||
+            printf '%s\n' 'All requested packages are already installed.'
+    fi
+    sget_cleanup_install
+    trap - 0 1 2 3 15
+}
+
+sget_upgrade()
+{
+    sget_upgrade_plan=0
+    sget_upgrade_downgrade=0
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            --plan) sget_upgrade_plan=1 ;;
+            --downgrade) sget_upgrade_downgrade=1 ;;
+            *) sget_usage >&2; exit "$SPS_EX_USAGE" ;;
+        esac
+        shift
+    done
+    [ -f "$SPS_DB/world" ] && [ ! -L "$SPS_DB/world" ] ||
+        sps_die "$SPS_EX_DATABASE" "world database is missing or unsafe"
+    awk -v sps_action=world-validate -v sps_program=sget \
+        -f "$SPS_LIBDIR/db.awk" "$SPS_DB/world" ||
+        sps_die "$SPS_EX_DATABASE" "world database is malformed"
+    set -- $(cat "$SPS_DB/world")
+    if [ "$#" -eq 0 ]; then
+        printf '%s\n' 'No explicit packages are installed.'
+        return 0
+    fi
+    sget_upgrade_mode=1
+    if [ "$sget_upgrade_plan" -eq 1 ]; then set -- --plan "$@"; fi
+    if [ "$sget_upgrade_downgrade" -eq 1 ]; then set -- --downgrade "$@"; fi
+    sget_install "$@"
+}
+
+sget_remove()
+{
+    sget_remove_plan=0
+    sget_remove_nodeps=0
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            --plan) sget_remove_plan=1; shift ;;
+            --nodeps) sget_remove_nodeps=1; shift ;;
+            --) shift; break ;;
+            -*) sps_die "$SPS_EX_USAGE" "unknown option '$1'" ;;
+            *) break ;;
+        esac
+    done
+    [ "$#" -gt 0 ] || { sget_usage >&2; exit "$SPS_EX_USAGE"; }
+    [ -d "$SPS_DB/installed" ] && [ ! -L "$SPS_DB/installed" ] ||
+        sps_die "$SPS_EX_DATABASE" "installed database is missing or unsafe"
+
+    sget_remove_work=$(sps_mktemp_dir "${TMPDIR:-/tmp}" remove-plan)
+    trap 'status=$?; rm -rf "$sget_remove_work"; sps_lock_release; exit "$status"' 0
+    trap 'exit 130' 1 2 3 15
+    : >"$sget_remove_work/requested"
+    for sget_package
+    do
+        sps_validate_package_name "$sget_package" ||
+            sps_die "$SPS_EX_USAGE" "invalid package name '$sget_package'"
+        [ -d "$SPS_DB/installed/$sget_package" ] && [ ! -L "$SPS_DB/installed/$sget_package" ] ||
+            sps_die "$SPS_EX_NOTFOUND" "package '$sget_package' is not installed"
+        if grep -F -x -e "$sget_package" "$sget_remove_work/requested" >/dev/null 2>&1; then
+            sps_die "$SPS_EX_USAGE" "package '$sget_package' was requested more than once"
+        fi
+        printf '%s\n' "$sget_package" >>"$sget_remove_work/requested"
+    done
+
+    : >"$sget_remove_work/edges"
+    set -- "$SPS_DB"/installed/*/meta
+    if [ -f "$1" ]; then
+        awk -v out="$sget_remove_work/edges" '
+        FNR == 1 {
+            pkg=FILENAME; sub(/\/meta$/, "", pkg); sub(/^.*\//, "", pkg)
+        }
+        {
+            p=match($0, /[[:space:]]/); if (!p) next
+            key=substr($0,1,p-1); if (key != "depend") next
+            value=substr($0,p); sub(/^[[:space:]]+/,"",value)
+            gsub(/,/," ",value); n=split(value,a,/[[:space:]]+/)
+            for (i=1;i<=n;i++) {
+                d=a[i]; sub(/(>=|<=|=|>|<).*/,"",d)
+                if (d != "") print pkg "\t" d > out
+            }
+        }' "$@"
+    fi
+
+    if [ "$sget_remove_nodeps" -eq 0 ]; then
+        if ! awk -F '\t' '
+            NR==FNR { req[$1]=1; next }
+            !($1 in req) && ($2 in req) {
+                print $1 " requires " $2 > "/dev/stderr"; bad=1
+            }
+            END { exit bad }
+        ' "$sget_remove_work/requested" "$sget_remove_work/edges"; then
+            sps_die "$SPS_EX_DEPENDENCY" "removal would break installed dependencies (use --nodeps to override)"
+        fi
+    fi
+
+    # Remove requested dependents before their dependencies. Cycles fall back to
+    # lexical order.
+    awk -F '\t' '
+        NR==FNR { req[$1]=1; names[++n]=$1; next }
+        ($1 in req) && ($2 in req) { dep[$1 SUBSEP $2]=1 }
+        END {
+            left=n
+            while (left>0) {
+                pick=""
+                for (i=1;i<=n;i++) if (!(names[i] in done)) {
+                    p=names[i]; incoming=0
+                    for (j=1;j<=n;j++) if (!(names[j] in done) && dep[names[j] SUBSEP p]) incoming=1
+                    if (!incoming && (pick=="" || p<pick)) pick=p
+                }
+                if (pick=="") for (i=1;i<=n;i++) if (!(names[i] in done) && (pick=="" || names[i]<pick)) pick=names[i]
+                print pick; done[pick]=1; left--
+            }
+        }
+    ' "$sget_remove_work/requested" "$sget_remove_work/edges" >"$sget_remove_work/order"
+
+    if [ "$sget_remove_plan" -eq 1 ]; then
+        printf 'Remove plan\n\n'
+        while IFS= read -r sget_package || [ -n "$sget_package" ]; do
+            [ -n "$sget_package" ] && printf '  remove     %s\n' "$sget_package"
+        done <"$sget_remove_work/order"
+        printf '\n%s packages\n' "$(awk 'END { print NR + 0 }' "$sget_remove_work/order")"
+        rm -rf "$sget_remove_work"
+        sps_lock_release
+        trap - 0 1 2 3 15
+        return 0
+    fi
+
+    sps_require_cmd pkdel
+    while IFS= read -r sget_package || [ -n "$sget_package" ]; do
+        [ -n "$sget_package" ] || continue
+        pkdel "$sget_package" || exit $?
+    done <"$sget_remove_work/order"
+    rm -rf "$sget_remove_work"
+    sps_lock_release
+    trap - 0 1 2 3 15
+}
+
+# Keep a whole sget install/upgrade/remove from interleaving with another one.
+# Low-level tools still use their shorter database lock. Queries and plans do not.
+sget_top_command=${1-}
+case $sget_top_command in
+    install|upgrade|remove)
+        sget_top_plan=0
+        shift_index=0
+        for sget_top_arg in "$@"; do
+            [ "$shift_index" -eq 0 ] && { shift_index=1; continue; }
+            [ "$sget_top_arg" = --plan ] && sget_top_plan=1
+        done
+        if [ "$sget_top_plan" -eq 0 ]; then
+            sget_begin_transaction
+            trap 'status=$?; sps_lock_release; exit "$status"' 0
+            trap 'exit 130' 1 2 3 15
+        fi
+        ;;
+esac
+
+case ${1-} in
+    search|info)
+        sget_command=$1; shift; sget_query "$sget_command" "$@" ;;
+    depends)
+        shift; sget_depends "$@" ;;
+    dependees)
+        shift; sget_dependees "$@" ;;
+    why)
+        shift; sget_why "$@" ;;
+    install)
+        shift; sget_upgrade_mode=0; sget_install "$@" ;;
+    upgrade)
+        shift; sget_upgrade "$@" ;;
+    remove)
+        shift; sget_remove "$@" ;;
+    -h|--help)
+        sget_usage ;;
+    *)
+        sget_usage >&2; exit "$SPS_EX_USAGE" ;;
+esac
