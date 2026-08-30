@@ -36,6 +36,11 @@ install:
 	install -d "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(LIBDIR)" \
 		"$(DESTDIR)$(MANDIR)/man1" "$(DESTDIR)$(MANDIR)/man5"
 	@set -e; for program in $(PROGRAMS); do \
+		if [ -d "$(DESTDIR)$(BINDIR)/$$program" ]; then \
+			printf '%s: error: %s is a directory; %s command would be shadowed\n' \
+				"$0" "$(DESTDIR)$(BINDIR)/$$program" "$$program" >&2; \
+			exit 1; \
+		fi; \
 		install -m 0755 bin/$$program "$(DESTDIR)$(BINDIR)/$$program"; \
 	done
 	@set -e; for library in lib/*.awk lib/*.sh; do \
