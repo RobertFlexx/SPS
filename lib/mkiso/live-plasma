@@ -13,8 +13,18 @@ export TERM=${TERM:-linux}
 export LANG=${LANG:-C.UTF-8}
 export LC_ALL=${LC_ALL:-C.UTF-8}
 
-mkdir -p "$XDG_RUNTIME_DIR" /run/dbus /var/lib/dbus /etc/dbus-1
+mkdir -p "$XDG_RUNTIME_DIR" /run/dbus /var/lib/dbus /etc/dbus-1 \
+	/root/.config/kdedefaults
 chmod 700 "$XDG_RUNTIME_DIR"
+# startplasma reads this before KSplash. A missing file logs
+# QIODevice::readLineInto ... kdedefaults/package.
+if [ ! -s /root/.config/kdedefaults/package ]; then
+	printf '%s\n' 'org.kde.breeze.desktop' >/root/.config/kdedefaults/package
+fi
+if [ ! -s /root/.config/kdedefaults/ksplashrc ]; then
+	printf '%s\n' '[KSplash]' 'Engine=KSplashQML' \
+		'Theme=org.kde.breeze.desktop' >/root/.config/kdedefaults/ksplashrc
+fi
 
 # Live NVIDIA is nouveau. Keep the proprietary stack unloaded.
 modprobe nouveau 2>/dev/null || :

@@ -7,6 +7,10 @@
 /usr/bin/kwin_wayland
 /usr/bin/kwin_x11
 /usr/bin/plasmashell
+/usr/bin/plasma_session
+/usr/bin/plasma_waitforname
+/usr/bin/plasma-shutdown
+/usr/bin/ksplashqml
 /usr/bin/konsole
 /usr/bin/dolphin
 /usr/bin/kwrite
@@ -15,6 +19,7 @@
 /usr/bin/kdeinit6
 /usr/bin/kglobalacceld
 /usr/bin/kcminit
+/usr/bin/kcminit_startup
 /usr/bin/ksmserver
 /usr/bin/krunner
 /usr/bin/systemsettings
@@ -36,4 +41,9 @@
 /usr/bin/qdbus6
 /usr/libexec/kf6/kconf_update
 /usr/libexec/kf6/kio_http_cache_cleaner
+/usr/libexec/kf6/kiod6
+/usr/libexec/kf6/kscreen_backend_launcher
+/usr/libexec/plasma-dbus-run-session-if-needed
+/usr/libexec/plasma-sourceenv.sh
+/usr/libexec/plasma-startup-sound
 

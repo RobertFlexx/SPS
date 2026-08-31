@@ -92,6 +92,12 @@ grep -q dbus-run-session "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must start Plasma under a session bus'
 grep -q C.UTF-8 "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must set a UTF-8 locale'
+grep -q kdedefaults "$layout/etc/sps/live-plasma" ||
+	fail 'live-plasma must seed kdedefaults for KSplash'
+grep -q ksplashqml "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include ksplashqml'
+grep -q plasma_waitforname "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'org.kde.KSplash.service Exec is plasma_waitforname'
 grep -q -- '-comp zstd' "$mkiso" || fail 'mkiso must write a zstd squashfs'
 grep -q -- '-Xcompression-level 3' "$mkiso" ||
 	fail 'mkiso squashfs compression should stay fast to build'
