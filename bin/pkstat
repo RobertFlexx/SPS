@@ -24,6 +24,7 @@ usage: pkstat [PACKAGE]
        pkstat --explicit
        pkstat --orphans
        pkstat --size PACKAGE
+       pkstat --count
 EOF
 }
 
@@ -193,6 +194,19 @@ case $sps_command in
                 for (package in installed) if (!(package in reachable)) print package
             }
         ' "$@" | LC_ALL=C sort
+        ;;
+    --count)
+        [ "$#" -eq 1 ] || { sps_usage >&2; exit 2; }
+        sps_count=0
+        if [ -d "$SPS_DB/installed" ] && [ ! -L "$SPS_DB/installed" ]; then
+            for sps_record in "$SPS_DB/installed"/*; do
+                [ -d "$sps_record" ] || continue
+                [ ! -L "$sps_record" ] || continue
+                [ -f "$sps_record/meta" ] && [ ! -L "$sps_record/meta" ] || continue
+                sps_count=$((sps_count + 1))
+            done
+        fi
+        printf '%s\n' "$sps_count"
         ;;
     --size)
         [ "$#" -eq 2 ] || { sps_usage >&2; exit 2; }

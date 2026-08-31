@@ -41,7 +41,8 @@ SPS is a set of tools rather than one large front end:
 - `mkpkg` builds a binary package from a recipe.
 - `pkin` installs or upgrades one binary package.
 - `pkdel` removes one installed package.
-- `pkstat` reads the installed package database.
+- `pkstat` reads the installed package database (`pkstat --count` prints
+  the number of installed packages).
 - `pkcheck` checks installed files and database consistency.
 - `pkmark` changes whether an installed package is explicit or dependency-only.
 - `setup` is the SPS Linux (Splux) dialog(1) installer (Slackware/FreeBSD
