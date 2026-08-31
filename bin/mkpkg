@@ -12,6 +12,7 @@ output_dir=.
 recipe=
 build_dir=
 stage_dir=
+build_root=
 
 usage()
 {
@@ -23,6 +24,8 @@ Build the given recipe (default: ./recipe) into an SPS package archive.
 options:
   -o, --output DIR          write the package to DIR
   -C, --compression TYPE   auto, none, gzip, xz, or zstd
+  -R, --build-root DIR      run build phases with DIR/usr/bin and DIR/bin
+                            first on PATH and expose it as \$SYSROOT
       --no-download        use only local sources and cached downloads
       --keep-build         retain build and staging directories
   -h, --help               show this help
@@ -93,6 +96,16 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--no-download)
 			no_download=1
+			shift
+			;;
+		-R|--build-root)
+			[ "$#" -ge 2 ] || die_status 2 "$1 requires a directory"
+			build_root=$2
+			shift 2
+			;;
+		--build-root=*)
+			build_root=${1#*=}
+			[ -n "$build_root" ] || die_status 2 "--build-root requires a directory"
 			shift
 			;;
 		--keep-build)
@@ -170,6 +183,15 @@ esac
 : "${SPS_DB:=$SPS_ROOT/var/lib/sps}"
 : "${SPS_CACHE:=$SPS_ROOT/var/cache/sps}"
 : "${SPS_BUILD:=${TMPDIR:-/tmp}/sps}"
+
+if [ -n "$build_root" ]; then
+	case $build_root in
+		/*) ;;
+		*) die_status 2 "--build-root must be an absolute path: $build_root" ;;
+	esac
+	build_root=${build_root%/}
+	[ -d "$build_root" ] || die_status 8 "build root does not exist: $build_root"
+fi
 
 makejobs=${MAKEJOBS:-${SPS_MAKEJOBS:-1}}
 case $makejobs in
@@ -616,14 +638,31 @@ WORK=$work_dir
 MAKEJOBS=$makejobs
 export PKG SRC WORK MAKEJOBS
 
+# A controlled build root runs each phase with the root's /usr/bin and /bin
+# ahead of the host PATH and exposes the root as $SYSROOT.  Recipes building a
+# staged toolchain use this to ensure their compiler, linker, and headers are
+# taken from the target root rather than the host, mirroring an LFS sysroot.
+if [ -n "$build_root" ]; then
+	run_env="PATH=$build_root/usr/bin:$build_root/bin:$PATH SYSROOT=$build_root"
+	say "using build root $build_root"
+else
+	run_env=
+fi
+
 run_phase()
 {
 	phase_name=$1
 	phase_file=$build_dir/$phase_name.sh
 	[ -s "$phase_file" ] || return 0
 	say "running $phase_name phase"
-	if ! (CDPATH= cd "$WORK" && sh -eu "$phase_file"); then
-		die_status 10 "$phase_name phase failed"
+	if [ -n "$run_env" ]; then
+		if ! (CDPATH= cd "$WORK" && env $run_env sh -eu "$phase_file"); then
+			die_status 10 "$phase_name phase failed"
+		fi
+	else
+		if ! (CDPATH= cd "$WORK" && sh -eu "$phase_file"); then
+			die_status 10 "$phase_name phase failed"
+		fi
 	fi
 }
 

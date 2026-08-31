@@ -156,4 +156,46 @@ tar -xOf "$tar_artifact" ./usr/bin/archive-hello >"$tmp/archive-hello.out" 2>/de
 assert_equal "hello from SPS" "$(sh "$tmp/archive-hello.out")" \
 	"archive-source payload returned unexpected output"
 
+# --build-root must expose the root as SYSROOT and put its bin dirs first on
+# PATH for every build phase.
+mkdir -p "$tmp/sysroot-recipe" "$tmp/sysroot-out" "$tmp/buildroot/usr/bin" \
+	"$tmp/buildroot/bin"
+touch "$tmp/buildroot/usr/bin/sysroot-marker" "$tmp/buildroot/bin/bin-marker"
+cat >"$tmp/sysroot-recipe/recipe" <<'EOF'
+name        sysroot-probe
+version     1.0
+release     1
+arch        any
+description Confirms --build-root env isolation
+install     mkdir -p "$PKG/usr/share/sysroot-probe"
+install     printf '%s\n' "${SYSROOT-}" >"$PKG/usr/share/sysroot-probe/sysroot"
+install     printf '%s\n' "$PATH" >"$PKG/usr/share/sysroot-probe/path"
+EOF
+sysroot_artifact=$(
+	SPS_ROOT=$tmp/root \
+	SPS_DB=$tmp/db \
+	SPS_CACHE=$tmp/cache \
+	SPS_BUILD=$tmp/build \
+	SPS_CONFIG=/dev/null \
+	SPS_REPOS_CONFIG=/dev/null \
+	SPS_COMPRESSION=none \
+	"$mkpkg" --no-download --build-root "$tmp/buildroot" \
+		--output "$tmp/sysroot-out" "$tmp/sysroot-recipe/recipe"
+) || fail "sysroot build failed"
+mkdir "$tmp/sysroot-extract"
+tar -xf "$sysroot_artifact" -C "$tmp/sysroot-extract"
+assert_equal "$tmp/buildroot" \
+	"$(cat "$tmp/sysroot-extract/usr/share/sysroot-probe/sysroot")" \
+	"SYSROOT was not set to the build root"
+case "$(cat "$tmp/sysroot-extract/usr/share/sysroot-probe/path")" in
+	"$tmp/buildroot/usr/bin:$tmp/buildroot/bin:"*) : ;;
+	*) fail "build root bin dirs were not first on PATH" ;;
+esac
+
+[ ! -e "$tmp/buildroot/usr/share/sysroot-probe" ] ||
+	fail "build root was modified by the build"
+
+[ ! -e "$tmp/root/usr/share/sysroot-probe" ] ||
+	fail "builder modified the target root with a build root"
+
 printf '%s\n' 'test_build: ok'

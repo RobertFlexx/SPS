@@ -15,6 +15,21 @@ The default recipe is
 A directory argument means its
 .B recipe
 file.
+.PP
+Build phases normally run with the host environment.
+.BR --build-root ,
+when given, runs every build phase with the root's
+.B /usr/bin
+and
+.B /bin
+first on
+.B PATH
+and exposes the root as
+.BR SYSROOT .
+Recipes that stage a toolchain inside a root (an LFS-style sysroot) use this to
+ensure their compiler, linker, and headers resolve from the target root rather
+than the host. It does not use a chroot, does not require root privileges, and
+never writes into the build root itself.
 .SH OPTIONS
 .TP
 .BI "-o, --output " dir
@@ -28,6 +43,20 @@ Select
 .BR xz ,
 or
 .BR zstd .
+.TP
+.BI "-R, --build-root " dir
+Run build phases with
+.B DIR/usr/bin
+and
+.B DIR/bin
+first on
+.B PATH
+and expose the absolute
+.B DIR
+as
+.BR SYSROOT .
+.B DIR
+must already exist.
 .TP
 .B --no-download
 Require remote sources to already exist in the source cache.
@@ -109,6 +138,10 @@ provides per-package parallelism and is exposed to build commands as
 contains downloaded sources;
 .B SPS_BUILD
 contains temporary build/staging trees.
+With
+.BR --build-root ,
+.B SYSROOT
+is the absolute controlled root directory.
 .SH OUTPUT
 On success the final stdout line is the absolute or requested path of the
 created package artifact, suitable for consumption by
