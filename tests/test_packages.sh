@@ -160,4 +160,77 @@ run_sps "$project_dir/bin/pkdel" libfoo >/dev/null
 run_sps "$project_dir/bin/pkcheck" --database | grep -qx 'database: ok' ||
     fail 'empty package database did not validate'
 
+# Removing one package must never delete a directory that a remaining package
+# still claims in its manifest. A fonts-like package shares /usr/share with a
+# filesystem-like base package; only the fonts subdirectories are exclusive.
+shared_root=$tmp/shared-root
+shared_db=$tmp/shared-db
+shared_cache=$tmp/shared-cache
+shared_build=$tmp/shared-build
+mkdir -p "$shared_root" "$shared_cache" "$shared_build" \
+    "$tmp/shared-stage-base/.SPS" "$tmp/shared-stage-base/usr/share" \
+    "$tmp/shared-stage-base/etc" \
+    "$tmp/shared-stage-fonts/.SPS" \
+    "$tmp/shared-stage-fonts/usr/share/fonts/dejavu" \
+    "$tmp/shared-stage-fonts/usr/share/licenses/dejavu-fonts"
+{
+    printf 'format\t1\n'
+    printf 'name\tbasefs\nversion\t1\nrelease\t1\narch\tany\ndescription\tbase hierarchy\n'
+} >"$tmp/shared-stage-base/.SPS/meta"
+printf '%s\n' 'NAME="SPS"' >"$tmp/shared-stage-base/etc/os-release"
+printf '%s\n' 'fontdata' >"$tmp/shared-stage-fonts/usr/share/fonts/dejavu/font.ttf"
+printf '%s\n' 'license' >"$tmp/shared-stage-fonts/usr/share/licenses/dejavu-fonts/LICENSE"
+{
+    printf 'format\t1\n'
+    printf 'name\tsharedfonts\nversion\t1\nrelease\t1\narch\tany\ndescription\tfont payload\n'
+} >"$tmp/shared-stage-fonts/.SPS/meta"
+for shared_stage in "$tmp/shared-stage-base" "$tmp/shared-stage-fonts"; do
+    (
+        CDPATH= cd "$shared_stage" &&
+        find . -type d -print | awk '
+            $0 != "." && $0 !~ /^\.\/\.SPS($|\/)/ { sub(/^\.\//, ""); print $0 "/" }'
+        find . ! -type d -print | awk '
+            $0 !~ /^\.\/\.SPS($|\/)/ { sub(/^\.\//, ""); print }'
+    ) | LC_ALL=C sort >"$shared_stage/.SPS/files"
+    : >"$shared_stage/.SPS/hashes"
+    while IFS= read -r shared_entry || [ -n "$shared_entry" ]; do
+        case $shared_entry in */) continue ;; esac
+        [ -f "$shared_stage/$shared_entry" ] &&
+            printf 'sha256\t%s\t%s\n' \
+                "$(sha256sum "$shared_stage/$shared_entry" | awk '{ print $1 }')" \
+                "$shared_entry" >>"$shared_stage/.SPS/hashes"
+    done <"$shared_stage/.SPS/files"
+done
+tar -C "$tmp/shared-stage-base" -cf "$tmp/shared-base.pkg.tar" .
+tar -C "$tmp/shared-stage-fonts" -cf "$tmp/shared-fonts.pkg.tar" .
+SPS_ROOT=$shared_root SPS_DB=$shared_db SPS_CACHE=$shared_cache \
+SPS_BUILD=$shared_build SPS_CONFIG=/dev/null SPS_REPOS_CONFIG=/dev/null \
+SPS_LIBDIR=$project_dir/lib \
+    "$project_dir/bin/pkin" --dependency "$tmp/shared-base.pkg.tar" >/dev/null ||
+    fail 'shared base package failed to install'
+SPS_ROOT=$shared_root SPS_DB=$shared_db SPS_CACHE=$shared_cache \
+SPS_BUILD=$shared_build SPS_CONFIG=/dev/null SPS_REPOS_CONFIG=/dev/null \
+SPS_LIBDIR=$project_dir/lib \
+    "$project_dir/bin/pkin" "$tmp/shared-fonts.pkg.tar" >/dev/null ||
+    fail 'shared fonts package failed to install'
+[ -d "$shared_root/usr/share/fonts/dejavu" ] ||
+    fail 'shared fonts payload was not installed'
+SPS_ROOT=$shared_root SPS_DB=$shared_db SPS_CACHE=$shared_cache \
+SPS_BUILD=$shared_build SPS_CONFIG=/dev/null SPS_REPOS_CONFIG=/dev/null \
+SPS_LIBDIR=$project_dir/lib \
+    "$project_dir/bin/pkdel" sharedfonts >/dev/null ||
+    fail 'shared fonts package failed to remove'
+[ ! -e "$shared_root/usr/share/fonts" ] &&
+[ ! -e "$shared_root/usr/share/licenses" ] ||
+    fail 'font-only directories were not pruned on removal'
+[ -d "$shared_root/usr/share" ] ||
+    fail 'removal deleted a shared directory still claimed by another package'
+[ -d "$shared_root/usr" ] ||
+    fail 'removal deleted a base directory still claimed by another package'
+SPS_ROOT=$shared_root SPS_DB=$shared_db SPS_CACHE=$shared_cache \
+SPS_BUILD=$shared_build SPS_CONFIG=/dev/null SPS_REPOS_CONFIG=/dev/null \
+SPS_LIBDIR=$project_dir/lib \
+    "$project_dir/bin/pkcheck" --database | grep -qx 'database: ok' ||
+    fail 'database did not validate after shared-directory removal'
+
 printf '%s\n' 'test_packages: ok'

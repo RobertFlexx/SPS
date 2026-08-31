@@ -644,11 +644,28 @@ while IFS= read -r sps_path || [ -n "$sps_path" ]; do
     fi
 done <"$sps_work/obsolete"
 if [ -d "$sps_old_record" ]; then
+    # Directories are shared. A directory the new version drops must still be
+    # preserved if any other installed package still claims it.
+    : >"$sps_work/other-dirs"
+    for sps_other_record in "$sps_installed"/*; do
+        [ -d "$sps_other_record" ] && [ ! -L "$sps_other_record" ] || continue
+        sps_other_name=${sps_other_record##*/}
+        case $sps_other_name in .|..) continue ;; esac
+        [ "$sps_other_name" = "$sps_name" ] && continue
+        [ -f "$sps_other_record/files" ] && [ ! -L "$sps_other_record/files" ] || continue
+        awk '/\/$/ { print }' "$sps_other_record/files" >>"$sps_work/other-dirs"
+    done
+    LC_ALL=C sort -u "$sps_work/other-dirs" -o "$sps_work/other-dirs"
+
     LC_ALL=C sort -r "$sps_old_record/files" >"$sps_work/old-files.reverse"
     while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
         case $sps_entry in
             */)
                 sps_path=${sps_entry%/}
+                if awk -v wanted="$sps_entry" '$0 == wanted { found=1 } END { exit !found }' \
+                    "$sps_work/other-dirs"; then
+                    continue
+                fi
                 if ! awk -v wanted="$sps_path" '
                     { value=$0; sub(/\/$/, "", value); if (value == wanted) found=1 }
                     END { exit !found }

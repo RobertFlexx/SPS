@@ -267,6 +267,21 @@ while IFS="$sps_tab" read -r sps_entry sps_owner || [ -n "$sps_entry" ]; do
     fi
 done <"$sps_work/manifest.owners"
 
+# Directories are shared resources, not exclusively owned by any one package.
+# A directory may only be removed once no other installed package still claims
+# it in its manifest. Collect every directory referenced by the remaining
+# installed packages so we never delete a directory the system still needs.
+: >"$sps_work/other-dirs"
+for sps_other_record in "$sps_installed"/*; do
+    [ -d "$sps_other_record" ] && [ ! -L "$sps_other_record" ] || continue
+    sps_other_name=${sps_other_record##*/}
+    case $sps_other_name in .|..) continue ;; esac
+    [ "$sps_other_name" = "$sps_name" ] && continue
+    [ -f "$sps_other_record/files" ] && [ ! -L "$sps_other_record/files" ] || continue
+    awk '/\/$/ { print }' "$sps_other_record/files" >>"$sps_work/other-dirs"
+done
+LC_ALL=C sort -u "$sps_work/other-dirs" -o "$sps_work/other-dirs"
+
 # Reverse sort puts children before parents; rmdir leaves shared/non-empty
 # directories alone.
 LC_ALL=C sort -r "$sps_record/files" >"$sps_work/files.reverse"
@@ -274,6 +289,10 @@ while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
     case $sps_entry in
         */)
             sps_path=${sps_entry%/}
+            if awk -v wanted="$sps_entry" '$0 == wanted { found=1 } END { exit !found }' \
+                "$sps_work/other-dirs"; then
+                continue
+            fi
             sps_safe_parents "$sps_path" || continue
             sps_target_path "$sps_path"
             if [ -d "$sps_target" ] && [ ! -L "$sps_target" ]; then
