@@ -119,6 +119,24 @@ if command -v lsblk >/dev/null 2>&1; then
 fi
 grep -q 'copying disk tools for setup' "$mkiso" ||
 	fail 'mkiso must copy partition tools by command name'
+grep -q grub-install "$mkiso" ||
+	fail 'mkiso must copy grub-install by command name for setup'
+grep -q 'system-local.conf' "$mkiso" ||
+	fail 'mkiso must bake a live D-Bus system-local.conf'
+grep -q '<user>root</user>' "$project_dir/lib/mkiso/live-plasma" ||
+	fail 'live-plasma must run the system bus as root'
+if grep -q 'if \[ ! -f /etc/dbus-1/system-local.conf \]' \
+	"$project_dir/lib/mkiso/live-plasma"
+then
+	fail 'live-plasma must overwrite host system-local.conf, not skip it'
+fi
+grep -q 'dbus-daemon --system --nofork --nopidfile --nosyslog' \
+	"$project_dir/lib/mkiso/live-rc" ||
+	fail 'live-rc must start a system bus before Plasma'
+grep -q dbus-send "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include dbus-send'
+grep -q dbus-daemon-launch-helper "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include dbus-daemon-launch-helper'
 if [ -e "$layout/lib64/libtinfo.so.6" ] || [ -e "$layout/usr/lib64/libtinfo.so.6" ]
 then
 	for tinfo in "$layout/lib64/libtinfo.so.6" "$layout/usr/lib64/libtinfo.so.6"

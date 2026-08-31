@@ -67,12 +67,13 @@ options:
   --swap-part DEV           swap partition for --partition manage
   --home-part DEV           /home partition for --partition manage
   --format yes|no           required yes for non-interactive guided layouts
+  --services yes|no         enable known services for the chosen init (default yes)
   --kernel NAME             none, linux, linux-desktop, or custom
   --kernel-config FILE      .config for --kernel custom
   --drivers auto|none       map lspci/cpu to packages (microcode, nouveau, iwd)
   --init systemd|openrc     PID 1 on the installed system (default: none in
                             scripts; systemd on the interactive screen)
-  --bootloader none|grub    write bootloader notes; never runs grub-install
+  --bootloader none|grub    write bootloader notes; never implied
   --install-bootloader      run grub-install on --disk (explicit, dangerous)
   --update|--no-update      run or skip src update before installing
   --non-interactive         do not start dialog; all choices from options
@@ -94,6 +95,10 @@ fi
 if [ -f "$SPS_LIBDIR/setup/hwdetect.sh" ]; then
 	# shellcheck disable=SC1091
 	. "$SPS_LIBDIR/setup/hwdetect.sh"
+fi
+if [ -f "$SPS_LIBDIR/setup/service.sh" ]; then
+	# shellcheck disable=SC1091
+	. "$SPS_LIBDIR/setup/service.sh"
 fi
 setup_work=
 setup_interactive=1
@@ -129,6 +134,7 @@ setup_kernel=
 setup_kernel_config=
 setup_drivers=
 setup_init=
+setup_services=
 setup_part_efi=
 setup_part_root=
 setup_part_swap=
@@ -320,6 +326,11 @@ while [ "$#" -gt 0 ]; do
 		--init)
 			setup_need_value "$@"
 			setup_init=$2
+			shift 2
+			;;
+		--services)
+			setup_need_value "$@"
+			setup_services=$2
 			shift 2
 			;;
 		--list-hardware)
@@ -545,7 +556,12 @@ setup_load_answers()
 			kernel-config) [ -n "$setup_kernel_config" ] || setup_kernel_config=$setup_av ;;
 			drivers) [ -n "$setup_drivers" ] || setup_drivers=$setup_av ;;
 			init) [ -n "$setup_init" ] || setup_init=$setup_av ;;
+			services) [ -n "$setup_services" ] || setup_services=$setup_av ;;
 			bootloader) [ "$setup_bootloader" = none ] && [ -n "$setup_av" ] && setup_bootloader=$setup_av ;;
+			install-bootloader)
+				[ "$setup_av" = yes ] && setup_install_bootloader=1
+				[ "$setup_av" = no ] && setup_install_bootloader=0
+				;;
 			enable) setup_append_csv setup_enable "$setup_av" "$setup_enable" ;;
 			disable) setup_append_csv setup_disable "$setup_av" "$setup_disable" ;;
 			update)
@@ -642,20 +658,19 @@ EOF
 
 setup_ask_partition()
 {
-	if [ -n "$setup_partition" ]; then
-		return 0
+	if [ -z "$setup_partition" ]; then
+		setup_partition=$(setup_dialog --title "Disks" \
+			--menu "Partitioning. Guided layouts wait until the final install confirmation before they write anything. Existing mounts are left alone." \
+			18 72 8 \
+			existing "Use mounts already on the target path" \
+			manage "cfdisk, then pick root / EFI / swap / home" \
+			efi-root "Guided: GPT, EFI + root" \
+			efi-swap-root "Guided: GPT, EFI + swap + root" \
+			efi-swap-root-home "Guided: GPT, EFI + swap + root + home" \
+			bios-root "Guided: GPT, BIOS boot + root" \
+			none "Do not touch disks") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
 	fi
-	setup_partition=$(setup_dialog --title "Disks" \
-		--menu "Partitioning. Guided layouts wait until the final install confirmation before they write anything. Existing mounts are left alone." \
-		18 72 8 \
-		existing "Use mounts already on the target path" \
-		manage "cfdisk, then pick root / EFI / swap / home" \
-		efi-root "Guided: GPT, EFI + root" \
-		efi-swap-root "Guided: GPT, EFI + swap + root" \
-		efi-swap-root-home "Guided: GPT, EFI + swap + root + home" \
-		bios-root "Guided: GPT, BIOS boot + root" \
-		none "Do not touch disks") ||
-		setup_fail "$SPS_EX_USAGE" "cancelled"
 
 	case $setup_partition in
 		none|existing)
@@ -665,6 +680,29 @@ setup_ask_partition()
 			if [ -z "$setup_disk" ]; then
 				setup_disk=$(setup_pick_disk) ||
 					setup_fail "$SPS_EX_USAGE" "cancelled"
+			fi
+			if command -v setup_partition_tool_ok >/dev/null 2>&1 &&
+			   ! setup_partition_tool_ok
+			then
+				setup_fail "$SPS_EX_PACKAGE" \
+					"guided layouts need sfdisk, mkfs.ext4, mkfs.vfat, and mkswap on PATH"
+			fi
+			;;
+	esac
+
+	case $setup_partition in
+		efi-root|efi-swap-root|efi-swap-root-home|bios-root)
+			if [ -z "$setup_format" ]; then
+				if setup_dialog --title "Format disk" --yesno \
+					"Erase ALL data on $setup_disk and write a new $setup_partition partition table?
+
+This is the format confirmation. Non-interactive installs pass --format yes. setup still waits until the last screen before it writes the disk." 14 64
+				then
+					setup_format=yes
+				else
+					setup_fail "$SPS_EX_USAGE" \
+						"cancelled (guided layouts need a format confirmation)"
+				fi
 			fi
 			;;
 	esac
@@ -983,12 +1021,35 @@ The live image and auto drivers use nouveau. This extra set is the proprietary/o
 After the first boot, put an interface file in /etc/network or use the NetworkManager applet on Plasma. Notes are written to /root/sps-network.txt." 12 64 || :
 
 	setup_bl=$(setup_dialog --title "Bootloader" \
-		--menu "SPS never runs grub-install unless you pass --install-bootloader with --disk. The usual choice is to write notes only." \
-		14 64 3 \
+		--menu "SPS never guesses a grub-install target. Notes are always written to /root/sps-bootloader.txt. Install GRUB only if you pick the last item and confirm the disk." \
+		16 72 4 \
 		none "Write /root/sps-bootloader.txt only" \
-		grub "Write GRUB notes (still does not install)") ||
+		grub "Write GRUB notes (still does not install)" \
+		install "Install GRUB to the chosen disk (asks again)") ||
 		setup_fail "$SPS_EX_USAGE" "cancelled"
-	setup_bootloader=$setup_bl
+	case $setup_bl in
+		install)
+			setup_bootloader=grub
+			if [ -z "$setup_disk" ]; then
+				setup_msg "No disk was selected. Writing GRUB notes only. Pass a disk on the partition screen, or run grub-install yourself later."
+			elif setup_dialog --title "Install GRUB" --yesno \
+				"Run grub-install on $setup_disk now?
+
+This is the only interactive path that installs a bootloader. Scripts still need --install-bootloader and --disk together." 12 64
+			then
+				PATH=/sbin:/usr/sbin:/bin:/usr/bin:$PATH
+				export PATH
+				if command -v grub-install >/dev/null 2>&1; then
+					setup_install_bootloader=1
+				else
+					setup_msg "grub-install is not on PATH. Notes will be written; install GRUB after the packages land or from another system."
+				fi
+			fi
+			;;
+		*)
+			setup_bootloader=$setup_bl
+			;;
+	esac
 fi
 
 # Non-interactive defaults
@@ -1008,6 +1069,7 @@ setup_printing=$(setup_yesno_norm "${setup_printing:-no}")
 [ -n "$setup_init" ] || setup_init=none
 [ -n "$setup_format" ] || setup_format=no
 setup_format=$(setup_yesno_norm "$setup_format")
+setup_services=$(setup_yesno_norm "${setup_services:-yes}")
 if [ -z "$setup_kernel" ]; then
 	setup_kernel=none
 fi
@@ -1022,6 +1084,10 @@ esac
 case $setup_init in
 	none|systemd|openrc) ;;
 	*) setup_fail "$SPS_EX_USAGE" "init must be systemd, openrc, or none" ;;
+esac
+case $setup_services in
+	yes|no) ;;
+	*) setup_fail "$SPS_EX_USAGE" "services must be yes or no" ;;
 esac
 case $setup_partition in
 	none|existing|efi-root|efi-swap-root|efi-swap-root-home|bios-root|manage) ;;
@@ -1039,6 +1105,14 @@ case $setup_partition in
 			setup_fail "$SPS_EX_USAGE" \
 				"guided partitioning requires --format yes (refusing to erase $setup_disk)"
 		fi
+		if [ "$setup_plan" -eq 0 ]; then
+			if command -v setup_partition_tool_ok >/dev/null 2>&1 &&
+			   ! setup_partition_tool_ok
+			then
+				setup_fail "$SPS_EX_PACKAGE" \
+					"guided layouts need sfdisk, mkfs.ext4, mkfs.vfat, and mkswap on PATH"
+			fi
+		fi
 		;;
 	manage)
 		[ -n "$setup_part_root" ] ||
@@ -1054,6 +1128,16 @@ if [ "$setup_kernel" = custom ]; then
 	esac
 	[ -f "$setup_kernel_config" ] ||
 		setup_fail "$SPS_EX_NOTFOUND" "kernel config not found: $setup_kernel_config"
+fi
+if [ "$setup_install_bootloader" -eq 1 ]; then
+	[ -n "$setup_disk" ] ||
+		setup_fail "$SPS_EX_USAGE" \
+			"--install-bootloader requires --disk; refusing to guess"
+	PATH=/sbin:/usr/sbin:/bin:/usr/bin:$PATH
+	export PATH
+	if [ "$setup_plan" -eq 0 ] && ! command -v grub-install >/dev/null 2>&1; then
+		setup_fail "$SPS_EX_PACKAGE" "grub-install is not on PATH"
+	fi
 fi
 case $setup_bootloader in
 	none|grub) ;;
@@ -1159,6 +1243,55 @@ for setup_item in $setup_extra; do
 	setup_add_pkg "$setup_item"
 done
 
+# Chosen init wins over set/package combinations that sget would refuse.
+for setup_item in $setup_extra $setup_enable; do
+	[ -n "$setup_item" ] || continue
+	case $setup_init in
+		systemd)
+			case $setup_item in
+				elogind|eudev|openrc|init-openrc)
+					setup_fail "$SPS_EX_CONFLICT" \
+						"cannot combine --init systemd with $setup_item (elogind/eudev/OpenRC conflict with systemd)"
+					;;
+			esac
+			;;
+		openrc)
+			case $setup_item in
+				systemd|init-systemd)
+					setup_fail "$SPS_EX_CONFLICT" \
+						"cannot combine --init openrc with $setup_item"
+					;;
+			esac
+			;;
+	esac
+done
+
+setup_pkg_filtered=$setup_work/packages.filtered
+: >"$setup_pkg_filtered"
+while IFS= read -r setup_pkg || [ -n "$setup_pkg" ]; do
+	[ -n "$setup_pkg" ] || continue
+	setup_drop=0
+	case $setup_init in
+		systemd)
+			case $setup_pkg in
+				elogind|eudev|openrc|init-openrc) setup_drop=1 ;;
+			esac
+			;;
+		openrc)
+			case $setup_pkg in
+				systemd|init-systemd) setup_drop=1 ;;
+			esac
+			;;
+	esac
+	if [ "$setup_drop" -eq 1 ]; then
+		printf '%s: dropping %s (conflicts with init %s)\n' \
+			"$sps_prog" "$setup_pkg" "$setup_init" >&2
+		continue
+	fi
+	printf '%s\n' "$setup_pkg" >>"$setup_pkg_filtered"
+done <"$setup_pkg_file"
+mv "$setup_pkg_filtered" "$setup_pkg_file"
+
 case $setup_kernel in
 	linux) setup_add_pkg linux ;;
 	linux-desktop) setup_add_pkg linux-desktop ;;
@@ -1210,6 +1343,9 @@ setup_write_answers_file()
 		[ -n "$setup_kernel_config" ] && printf 'kernel-config %s\n' "$setup_kernel_config"
 		printf 'drivers %s\n' "$setup_drivers"
 		printf 'init %s\n' "$setup_init"
+		printf 'services %s\n' "$setup_services"
+		printf 'install-bootloader %s\n' \
+			"$([ "$setup_install_bootloader" -eq 1 ] && printf yes || printf no)"
 		printf 'update %s\n' "$([ "$setup_do_update" -eq 1 ] && printf yes || printf no)"
 		for setup_item in $setup_enable; do
 			printf 'enable %s\n' "$setup_item"
@@ -1242,6 +1378,23 @@ setup_summary()
 	printf 'Kernel:     %s\n' "$setup_kernel"
 	printf 'Init:       %s\n' "$setup_init"
 	printf 'Drivers:    %s\n' "$setup_drivers"
+	printf 'Services:   %s\n' "$setup_services"
+	printf 'Format:     %s\n' "$setup_format"
+	if [ "$setup_install_bootloader" -eq 1 ]; then
+		printf 'GRUB:       install on %s\n' "$setup_disk"
+	fi
+	if [ "$setup_init" = none ] &&
+	   grep -Eq '^(sddm|plasma-desktop|plasma-full)$' "$setup_pkg_file"
+	then
+		printf '\nNote: init is none; SDDM/Plasma will not start at boot. Choose systemd or OpenRC.\n'
+	fi
+	if [ "$setup_kernel" = none ]; then
+		case $setup_partition in
+			efi-root|efi-swap-root|efi-swap-root-home|bios-root)
+				printf '\nNote: no kernel package was selected; the installed disk will not boot until you add one.\n'
+				;;
+		esac
+	fi
 	printf '\nPackages:\n'
 	sort -u "$setup_pkg_file"
 }
@@ -1383,6 +1536,10 @@ packages land:
            elogind are in the init-openrc set.
   none     no init package was requested. Busybox can still provide
            an init applet if you copy it to /sbin/init yourself.
+
+setup enables known services (SDDM, dbus, sshd, NetworkManager, ...)
+for the chosen init when those packages installed a unit or OpenRC
+script. See /root/sps-services.txt. Pass --services no to skip that.
 EOF
 
 	cat >"$setup_root/root/sps-network.txt" <<EOF
@@ -1538,6 +1695,12 @@ fi
 
 setup_seed_recipe_trees
 
+# Hooks run during sget, before apply_config. Record the init choice so
+# post-install can enable SDDM and friends for systemd or OpenRC.
+mkdir -p "$setup_root/etc/sps" ||
+	setup_fail "$SPS_EX_PERMISSION" "cannot create $setup_root/etc/sps"
+printf '%s\n' "${setup_init:-none}" >"$setup_root/etc/sps/init"
+
 if [ "$setup_do_update" -eq 1 ]; then
 	printf '%s: updating source repositories\n' "$sps_prog" >&2
 	src update || setup_fail "$SPS_EX_NETWORK" "src update failed"
@@ -1559,6 +1722,43 @@ sget install $setup_pkgs ||
 
 # Hostname, user, and notes land after packages so filesystem's passwd wins.
 setup_apply_config
+
+if [ "$setup_services" = yes ] &&
+   command -v setup_service_enable_present >/dev/null 2>&1
+then
+	case $setup_init in
+		systemd|openrc)
+			printf '%s: enabling services for init %s\n' \
+				"$sps_prog" "$setup_init" >&2
+			setup_svc_list=$(setup_service_enable_present \
+				"$setup_root" "$setup_init") || setup_svc_list=
+			{
+				printf '%s\n' \
+					"Init: $setup_init" \
+					"setup enables known services that were installed." \
+					"It does not start daemons inside a target chroot." \
+					""
+				if [ -n "$setup_svc_list" ]; then
+					printf '%s\n' 'Enabled:'
+					printf '%s\n' "$setup_svc_list" | sort -u
+				else
+					printf '%s\n' \
+						'No mapped unit or OpenRC script was present in the target.' \
+						'Install the package files (for example sddm.service) and rerun,' \
+						'or enable the service yourself after first boot.'
+				fi
+			} >"$setup_root/root/sps-services.txt"
+			;;
+		*)
+			cat >"$setup_root/root/sps-services.txt" <<EOF
+Init is ${setup_init:-none}. setup did not enable services.
+
+To have SDDM, sshd, NetworkManager, and similar start at boot, rerun
+setup with --init systemd or --init openrc, or enable them yourself.
+EOF
+			;;
+	esac
+fi
 
 # On a live ISO, rewrite of repos.conf pointed at /usr/src/sps. Rebuild
 # the index so the installed system does not keep /mnt-prefixed recipe paths.

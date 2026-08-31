@@ -88,6 +88,41 @@ elif [ -x /lib/systemd/systemd-udevd ]; then
 	udevadm settle --timeout=5 2>/dev/null || :
 fi
 
+# System bus before Plasma. Always rewrite system-local.conf: a copied
+# host file would otherwise keep <user>messagebus</user>.
+mkdir -p /run/dbus /var/lib/dbus /etc/dbus-1
+cat >/etc/dbus-1/system-local.conf <<'EOF'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <user>root</user>
+</busconfig>
+EOF
+if [ ! -S /run/dbus/system_bus_socket ] &&
+   [ ! -S /var/run/dbus/system_bus_socket ]
+then
+	if command -v dbus-daemon >/dev/null 2>&1; then
+		dbus-daemon --system --nofork --nopidfile --nosyslog \
+			>/run/sps-dbus.log 2>&1 &
+		n=0
+		while [ "$n" -lt 8 ]; do
+			if [ -S /run/dbus/system_bus_socket ] ||
+			   [ -S /var/run/dbus/system_bus_socket ]
+			then
+				break
+			fi
+			n=$((n + 1))
+			sleep 1
+		done
+		if [ ! -S /run/dbus/system_bus_socket ] &&
+		   [ ! -S /var/run/dbus/system_bus_socket ]
+		then
+			printf '%s\n' "SPS: dbus-daemon did not create a system bus socket"
+			cat /run/sps-dbus.log 2>/dev/null || :
+		fi
+	fi
+fi
+
 cat /etc/issue 2>/dev/null || :
 cat /etc/motd 2>/dev/null || :
 

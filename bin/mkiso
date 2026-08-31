@@ -510,6 +510,27 @@ mkiso_copy_plasma()
 			mkiso_copy_path "$mkiso_so"
 		done
 	done
+	# Host /etc/dbus-1 may already contain system-local.conf. live-plasma
+	# used to skip the root-user override when that file existed, which
+	# left dbus-daemon --system looking for a messagebus account the live
+	# passwd does not have.
+	mkdir -p "$mkiso_live/etc/dbus-1"
+	cat >"$mkiso_live/etc/dbus-1/system-local.conf" <<'EOF'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <user>root</user>
+</busconfig>
+EOF
+	for mkiso_cmd in dbus-daemon dbus-run-session dbus-launch dbus-uuidgen \
+		dbus-send
+	do
+		mkiso_copy_host_cmd "$mkiso_cmd" || :
+	done
+	mkiso_copy_path /usr/libexec/dbus-daemon-launch-helper
+	mkdir -p "$mkiso_live/etc/systemd/system"
+	ln -sf /dev/null "$mkiso_live/etc/systemd/system/dbus.service"
+	ln -sf /dev/null "$mkiso_live/etc/systemd/system/dbus.socket"
 }
 
 # PID 1 must be an ELF. A shell script that execs getty/setsid is what
@@ -717,7 +738,7 @@ if [ -f "$mkiso_libdir/live-bins" ]; then
 fi
 printf '%s: copying disk tools for setup\n' "$sps_prog" >&2
 for mkiso_cmd in lsblk blkid sfdisk cfdisk fdisk wipefs mkfs.ext4 mke2fs \
-	mkfs.vfat mkswap partprobe udevadm udevd
+	mkfs.vfat mkswap partprobe udevadm udevd grub-install grub-mkconfig
 do
 	mkiso_copy_host_cmd "$mkiso_cmd" || :
 done

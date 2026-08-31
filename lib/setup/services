@@ -1,0 +1,17 @@
+# package  systemd-unit  wanted-by  openrc-name  openrc-runlevel
+# "-" means this init has no file for that package.
+dbus	dbus.service	multi-user.target	dbus	sysinit
+sddm	sddm.service	graphical.target	sddm	default
+networkmanager	NetworkManager.service	multi-user.target	NetworkManager	default
+openssh	sshd.service	multi-user.target	sshd	default
+cups	cups.service	multi-user.target	cupsd	default
+bluez	bluetooth.service	multi-user.target	bluetooth	default
+iwd	iwd.service	multi-user.target	iwd	default
+dhcpcd	dhcpcd.service	multi-user.target	dhcpcd	default
+seatd	seatd.service	multi-user.target	seatd	default
+elogind	elogind.service	multi-user.target	elogind	sysinit
+power-profiles-daemon	power-profiles-daemon.service	multi-user.target	power-profiles-daemon	default
+bluetooth	bluetooth.service	multi-user.target	bluetooth	default
+sshd	sshd.service	multi-user.target	sshd	default
+cupsd	cups.service	multi-user.target	cupsd	default
+NetworkManager	NetworkManager.service	multi-user.target	NetworkManager	default

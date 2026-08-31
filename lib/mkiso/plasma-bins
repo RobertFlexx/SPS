@@ -27,6 +27,8 @@
 /usr/bin/dbus-launch
 /usr/bin/dbus-run-session
 /usr/bin/dbus-uuidgen
+/usr/bin/dbus-send
+/usr/libexec/dbus-daemon-launch-helper
 /usr/bin/seatd
 /usr/bin/Xorg
 /usr/bin/xauth

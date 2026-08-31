@@ -148,6 +148,9 @@ grep -q '^tester:x:1000:1000:Test User:/home/tester:/bin/sh$' \
 [ -f "$root/root/sps-bootloader.txt" ] || fail 'bootloader notes missing'
 [ -f "$root/root/sps-network.txt" ] || fail 'network notes missing'
 [ -f "$root/root/sps-fstab.txt" ] || fail 'fstab notes missing'
+[ -f "$root/root/sps-services.txt" ] || fail 'services notes missing'
+grep -q 'Init is none' "$root/root/sps-services.txt" ||
+	fail 'fixture with init none should not pretend to enable services'
 grep -q 'grub-install' "$root/root/sps-bootloader.txt" ||
 	fail 'bootloader notes omitted grub-install warning'
 
@@ -226,3 +229,69 @@ grep -q 'git core https://github.com/RobertFlexx/sps-core.git' \
 grep -q 'git extra https://github.com/RobertFlexx/sps-extra.git' \
 	"$root_git/etc/sps/repos.conf" ||
 	fail 'empty live root should write git extra'
+
+# Later plans use the real profiles, not the fixture directory.
+unset SPS_SETUP_DIR
+
+# Guided layouts: --plan does not need --format yes; a real run does.
+plan=$("$setup" --plan --target /mnt --profile minimal --disable qol-cli \
+	--partition efi-root --disk /dev/vda)
+contains "$plan" 'Partition:  efi-root'
+contains "$plan" 'Format:     no'
+contains "$plan" 'Disk:       /dev/vda'
+
+plan=$("$setup" --plan --target /mnt --profile minimal --disable qol-cli \
+	--partition efi-root --disk /dev/vda --format yes)
+contains "$plan" 'Format:     yes'
+
+set +e
+"$setup" --plan --target /mnt --profile minimal --disable qol-cli \
+	--install-bootloader >/dev/null 2>"$tmp/err"
+st=$?
+set -e
+[ "$st" -eq 2 ] || fail "--install-bootloader without --disk returned $st"
+contains "$(cat "$tmp/err")" '--disk'
+
+set +e
+"$setup" --non-interactive --no-update --target "$tmp/noformat" \
+	--profile minimal --disable qol-cli --partition efi-root --disk /dev/vda \
+	>/dev/null 2>"$tmp/err"
+st=$?
+set -e
+[ "$st" -eq 2 ] || fail "guided without --format yes returned $st"
+contains "$(cat "$tmp/err")" '--format yes'
+
+plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init systemd \
+	--disable qol-cli --disable power --disable firmware)
+contains "$plan" 'Init:       systemd'
+contains "$plan" 'sddm'
+contains "$plan" 'init-systemd'
+contains "$plan" 'Services:   yes'
+case $plan in
+	*elogind*) fail 'plasma + systemd must not pull elogind' ;;
+esac
+
+plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init openrc \
+	--disable qol-cli)
+contains "$plan" 'init-openrc'
+
+set +e
+"$setup" --plan --target /mnt --profile minimal --init systemd \
+	--disable qol-cli --extra elogind >/dev/null 2>"$tmp/err"
+st=$?
+set -e
+[ "$st" -eq 7 ] || fail "systemd + extra elogind returned $st"
+contains "$(cat "$tmp/err")" 'elogind'
+
+plan=$("$setup" --plan --target /mnt --profile minimal --init systemd \
+	--disable qol-cli --extra sddm --services no)
+contains "$plan" 'sddm'
+contains "$plan" 'Services:   no'
+
+"$setup" --plan --target /mnt --profile minimal --disable qol-cli \
+	--write-answers "$tmp/svc-answers" >/dev/null
+grep -qx 'services yes' "$tmp/svc-answers" || fail 'answers missing services'
+grep -qx 'install-bootloader no' "$tmp/svc-answers" ||
+	fail 'answers missing install-bootloader'
+
+printf '%s\n' 'setup tests passed'

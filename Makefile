@@ -161,6 +161,7 @@ install:
 		"$(DESTDIR)$(LIBDIR)/setup/sets"
 	install -m 0644 lib/setup/keymaps lib/setup/timezones \
 		lib/setup/locales lib/setup/shells lib/setup/extras \
+		lib/setup/services \
 		"$(DESTDIR)$(LIBDIR)/setup/"
 	@set -e; for f in lib/setup/profiles/*.profile; do \
 		install -m 0644 $$f "$(DESTDIR)$(LIBDIR)/setup/profiles/"; \
