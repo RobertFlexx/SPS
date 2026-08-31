@@ -1,5 +1,7 @@
-# Parse one recipe into a repository index record. Build command fields are
-# recognized here, but never executed.
+# Parse one or more recipes into repository index records. Build command
+# fields are recognized here, but never executed. src update feeds a whole
+# repository in one invocation; src check and the test parser still pass a
+# single file.
 
 function recipe_trim(value) {
     sub(/^[ \t]+/, "", value)
@@ -14,7 +16,13 @@ function recipe_stderr(message,    command) {
 }
 
 function recipe_error(message) {
-    recipe_stderr("recipe: " FILENAME ":" FNR ": " message)
+    recipe_where = FILENAME
+    recipe_at = FNR
+    if (recipe_file != "")
+        recipe_where = recipe_file
+    if (recipe_emitting)
+        recipe_at = recipe_last_fnr
+    recipe_stderr("recipe: " recipe_where ":" recipe_at ": " message)
     recipe_failed = 1
 }
 
@@ -95,64 +103,21 @@ function recipe_valid_dependency_list(label, value,    count, items, i, item,
     return 1
 }
 
-function recipe_process(line,    key, value, separator) {
-    line = recipe_trim(line)
-    if (line == "" || line ~ /^#/)
-        return
-
-    separator = match(line, /[ \t]/)
-    if (!separator) {
-        recipe_error("expected 'key value' record")
-        return
-    }
-    key = substr(line, 1, RSTART - 1)
-    value = recipe_trim(substr(line, RSTART + RLENGTH))
-    if (value == "") {
-        recipe_error("empty value for '" key "'")
-        return
-    }
-
-    if (key == "name" || key == "version" || key == "release" ||
-        key == "arch" || key == "description") {
-        recipe_set_once(key, value)
-    } else if (key == "depend" || key == "builddep" || key == "optional" ||
-               key == "conflict") {
-        recipe_append_dependency(key, value)
-    } else if (key == "source") {
-        recipe_source_count++
-    } else if (key == "hash") {
-        recipe_hash_count++
-        recipe_hash[recipe_hash_count] = value
-    } else if (key == "install") {
-        recipe_install_count++
-    } else if (key == "prepare" || key == "configure" || key == "build") {
-        # mkpkg executes phase records later; indexing only validates their syntax.
-    } else {
-        recipe_error("unknown field '" key "'")
-    }
-}
-
-{
-    recipe_line = $0
-    sub(/\r$/, "", recipe_line)
-    if (recipe_continuing)
-        recipe_logical = recipe_logical recipe_line
-    else
-        recipe_logical = recipe_line
-
-    if (recipe_logical ~ /\\[ \t]*$/) {
-        sub(/\\[ \t]*$/, "", recipe_logical)
-        recipe_logical = recipe_logical " "
-        recipe_continuing = 1
-        next
-    }
-
+function recipe_reset() {
+    delete recipe_seen
+    delete recipe_value
+    delete recipe_hash
+    recipe_source_count = 0
+    recipe_hash_count = 0
+    recipe_install_count = 0
     recipe_continuing = 0
-    recipe_process(recipe_logical)
     recipe_logical = ""
+    recipe_failed = 0
+    recipe_emitting = 0
 }
 
-END {
+function recipe_finish() {
+    recipe_emitting = 1
     if (recipe_continuing)
         recipe_error("unterminated line continuation")
 
@@ -226,8 +191,11 @@ END {
     if (length(recipe_sha256) != 64 || recipe_sha256 !~ /^[[:xdigit:]]+$/)
         recipe_error("invalid recipe SHA-256")
 
-    if (recipe_failed)
-        exit 2
+    recipe_emitting = 0
+    if (recipe_failed) {
+        recipe_any_failed = 1
+        return
+    }
 
     OFS = "\t"
     print recipe_value["name"], recipe_value["version"],
@@ -236,4 +204,110 @@ END {
           recipe_value["optional"], recipe_repo, recipe_priority,
           recipe_path, recipe_value["description"], tolower(recipe_sha256),
           recipe_value["conflict"]
+}
+
+function recipe_process(line,    key, value, separator) {
+    line = recipe_trim(line)
+    if (line == "" || line ~ /^#/)
+        return
+
+    separator = match(line, /[ \t]/)
+    if (!separator) {
+        recipe_error("expected 'key value' record")
+        return
+    }
+    key = substr(line, 1, RSTART - 1)
+    value = recipe_trim(substr(line, RSTART + RLENGTH))
+    if (value == "") {
+        recipe_error("empty value for '" key "'")
+        return
+    }
+
+    if (key == "name" || key == "version" || key == "release" ||
+        key == "arch" || key == "description") {
+        recipe_set_once(key, value)
+    } else if (key == "depend" || key == "builddep" || key == "optional" ||
+               key == "conflict") {
+        recipe_append_dependency(key, value)
+    } else if (key == "source") {
+        recipe_source_count++
+    } else if (key == "hash") {
+        recipe_hash_count++
+        recipe_hash[recipe_hash_count] = value
+    } else if (key == "install") {
+        recipe_install_count++
+    } else if (key == "prepare" || key == "configure" || key == "build") {
+        # mkpkg executes phase records later; indexing only validates their syntax.
+    } else {
+        recipe_error("unknown field '" key "'")
+    }
+}
+
+BEGIN {
+    if (recipe_digest_map != "") {
+        while ((getline recipe_dline < recipe_digest_map) > 0) {
+            recipe_n = split(recipe_dline, recipe_df, "\t")
+            if (recipe_n >= 2)
+                recipe_digest[recipe_df[1]] = recipe_df[2]
+        }
+        close(recipe_digest_map)
+    }
+    if (recipe_file_list != "") {
+        while ((getline recipe_listed < recipe_file_list) > 0) {
+            if (recipe_listed == "")
+                continue
+            ARGV[ARGC++] = recipe_listed
+        }
+        close(recipe_file_list)
+        if (ARGC == 1) {
+            recipe_skip_end = 1
+            exit 0
+        }
+    }
+}
+
+FNR == 1 {
+    if (recipe_active) {
+        recipe_finish()
+        if (recipe_any_failed)
+            exit 2
+    }
+    recipe_reset()
+    recipe_file = FILENAME
+    recipe_last_fnr = FNR
+    if (recipe_digest_map != "") {
+        recipe_path = FILENAME
+        recipe_sha256 = recipe_digest[FILENAME]
+    }
+    recipe_active = 1
+}
+
+{
+    recipe_last_fnr = FNR
+    recipe_line = $0
+    sub(/\r$/, "", recipe_line)
+    if (recipe_continuing)
+        recipe_logical = recipe_logical recipe_line
+    else
+        recipe_logical = recipe_line
+
+    if (recipe_logical ~ /\\[ \t]*$/) {
+        sub(/\\[ \t]*$/, "", recipe_logical)
+        recipe_logical = recipe_logical " "
+        recipe_continuing = 1
+        next
+    }
+
+    recipe_continuing = 0
+    recipe_process(recipe_logical)
+    recipe_logical = ""
+}
+
+END {
+    if (recipe_skip_end)
+        exit 0
+    if (!recipe_any_failed && recipe_active)
+        recipe_finish()
+    if (recipe_any_failed)
+        exit 2
 }

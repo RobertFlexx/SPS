@@ -46,6 +46,19 @@ selects PID 1;
 will not install both.
 Live images prefer systemd. If the build host has no systemd binaries,
 busybox init runs instead and respawns gettys on tty1 and ttyS0.
+.PP
+On a live ISO,
+.B setup
+copies the bundled
+.I /usr/src/sps/core
+and
+.I /usr/src/sps/extra
+recipe trees into the target and indexes those
+.B dir
+repositories. That does not need a network.
+.B src update
+only clones GitHub when those trees are missing, which is why a slim
+image fails offline.
 .SH PROFILES
 .TP
 .B minimal
@@ -154,6 +167,7 @@ Skip
 .B src update
 before
 .B sget install .
+Live images still copy bundled recipe trees into the target.
 .TP
 .B --non-interactive
 Never start

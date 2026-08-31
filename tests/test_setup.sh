@@ -107,10 +107,12 @@ cache=$tmp/cache
 build=$tmp/build
 repo=$tmp/repo
 mkdir -p "$root" "$db" "$cache" "$build" "$repo/hello" "$repo/extra-pkg"
+mkdir -p "$tmp/nolive-fixture"
 : >"$tmp/sps.conf"
 printf 'dir test %s 10\n' "$repo" >"$tmp/repos.conf"
 export SPS_ROOT=$root SPS_DB=$db SPS_CACHE=$cache SPS_BUILD=$build
 export SPS_CONFIG=$tmp/sps.conf SPS_REPOS_CONFIG=$tmp/repos.conf
+export SPS_LIVE_ROOT=$tmp/nolive-fixture
 
 cat >"$repo/hello/recipe" <<'EOF'
 name        hello
@@ -148,3 +150,79 @@ grep -q '^tester:x:1000:1000:Test User:/home/tester:/bin/sh$' \
 [ -f "$root/root/sps-fstab.txt" ] || fail 'fstab notes missing'
 grep -q 'grub-install' "$root/root/sps-bootloader.txt" ||
 	fail 'bootloader notes omitted grub-install warning'
+
+printf '%s\n' 'setup fixture tests passed'
+
+# Bundled live recipes: copy into the target and index locally (no Git clone).
+live=$tmp/live
+mkdir -p "$live/usr/src/sps/core/hello" "$live/usr/src/sps/extra/placeholder"
+cat >"$live/usr/src/sps/core/hello/recipe" <<'EOF'
+name        hello
+version     1.0
+release     1
+arch        any
+description bundled hello
+install     mkdir -p "$PKG/usr/share/sps-test"
+install     printf '%s\n' bundled >"$PKG/usr/share/sps-test/hello"
+EOF
+cat >"$live/usr/src/sps/extra/placeholder/recipe" <<'EOF'
+name        placeholder
+version     1.0
+release     1
+arch        any
+description bundled extra placeholder
+install     true
+EOF
+
+root_seed=$tmp/root-seed
+db_seed=$tmp/db-seed
+cache_seed=$tmp/cache-seed
+build_seed=$tmp/build-seed
+mkdir -p "$root_seed" "$db_seed" "$cache_seed" "$build_seed"
+(
+	unset SPS_ROOT SPS_DB SPS_CACHE SPS_BUILD SPS_CONFIG SPS_REPOS_CONFIG
+	export SPS_LIVE_ROOT=$live
+	export SPS_SETUP_DIR=$project_dir/tests/setup-fixture
+	export SPS_LIBDIR=$project_dir/lib
+	export PATH=$project_dir/bin:$PATH
+	"$setup" --non-interactive --target "$root_seed" --profile tiny \
+		--hostname seeded --timezone UTC --keymap us --user tester \
+		--user-gecos 'Seed User'
+) || fail 'bundled-recipe setup failed'
+
+[ "$(cat "$root_seed/usr/share/sps-test/hello")" = bundled ] ||
+	fail 'bundled hello was not installed'
+[ -f "$root_seed/usr/src/sps/core/hello/recipe" ] ||
+	fail 'live recipe tree was not copied into the target'
+grep -qx 'dir core /usr/src/sps/core 100' "$root_seed/etc/sps/repos.conf" ||
+	fail 'installed repos.conf must use /usr/src/sps paths'
+grep -qx 'dir extra /usr/src/sps/extra 80' "$root_seed/etc/sps/repos.conf" ||
+	fail 'installed repos.conf must keep bundled extra as a dir repo'
+if grep -q 'git ' "$root_seed/etc/sps/repos.conf"; then
+	fail 'bundled live trees must not fall back to git'
+fi
+
+# No bundled trees: repos.conf is git clones, and --no-update must not
+# require the network.
+nolive=$tmp/nolive
+mkdir -p "$nolive"
+root_git=$tmp/root-git
+mkdir -p "$root_git"
+(
+	unset SPS_ROOT SPS_DB SPS_CACHE SPS_BUILD SPS_CONFIG SPS_REPOS_CONFIG
+	export SPS_LIVE_ROOT=$nolive
+	export SPS_SETUP_DIR=$project_dir/tests/setup-fixture
+	export SPS_LIBDIR=$project_dir/lib
+	export PATH=$project_dir/bin:$PATH
+	export SPS_ROOT=$root SPS_DB=$db SPS_CACHE=$cache SPS_BUILD=$build
+	export SPS_CONFIG=$tmp/sps.conf SPS_REPOS_CONFIG=$tmp/repos.conf
+	"$setup" --non-interactive --no-update --target "$root_git" \
+		--profile tiny --hostname gitfallback --timezone UTC \
+		--keymap us --user tester
+) || fail 'git-fallback --no-update setup failed'
+grep -q 'git core https://github.com/RobertFlexx/sps-core.git' \
+	"$root_git/etc/sps/repos.conf" ||
+	fail 'empty live root should write git core'
+grep -q 'git extra https://github.com/RobertFlexx/sps-extra.git' \
+	"$root_git/etc/sps/repos.conf" ||
+	fail 'empty live root should write git extra'

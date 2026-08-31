@@ -75,6 +75,7 @@ done
 
 [ -n "$found" ] || rescue "mkiso: cannot find the SPS Linux live filesystem on a CD/USB."
 
+say "SPS: found live image on $found"
 say "SPS: mounting live filesystem..."
 "$bb" mount -t squashfs -o ro /mnt/iso/live/filesystem.squashfs /mnt/ro ||
 	rescue "mkiso: squashfs mount failed"

@@ -93,6 +93,10 @@ grep -q dbus-run-session "$layout/etc/sps/live-plasma" ||
 grep -q C.UTF-8 "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must set a UTF-8 locale'
 grep -q -- '-comp zstd' "$mkiso" || fail 'mkiso must write a zstd squashfs'
+grep -q -- '-Xcompression-level 3' "$mkiso" ||
+	fail 'mkiso squashfs compression should stay fast to build'
+grep -q 'found live image' "$project_dir/lib/mkiso/initrd-init" ||
+	fail 'initrd must say when the ISO is found'
 grep -q 'mounting live filesystem' "$project_dir/lib/mkiso/initrd-init" ||
 	fail 'initrd must print before squashfs mount'
 if [ -x /usr/bin/dialog ]; then

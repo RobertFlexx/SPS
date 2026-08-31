@@ -108,6 +108,27 @@ sps_sha256()
 	fi
 }
 
+# Same digest as sps_sha256, from stdin. Used for the recipe-only definition
+# manifest so src update does not create a throwaway directory per package.
+sps_sha256_stream()
+{
+	if command -v sha256sum >/dev/null 2>&1; then
+		sps_hash_line=$(sha256sum) || return $?
+		printf '%s\n' "${sps_hash_line%% *}"
+	elif command -v sha256 >/dev/null 2>&1; then
+		sha256 -q
+	elif command -v shasum >/dev/null 2>&1; then
+		sps_hash_line=$(shasum -a 256) || return $?
+		printf '%s\n' "${sps_hash_line%% *}"
+	elif command -v openssl >/dev/null 2>&1; then
+		sps_hash_line=$(openssl dgst -sha256) || return $?
+		printf '%s\n' "${sps_hash_line##* }"
+	else
+		sps_die "$SPS_EX_CHECKSUM" \
+			"no SHA-256 utility found (tried sha256sum, sha256, shasum, openssl)"
+	fi
+}
+
 # Hash every input which makes up one package definition.  The manifest uses
 # only fixed, package-relative names, so moving an unchanged package directory
 # does not change its digest.  files/ and patches/ are copied recursively by
@@ -140,6 +161,42 @@ sps_definition_sha256()
 	   [ ! -r "$sps_definition_recipe" ]; then
 		sps_warn 'package definition recipe must be a readable regular file'
 		return 1
+	fi
+
+	# Recipe-only packages produce a two-line manifest. Hash that without a
+	# workspace directory; src update indexes hundreds of these.
+	sps_definition_need_support=0
+	for sps_definition_support in files patches hooks; do
+		if [ -e "$sps_definition_dir/$sps_definition_support" ] ||
+		   [ -L "$sps_definition_dir/$sps_definition_support" ]; then
+			sps_definition_need_support=1
+			break
+		fi
+	done
+	if [ "$sps_definition_need_support" -eq 0 ]; then
+		sps_definition_hash=$(sps_sha256 "$sps_definition_recipe") || {
+			sps_warn 'cannot hash package definition recipe'
+			return 1
+		}
+		sps_definition_hash=$(printf '%s\n' "$sps_definition_hash" |
+			LC_ALL=C tr 'ABCDEF' 'abcdef') || return 1
+		case $sps_definition_hash in
+			''|*[!0123456789abcdef]*) return 1 ;;
+		esac
+		[ "${#sps_definition_hash}" -eq 64 ] || return 1
+		sps_definition_out=$(printf 'sps-package-definition\t1\nfile\t-\t%s\trecipe\n' \
+			"$sps_definition_hash" | sps_sha256_stream) || {
+			sps_warn 'cannot hash package definition manifest'
+			return 1
+		}
+		sps_definition_out=$(printf '%s\n' "$sps_definition_out" |
+			LC_ALL=C tr 'ABCDEF' 'abcdef') || return 1
+		case $sps_definition_out in
+			''|*[!0123456789abcdef]*) return 1 ;;
+		esac
+		[ "${#sps_definition_out}" -eq 64 ] || return 1
+		printf '%s\n' "$sps_definition_out"
+		return 0
 	fi
 
 	sps_definition_tmp=$(mktemp -d \

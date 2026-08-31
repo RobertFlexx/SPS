@@ -19,10 +19,14 @@ checkouts together with configured local directory repositories.
 .SH COMMANDS
 .TP
 .B update
-Clone absent Git repositories, fetch existing clean Git repositories,
+Clone absent Git repositories with
+.B --depth 1
+(later fetches stay full), fetch existing clean Git repositories,
 fast-forward safe tracking branches, scan configured trees, validate recipes
 and the selected dependency graph, and atomically replace the local package
-index. Invalid input leaves the previous index in place.
+index. Invalid input leaves the previous index in place. Recipe-only packages
+are hashed without a temporary directory; a repository is parsed in one AWK
+process rather than one process per recipe.
 .TP
 .BI check " recipe ..."
 Validate each recipe with the same parser used by
@@ -72,6 +76,7 @@ refuses tracked or untracked local changes before fetching. It never runs
 or an implicit checkout. A clean tracking branch is fast-forwarded only when
 safe. Detached heads and branches without an origin upstream remain pinned;
 locally ahead branches remain unchanged; divergent branches are refused.
+Git prompts are disabled so a missing network fails instead of hanging.
 .SH FILES
 .TP
 .B /etc/sps/sps.conf

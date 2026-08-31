@@ -47,7 +47,7 @@ src_cleanup_update()
 	if [ -n "${src_work:-}" ]; then
 		rm -f "$src_work/repos.raw" "$src_work/repos" \
 		      "$src_work/recipes.unsorted" "$src_work/recipes" \
-		      "$src_work/packages.index"
+		      "$src_work/digests" "$src_work/packages.index"
 		rmdir "$src_work" 2>/dev/null || :
 		src_work=
 	fi
@@ -83,12 +83,17 @@ src_sync_git()
 	src_git_parent=${src_git_checkout%/*}
 	[ -n "$src_git_parent" ] || src_git_parent=/
 	sps_mkdir "$src_git_parent"
+	GIT_TERMINAL_PROMPT=0
+	export GIT_TERMINAL_PROMPT
 
 	if [ ! -e "$src_git_checkout" ] && [ ! -L "$src_git_checkout" ]; then
 		src_clone_work=$(sps_mktemp_dir "$src_git_parent" \
 			"clone-$src_git_name")
 		src_clone_checkout=$src_clone_work/repository
-		if ! git clone -- "$src_git_source" "$src_clone_checkout"; then
+		# Depth 1 is enough for recipes. Later fetches stay full so
+		# fast-forward and divergence checks keep working.
+		if ! git clone --depth 1 --single-branch -- \
+			"$src_git_source" "$src_clone_checkout"; then
 			sps_die "$SPS_EX_NETWORK" \
 				"cannot clone repository '$src_git_name'"
 		fi
@@ -216,6 +221,8 @@ src_update()
     fi
     : > "$src_work/packages.index" ||
         sps_die "$SPS_EX_PERMISSION" "cannot create repository index"
+    : > "$src_work/digests" ||
+        sps_die "$SPS_EX_PERMISSION" "cannot create recipe digest map"
 
     src_default_arch=$SPS_ARCH
     src_repo_count=0
@@ -268,6 +275,12 @@ src_update()
             break
         fi
 
+        : > "$src_work/digests" || {
+            printf "%s: cannot create recipe digest map\n" "$sps_prog" >&2
+            src_failed=1
+            break
+        }
+        src_repo_packages=0
         while IFS= read -r src_recipe || [ -n "$src_recipe" ]
         do
             [ -n "$src_recipe" ] || continue
@@ -297,21 +310,30 @@ src_update()
                 src_failed=1
                 break
             fi
+            printf '%s\t%s\n' "$src_recipe" "$src_digest" \
+                >> "$src_work/digests" || {
+                printf "%s: cannot record recipe digest: %s\n" \
+                    "$sps_prog" "$src_recipe" >&2
+                src_failed=1
+                break
+            }
+            src_repo_packages=$((src_repo_packages + 1))
+        done < "$src_work/recipes"
 
+        [ "$src_failed" -eq 0 ] || break
+        if [ "$src_repo_packages" -gt 0 ]; then
             if ! awk -v recipe_repo="$src_repo_name" \
                 -v recipe_priority="$src_repo_priority" \
-                -v recipe_path="$src_recipe" \
-                -v recipe_sha256="$src_digest" \
+                -v recipe_digest_map="$src_work/digests" \
+                -v recipe_file_list="$src_work/recipes" \
                 -v recipe_default_arch="$src_default_arch" \
-                -f "$SPS_LIBDIR/recipe.awk" "$src_recipe" \
+                -f "$SPS_LIBDIR/recipe.awk" \
                 >> "$src_work/packages.index"; then
                 src_failed=1
                 break
             fi
-            src_package_count=$((src_package_count + 1))
-        done < "$src_work/recipes"
-
-        [ "$src_failed" -eq 0 ] || break
+        fi
+        src_package_count=$((src_package_count + src_repo_packages))
         src_repo_count=$((src_repo_count + 1))
     done < "$src_work/repos"
 

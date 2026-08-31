@@ -17,6 +17,14 @@ if ! . "$SPS_LIBDIR/common.sh"; then
 	printf '%s\n' "setup: cannot load $SPS_LIBDIR/common.sh" >&2
 	exit 1
 fi
+# Remember caller-supplied paths. sps_load_config exports defaults for the
+# running system; after --target those must not leak into src/sget.
+[ "${SPS_DB+x}" = x ] && setup_keep_db=1 || setup_keep_db=0
+[ "${SPS_CACHE+x}" = x ] && setup_keep_cache=1 || setup_keep_cache=0
+[ "${SPS_BUILD+x}" = x ] && setup_keep_build=1 || setup_keep_build=0
+[ "${SPS_REPO_ROOT+x}" = x ] && setup_keep_repo_root=1 || setup_keep_repo_root=0
+[ "${SPS_CONFIG+x}" = x ] && setup_keep_config=1 || setup_keep_config=0
+[ "${SPS_REPOS_CONFIG+x}" = x ] && setup_keep_repos=1 || setup_keep_repos=0
 sps_load_config || exit $?
 
 setup_usage()
@@ -1304,6 +1312,9 @@ setup_apply_config()
 	fi
 
 	setup_write_answers_file "$setup_etc/sps/setup-answers"
+	# Installed-system paths. src update during setup used $setup_root
+	# prefixes so it could index the copied trees before first boot.
+	setup_write_repos_conf ""
 
 	if [ -n "$setup_user" ]; then
 		setup_home=/home/$setup_user
@@ -1402,18 +1413,130 @@ EOF
 	fi
 }
 
+# Copy bundled live recipe trees into the target and write repos.conf so
+# src update indexes local dir repos. Live ISOs already have those trees
+# at /usr/src/sps/{core,extra}; cloning GitHub during setup is what made
+# "updating source repositories" hang or fail offline.
+setup_tree_has_recipe()
+{
+	setup_probe=$1
+	[ -d "$setup_probe" ] || return 1
+	find "$setup_probe" \( -type d \( -name .git -o -name files -o \
+		-name patches -o -name hooks \) -prune \) -o \
+		-type f -name recipe -print | {
+		IFS= read -r setup_probe_recipe || true
+		[ -n "$setup_probe_recipe" ]
+	}
+}
+
+setup_seed_one_tree()
+{
+	setup_seed_name=$1
+	setup_seed_src=$setup_live_root/usr/src/sps/$setup_seed_name
+	setup_seed_dest=$setup_root/usr/src/sps/$setup_seed_name
+	setup_tree_has_recipe "$setup_seed_src" || return 1
+	setup_seed_src_abs=$(CDPATH= cd -P "$setup_seed_src" 2>/dev/null &&
+		pwd -P) || return 1
+	if [ -d "$setup_seed_dest" ]; then
+		setup_seed_dest_abs=$(CDPATH= cd -P "$setup_seed_dest" \
+			2>/dev/null && pwd -P) || setup_seed_dest_abs=
+		if [ -n "$setup_seed_dest_abs" ] &&
+		   [ "$setup_seed_src_abs" = "$setup_seed_dest_abs" ]; then
+			return 0
+		fi
+		if setup_tree_has_recipe "$setup_seed_dest"; then
+			return 0
+		fi
+	fi
+	printf '%s: copying live %s recipes into the target\n' \
+		"$sps_prog" "$setup_seed_name" >&2
+	mkdir -p "$setup_seed_dest" || return 1
+	cp -a "$setup_seed_src"/. "$setup_seed_dest"/ || return 1
+	rm -rf "$setup_seed_dest/.git"
+	return 0
+}
+
+setup_write_repos_conf()
+{
+	setup_repos_prefix=$1
+	setup_repos_core=/usr/src/sps/core
+	setup_repos_extra=/usr/src/sps/extra
+	if [ -n "$setup_repos_prefix" ]; then
+		setup_repos_core=$setup_repos_prefix$setup_repos_core
+		setup_repos_extra=$setup_repos_prefix$setup_repos_extra
+	fi
+	{
+		if [ "${setup_have_core:-0}" -eq 1 ]; then
+			printf 'dir core %s 100\n' "$setup_repos_core"
+		else
+			printf 'git core https://github.com/RobertFlexx/sps-core.git 100\n'
+		fi
+		if [ "${setup_have_extra:-0}" -eq 1 ]; then
+			printf 'dir extra %s 80\n' "$setup_repos_extra"
+		else
+			printf 'git extra https://github.com/RobertFlexx/sps-extra.git 80\n'
+		fi
+	} >"$setup_root/etc/sps/repos.conf" ||
+		setup_fail "$SPS_EX_PERMISSION" "cannot write target repos.conf"
+}
+
+setup_seed_recipe_trees()
+{
+	setup_live_root=${SPS_LIVE_ROOT:-/}
+	case $setup_live_root in
+		/*) ;;
+		*)
+			setup_fail "$SPS_EX_USAGE" \
+				"SPS_LIVE_ROOT must be an absolute path: $setup_live_root"
+			;;
+	esac
+	[ "$setup_live_root" = / ] || setup_live_root=${setup_live_root%/}
+
+	mkdir -p "$setup_root/etc/sps" "$setup_root/usr/src/sps" ||
+		setup_fail "$SPS_EX_PERMISSION" "cannot create target repository directories"
+
+	setup_have_core=0
+	setup_have_extra=0
+	if setup_seed_one_tree core; then
+		setup_have_core=1
+	fi
+	if setup_seed_one_tree extra; then
+		setup_have_extra=1
+	fi
+
+	# Paths must exist on this system during src update. apply_config
+	# rewrites them to /usr/src/sps/... for the installed machine.
+	setup_write_repos_conf "$setup_root"
+
+	if [ "$setup_have_core" -eq 1 ] && [ "$setup_have_extra" -eq 1 ]; then
+		printf '%s: using bundled recipes; src update indexes them locally\n' \
+			"$sps_prog" >&2
+	else
+		printf '%s: missing bundled recipes; src update will clone from the network\n' \
+			"$sps_prog" >&2
+	fi
+}
+
 # Packages first, then hostname/user so filesystem's passwd is already present.
 setup_root=${setup_target%/}
 mkdir -p "$setup_root" ||
 	setup_fail "$SPS_EX_PERMISSION" "cannot create target: $setup_root"
 
 export SPS_ROOT=$setup_root
+[ "$setup_keep_db" -eq 1 ] || unset SPS_DB
+[ "$setup_keep_cache" -eq 1 ] || unset SPS_CACHE
+[ "$setup_keep_build" -eq 1 ] || unset SPS_BUILD
+[ "$setup_keep_repo_root" -eq 1 ] || unset SPS_REPO_ROOT
+[ "$setup_keep_config" -eq 1 ] || unset SPS_CONFIG
+[ "$setup_keep_repos" -eq 1 ] || unset SPS_REPOS_CONFIG
 
 if [ "$setup_kernel" = custom ] && [ -n "$setup_kernel_config" ]; then
 	mkdir -p "$setup_root/etc/sps"
 	cp "$setup_kernel_config" "$setup_root/etc/sps/kernel.config" ||
 		setup_fail "$SPS_EX_PERMISSION" "cannot copy kernel config"
 fi
+
+setup_seed_recipe_trees
 
 if [ "$setup_do_update" -eq 1 ]; then
 	printf '%s: updating source repositories\n' "$sps_prog" >&2
@@ -1436,6 +1559,14 @@ sget install $setup_pkgs ||
 
 # Hostname, user, and notes land after packages so filesystem's passwd wins.
 setup_apply_config
+
+# On a live ISO, rewrite of repos.conf pointed at /usr/src/sps. Rebuild
+# the index so the installed system does not keep /mnt-prefixed recipe paths.
+if [ "$setup_do_update" -eq 1 ] && [ -f /etc/sps/live ]; then
+	printf '%s: reindexing recipes for the installed system\n' "$sps_prog" >&2
+	src update || printf '%s: installed-system reindex failed; run src update after boot\n' \
+		"$sps_prog" >&2
+fi
 
 if [ "$setup_flatpak" = yes ]; then
 	setup_fp=$setup_root/usr/bin/flatpak

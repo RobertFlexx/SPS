@@ -236,10 +236,12 @@ mkiso_copy_path()
 	mkdir -p "$(dirname "$mkiso_dest")" || return 0
 	if [ -d "$mkiso_src" ] && [ ! -L "$mkiso_src" ]; then
 		mkdir -p "$mkiso_dest"
-		cp -a "$mkiso_src"/. "$mkiso_dest"/ 2>/dev/null ||
+		cp -a --reflink=auto "$mkiso_src"/. "$mkiso_dest"/ 2>/dev/null ||
+			cp -a "$mkiso_src"/. "$mkiso_dest"/ 2>/dev/null ||
 			cp -R "$mkiso_src"/. "$mkiso_dest"/ 2>/dev/null || :
 	else
-		cp -a "$mkiso_src" "$mkiso_dest" 2>/dev/null ||
+		cp -a --reflink=auto "$mkiso_src" "$mkiso_dest" 2>/dev/null ||
+			cp -a "$mkiso_src" "$mkiso_dest" 2>/dev/null ||
 			cp "$mkiso_src" "$mkiso_dest" 2>/dev/null || :
 		if [ -L "$mkiso_src" ]; then
 			mkiso_link=$(readlink "$mkiso_src") || return 0
@@ -348,7 +350,8 @@ mkiso_close_libs()
 	done
 	[ -n "$mkiso_find" ] || return 0
 	# shellcheck disable=SC2086
-	find $mkiso_find -type f -print 2>/dev/null |
+	find $mkiso_find -type f \( -perm -0100 -o -perm -0010 -o -perm -0001 \) \
+		-print 2>/dev/null |
 	while IFS= read -r mkiso_elf || [ -n "$mkiso_elf" ]; do
 		[ -n "$mkiso_elf" ] || continue
 		# Scripts and data are not DT_NEEDED sources.
@@ -472,6 +475,7 @@ mkiso_copy_plasma()
 		while IFS= read -r mkiso_tree || [ -n "$mkiso_tree" ]; do
 			case $mkiso_tree in ''|\#*) continue ;; esac
 			[ -e "$mkiso_tree" ] || continue
+			printf '%s: copying %s\n' "$sps_prog" "$mkiso_tree" >&2
 			mkiso_copy_path "$mkiso_tree"
 		done <"$mkiso_libdir/plasma-trees"
 	fi
@@ -798,15 +802,21 @@ cp -a "$mkiso_kernel" "$mkiso_iso/live/vmlinuz"
 
 printf '%s: writing squashfs (zstd)\n' "$sps_prog" >&2
 # zstd mounts in seconds; xz is what made QEMU sit on loop0 while the
-# 4G Plasma root decompressed. Level 5 is a live-ISO default: fast
-# to build, fast to boot, still smaller than gzip.
+# 4G Plasma root decompressed. Level 3 is a live-ISO default: fast
+# to build, fast to boot, still much smaller than gzip.
+mkiso_squash_jobs=$(nproc 2>/dev/null || printf 2)
+case $mkiso_squash_jobs in
+	''|*[!0-9]*|0) mkiso_squash_jobs=2 ;;
+esac
 if ! mksquashfs "$mkiso_live" "$mkiso_iso/live/filesystem.squashfs" \
-	-comp zstd -Xcompression-level 5 -b 262144 -noappend -no-progress \
-	-e boot
+	-comp zstd -Xcompression-level 3 -b 262144 -noappend -no-progress \
+	-processors "$mkiso_squash_jobs" \
+	-e boot tmp var/tmp var/cache
 then
 	printf '%s: zstd squashfs failed, trying xz\n' "$sps_prog" >&2
 	mksquashfs "$mkiso_live" "$mkiso_iso/live/filesystem.squashfs" \
-		-comp xz -noappend -no-progress -e boot ||
+		-comp xz -noappend -no-progress -processors "$mkiso_squash_jobs" \
+		-e boot tmp var/tmp var/cache ||
 		sps_die "$SPS_EX_BUILD" "mksquashfs failed"
 fi
 

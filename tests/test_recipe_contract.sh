@@ -231,3 +231,62 @@ expect_builder_failure bad-hook "unsupported recipe hook 'not-a-hook'" \
     "$tmp/bad-hook/recipe"
 
 printf '%s\n' 'test_recipe_contract: ok'
+
+# One AWK process can index a whole repository.
+mkdir -p "$tmp/batch-a" "$tmp/batch-b"
+cat >"$tmp/batch-a/recipe" <<'EOF_BATCH_A'
+name batch-a
+version 1.0
+release 1
+arch any
+install true
+EOF_BATCH_A
+cat >"$tmp/batch-b/recipe" <<'EOF_BATCH_B'
+name batch-b
+version 2.0
+release 1
+arch any
+depend batch-a
+install true
+EOF_BATCH_B
+printf '%s\n' "$tmp/batch-a/recipe" "$tmp/batch-b/recipe" >"$tmp/batch.list"
+{
+	printf '%s\t%s\n' "$tmp/batch-a/recipe" "$recipe_digest"
+	printf '%s\t%s\n' "$tmp/batch-b/recipe" "$recipe_digest"
+} >"$tmp/batch.digests"
+batch_out=$(awk -v recipe_repo=test -v recipe_priority=10 \
+	-v recipe_digest_map="$tmp/batch.digests" \
+	-v recipe_file_list="$tmp/batch.list" \
+	-v recipe_default_arch=testarch \
+	-f "$recipe_parser") || fail 'batch recipe parse failed'
+printf '%s\n' "$batch_out" | awk -F '\t' '
+	$1 == "batch-a" { a = 1 }
+	$1 == "batch-b" && $5 ~ /batch-a/ { b = 1 }
+	END { exit !(a && b) }
+' || fail 'batch recipe parse dropped a package'
+
+mkdir -p "$tmp/batch-bad"
+cat >"$tmp/batch-bad/recipe" <<'EOF_BATCH_BAD'
+name batch-bad
+version 1.0
+release 1
+arch any
+EOF_BATCH_BAD
+printf '%s\n' "$tmp/batch-a/recipe" "$tmp/batch-bad/recipe" \
+	>"$tmp/batch-fail.list"
+{
+	printf '%s\t%s\n' "$tmp/batch-a/recipe" "$recipe_digest"
+	printf '%s\t%s\n' "$tmp/batch-bad/recipe" "$recipe_digest"
+} >"$tmp/batch-fail.digests"
+set +e
+awk -v recipe_repo=test -v recipe_priority=10 \
+	-v recipe_digest_map="$tmp/batch-fail.digests" \
+	-v recipe_file_list="$tmp/batch-fail.list" \
+	-v recipe_default_arch=testarch \
+	-f "$recipe_parser" >"$tmp/batch-fail.out" 2>"$tmp/batch-fail.err"
+batch_st=$?
+set -e
+[ "$batch_st" -eq 2 ] ||
+	fail "batch parse of a bad recipe returned $batch_st instead of 2"
+grep -F "missing required 'install' command" "$tmp/batch-fail.err" >/dev/null ||
+	fail 'batch parse did not report the bad recipe'

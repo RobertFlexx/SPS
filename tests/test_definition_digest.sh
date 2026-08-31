@@ -99,6 +99,28 @@ newline=${newline%X}
 printf '%s\n' bad >"$tmp/copy/files/bad${newline}name"
 expect_invalid_definition newline
 grep -F 'tab or newline' "$tmp/newline.err" >/dev/null ||
-    fail 'newline-containing path rejection was not explained'
+	fail 'newline-containing path rejection was not explained'
+
+# Recipe-only packages must hash the same two-line manifest the slow path
+# would write, without creating a workspace directory.
+mkdir -p "$tmp/recipe-only"
+printf '%s\n' 'name recipe-only' 'version 1.0' 'release 1' \
+	'install true' >"$tmp/recipe-only/recipe"
+only_digest=$(sps_definition_sha256 "$tmp/recipe-only/recipe") ||
+	fail 'could not hash a recipe-only package'
+recipe_hash=$(sps_sha256 "$tmp/recipe-only/recipe") ||
+	fail 'could not hash recipe-only recipe file'
+recipe_hash=$(printf '%s\n' "$recipe_hash" | LC_ALL=C tr 'ABCDEF' 'abcdef')
+manifest_digest=$(printf 'sps-package-definition\t1\nfile\t-\t%s\trecipe\n' \
+	"$recipe_hash" | sps_sha256_stream) ||
+	fail 'could not hash recipe-only manifest'
+manifest_digest=$(printf '%s\n' "$manifest_digest" |
+	LC_ALL=C tr 'ABCDEF' 'abcdef')
+[ "$only_digest" = "$manifest_digest" ] ||
+	fail 'recipe-only digest does not match the two-line manifest'
+printf '%s\n' 'name recipe-only' 'version 1.1' 'release 1' \
+	'install true' >"$tmp/recipe-only/recipe"
+[ "$(sps_definition_sha256 "$tmp/recipe-only/recipe")" != "$only_digest" ] ||
+	fail 'recipe-only digest ignored recipe content'
 
 printf '%s\n' 'package definition digest tests passed'

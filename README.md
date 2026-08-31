@@ -181,8 +181,9 @@ SSH, and more. `setup --list-sets` prints them. There is also an extra-package
 checklist (`--extra`) plus locale and login-shell screens.
 
 The installer writes hostname, timezone, keymap, and a first user into the
-target, then runs `src update` and `sget install`. Guided partitioning is
-optional and waits until the last confirmation. Choose systemd or OpenRC
+target, then copies bundled live recipe trees (when present), runs
+`src update`, and `sget install`. Guided partitioning is optional and waits
+until the last confirmation. Choose systemd or OpenRC
 as PID 1 (`--init`); those packages conflict. `grub-install` still needs
 `--install-bootloader` and `--disk`.
 

@@ -31,6 +31,10 @@ only with its library closure, including the real
 file behind the soname symlink.
 The squashfs uses zstd so the live root mounts quickly; xz made QEMU
 sit on the loop0 probe while a multi-gigabyte Plasma image decompressed.
+Compression level 3 keeps ISO creation short without changing the boot
+path. Directory copies use
+.B cp --reflink=auto
+when the host supports it.
 .B --layout
 writes the live root only, for tests and inspection.
 .PP
