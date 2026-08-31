@@ -41,6 +41,9 @@ tar find sort sed grep comm cmp cp mv rm mkdir ls mktemp
 A SHA-256 tool is also required. `sha256sum`, `sha256`, `shasum`, and `openssl`
 are supported where available.
 
+`git` is required only when a `git` repository is configured. Local `dir`
+repositories can be indexed without it.
+
 Compression support depends on the package or source being used. Install
 `gzip`, `xz`, or `zstd` if you want those formats. Remote HTTP or HTTPS sources
 need `curl` or `wget` when building.
@@ -75,15 +78,19 @@ sudo make install-config
 `install-config` leaves existing `sps.conf` and `repos.conf` alone. A
 distribution can skip it and ship its own configuration instead.
 
-## Set up a repository
+## Set up repositories
 
-SPS repositories are local directory trees. Put this in `/etc/sps/repos.conf`:
+Official repositories are ordinary Git checkouts managed by `src`. Local
+administrator trees use the same recipe format and need no transport layer.
+Put this in `/etc/sps/repos.conf`:
 
 ```text
-repo core /usr/src/core 100
+dir local /usr/local/src/sps-local 200
+git core https://github.com/RobertFlexx/sps-core.git 100
+git extra https://github.com/RobertFlexx/sps-extra.git 80
 ```
 
-Then build the local index:
+Then synchronize Git checkouts and build the local index:
 
 ```sh
 src update
@@ -91,9 +98,12 @@ src search shell
 sget info bash
 ```
 
-SPS does not decide how `/usr/src/core` gets updated. Use `git`, `rsync`, a
-release archive, or whatever fits the distribution. Repository transport and
-repository indexing are separate jobs.
+Git repositories are cloned below `/usr/src/sps` by default, so the example
+uses `/usr/src/sps/core` and `/usr/src/sps/extra`. `src update` fetches and
+fast-forwards clean tracking branches, but never resets, cleans, or overwrites
+a checkout with local changes. The checkouts remain normal Git repositories;
+`git status`, `git log`, and `git diff` work as usual. A `dir` repository is
+never synchronized by SPS.
 
 ## Normal use
 
@@ -112,7 +122,7 @@ sget remove neovim
 The lower-level tools are always available:
 
 ```sh
-mkpkg /usr/src/local/foo/recipe
+mkpkg /usr/local/src/sps-local/base/foo/recipe
 pkin foo-1.0-1-x86_64.pkg.tar.zst
 pkstat foo
 pkcheck foo

@@ -115,14 +115,16 @@ system is broken.
 
 ## Repositories
 
-An SPS source repository is a directory tree containing recipes. It can live in
-Git, be mirrored with rsync, arrive as a tarball, or just exist on disk.
+An SPS source repository is a directory tree containing recipes. Official trees
+are published and synchronized with ordinary Git; an administrator can inspect
+or repair their checkouts with ordinary Git commands. `src` owns the small
+amount of conservative Git synchronization needed by `src update`, while Git
+remains the transport and history mechanism.
 
-SPS only indexes that tree. It does not own the transport mechanism.
-
-That keeps `src update` simple and also means a distribution is free to choose
-how its package trees are published. A local administrator repository is not a
-special case. It is just another repository, usually with a higher priority.
+A local administrator repository is not a special package format. It is a
+configured directory tree, usually with a higher priority, and `src` never
+tries to synchronize it. Other transports can likewise populate a directory
+repository before indexing.
 
 Repository indexes are cached TSV records. Queries do not walk thousands of
 recipe files every time somebody runs `sget search`.

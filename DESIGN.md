@@ -13,7 +13,7 @@ A recipe is a line-oriented file named `recipe`. Each logical line is a key,
 whitespace, then a value. A trailing backslash continues the value on the next
 physical line. Blank lines and lines beginning with `#` are ignored.
 
-Required fields:
+Required metadata fields:
 
 ```text
 name
@@ -21,7 +21,9 @@ version
 release
 ```
 
-`arch` is optional and defaults to the configured architecture.
+`arch` is optional and defaults to the configured architecture. Use `any` for
+architecture-independent packages. `noarch` is accepted as a compatibility
+spelling, but official recipes use `any`.
 
 Repeatable metadata fields:
 
@@ -44,19 +46,28 @@ build
 install
 ```
 
-Reading recipe metadata never executes those commands.
+At least one `install` command is required, and it must produce a non-empty
+staged payload. Reading recipe metadata never executes phase commands.
+
+`mkpkg` runs each phase with `/bin/sh -eu`, starting in `$WORK`. It exports
+`PKG` as the staging root, `SRC` as the acquired-source directory, `WORK` as the
+extracted source root, and `MAKEJOBS` as a positive integer. Phase commands
+must install below `$PKG`, never directly into the live root.
 
 Hashes correspond to sources in declaration order and use this form:
 
 ```text
-sha256:HEX
+sha256:64_HEX_DIGITS
 ```
 
-`skip` is accepted only when `mkpkg` is run with its explicit insecure checksum
-override.
+Every declared source is verified. There is no checksum-skip value.
 
-A recipe directory may also contain `files/`, `patches/`, and `hooks/`. The
-only hook names accepted by 1.0 are:
+A recipe directory may also contain real `files/`, `patches/`, and `hooks/`
+directories. Their entries must be ordinary directories or regular files;
+symlinks, special files, and paths containing tabs or newlines are rejected.
+`files/` and `patches/` are copied to `$SRC/files` and `$SRC/patches` and are
+not applied or installed automatically. The only hook names accepted by 1.0
+are:
 
 ```text
 pre-install
@@ -69,22 +80,36 @@ Hook entries must be regular files, not symlinks.
 
 ## Repository index
 
-Indexes live under `$SPS_CACHE/indexes`. The first line identifies the schema.
-Each package record after that is tab-separated and contains:
+Indexes live under `$SPS_CACHE/indexes`. Each package record is tab-separated
+and contains:
 
 ```text
-name version release arch depends builddeps optional repo priority recipe_path description recipe_sha256
+name version release arch depends builddeps optional repo priority recipe_path description definition_sha256
 ```
 
 Dependency lists are comma-separated. Field values may not contain tabs or
-newlines.
+newlines. The definition digest covers the recipe content and the relative
+paths, contents, and copied modes of its `files/`, `patches/`, and `hooks/`
+inputs, so a changed support file invalidates the index as well as a changed
+recipe.
 
 When more than one configured repository supplies the same package, SPS picks
-the highest numeric priority. Configuration order breaks equal priorities,
-then lexical recipe path breaks any remaining tie. The result is deterministic.
+the highest numeric priority. Configuration order breaks equal priorities. A
+duplicate package name within one repository is an error; categories are not
+part of package identity.
 
-`src update` indexes local directories. Moving repository data onto the machine
-is outside the SPS package format and is left to the distribution.
+Repository declarations are `git NAME SOURCE [PRIORITY]` or
+`dir NAME ABSOLUTE_PATH [PRIORITY]`. `repo` is accepted as a compatibility
+alias for `dir`. Git checkouts live below `$SPS_REPO_ROOT`, defaulting to
+`/usr/src/sps`, while directory repositories stay at their configured paths.
+
+`src update` clones an absent Git checkout, fetches an existing clean checkout,
+and fast-forwards only when its configured upstream is a descendant of `HEAD`.
+It leaves detached heads, branches without an `origin` upstream, and locally
+ahead branches pinned. Dirty, divergent, mismatched-origin, or invalid
+checkouts are refused without reset or cleanup. After synchronization, `src`
+validates recipes, same-repository uniqueness, and the selected runtime/build
+dependency graph before atomically replacing the local index.
 
 ## Binary package format
 
@@ -125,8 +150,9 @@ Before committing installed metadata, `pkin` rejects malformed control files,
 absolute or traversing paths, unsupported control members, unsafe symlink
 parents, manifest/archive mismatches, and bad payload hashes.
 
-Packages marked `any` or `noarch` can be installed on any architecture. Other
-package architectures must match `SPS_ARCH`.
+Packages marked `any` can be installed on any architecture. `noarch` is
+accepted as a compatibility spelling. Other package architectures must match
+`SPS_ARCH` exactly.
 
 ## Lifecycle hooks
 
