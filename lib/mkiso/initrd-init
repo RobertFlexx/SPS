@@ -23,6 +23,11 @@ mkdir -p /proc /sys /dev /tmp /mnt/iso /mnt/ro /mnt/rw /mnt/new
 mkdir -p /dev/pts
 "$bb" mount -t devpts devpts /dev/pts 2>/dev/null || :
 
+say()
+{
+	printf '%s\n' "$*" >/dev/console 2>/dev/null || printf '%s\n' "$*"
+}
+
 rescue()
 {
 	printf '%s\n' "$*"
@@ -44,18 +49,15 @@ do
 	"$bb" modprobe "$mod" 2>/dev/null || :
 done
 
-sleep 1
-
 found=
 i=0
-while [ "$i" -lt 15 ]
+while [ "$i" -lt 20 ]
 do
 	i=$((i + 1))
-	for dev in /dev/sr0 /dev/sr1 /dev/sr2 /dev/cdrom \
+	for dev in /dev/sr0 /dev/sr1 /dev/vda /dev/vda1 /dev/vdb /dev/vdb1 \
 		/dev/nvme0n1 /dev/nvme0n1p1 /dev/nvme1n1p1 \
 		/dev/sda /dev/sda1 /dev/sdb /dev/sdb1 /dev/sdc /dev/sdc1 \
-		/dev/vda /dev/vda1 /dev/vdb /dev/vdb1 \
-		/dev/xvda /dev/xvda1
+		/dev/xvda /dev/xvda1 /dev/sr2 /dev/cdrom
 	do
 		[ -b "$dev" ] || continue
 		if "$bb" mount -t iso9660 -o ro "$dev" /mnt/iso 2>/dev/null ||
@@ -68,11 +70,12 @@ do
 		fi
 	done
 	[ -n "$found" ] && break
-	sleep 1
+	"$bb" sleep 1
 done
 
 [ -n "$found" ] || rescue "mkiso: cannot find the SPS Linux live filesystem on a CD/USB."
 
+say "SPS: mounting live filesystem..."
 "$bb" mount -t squashfs -o ro /mnt/iso/live/filesystem.squashfs /mnt/ro ||
 	rescue "mkiso: squashfs mount failed"
 
@@ -94,6 +97,7 @@ if [ ! -e /mnt/new/sbin/init ] && [ ! -L /mnt/new/sbin/init ]; then
 	rescue "mkiso: /sbin/init missing on the live filesystem"
 fi
 
+say "SPS: starting live system..."
 # busybox switch_root replaces PID 1. If the new init cannot exec, we
 # would panic; the live /sbin/init is an ELF (busybox or systemd), not
 # a script that execs a console.

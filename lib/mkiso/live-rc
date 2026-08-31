@@ -11,8 +11,10 @@ export PATH
 export HOME=/root
 export TERM=${TERM:-linux}
 export CARGO_HOME=${CARGO_HOME:-/root/.cargo}
+export LANG=${LANG:-C.UTF-8}
+export LC_ALL=${LC_ALL:-C.UTF-8}
 
-mkdir -p /proc /sys /dev /run /tmp /root /mnt /etc/sps
+mkdir -p /proc /sys /dev /run /tmp /root /mnt /etc/sps /var/lib/dbus
 mount -t proc proc /proc 2>/dev/null || :
 mount -t sysfs sysfs /sys 2>/dev/null || :
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || :
@@ -20,6 +22,11 @@ mkdir -p /dev/pts /dev/shm
 mount -t devpts devpts /dev/pts 2>/dev/null || :
 mount -t tmpfs tmpfs /run 2>/dev/null || :
 mount -t tmpfs tmpfs /tmp 2>/dev/null || :
+mkdir -p /run/dbus
+if [ ! -e /var/run ]; then
+	mkdir -p /var
+	ln -s ../run /var/run
+fi
 
 if command -v ldconfig >/dev/null 2>&1; then
 	ldconfig 2>/dev/null || :
@@ -32,6 +39,12 @@ ln -sf /proc/self/fd/2 /dev/stderr 2>/dev/null || :
 
 hostname splux-live 2>/dev/null || :
 [ -f /etc/hostname ] || printf '%s\n' splux-live >/etc/hostname
+if [ ! -f /etc/locale.conf ]; then
+	printf '%s\n' 'LANG=C.UTF-8' >/etc/locale.conf
+fi
+if [ ! -s /etc/machine-id ] && command -v dbus-uuidgen >/dev/null 2>&1; then
+	dbus-uuidgen --ensure=/etc/machine-id 2>/dev/null || :
+fi
 
 # NVIDIA live path is nouveau. Do not load proprietary nvidia* next to KWin.
 mkdir -p /etc/modprobe.d

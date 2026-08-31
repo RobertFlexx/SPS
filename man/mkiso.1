@@ -29,6 +29,8 @@ is always busybox. Host bash is copied as
 only with its library closure, including the real
 .B libtinfo
 file behind the soname symlink.
+The squashfs uses zstd so the live root mounts quickly; xz made QEMU
+sit on the loop0 probe while a multi-gigabyte Plasma image decompressed.
 .B --layout
 writes the live root only, for tests and inspection.
 .PP

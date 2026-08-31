@@ -88,6 +88,13 @@ fi
 if grep -q 'ln -sf bash .*/bin/sh' "$mkiso"; then
 	fail 'mkiso must not point /bin/sh at bash'
 fi
+grep -q dbus-run-session "$layout/etc/sps/live-plasma" ||
+	fail 'live-plasma must start Plasma under a session bus'
+grep -q C.UTF-8 "$layout/etc/sps/live-plasma" ||
+	fail 'live-plasma must set a UTF-8 locale'
+grep -q -- '-comp zstd' "$mkiso" || fail 'mkiso must write a zstd squashfs'
+grep -q 'mounting live filesystem' "$project_dir/lib/mkiso/initrd-init" ||
+	fail 'initrd must print before squashfs mount'
 if [ -x /usr/bin/dialog ]; then
 	[ -e "$layout/usr/bin/dialog" ] || fail 'dialog missing from slim layout'
 fi

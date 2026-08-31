@@ -19,6 +19,9 @@
 /usr/share/kglobalaccel
 /usr/share/kded6
 /usr/share/dbus-1
+/etc/dbus-1
+/usr/lib64/locale/C.utf8
+/usr/lib/locale/C.utf8
 /usr/share/polkit-1
 /usr/share/wayland-protocols
 /usr/share/libdrm

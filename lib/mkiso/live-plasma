@@ -3,22 +3,49 @@
 # and run setup(1). If Plasma is missing, a shell stays on this tty.
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PATH=/usr/lib64/qt6/bin:/usr/lib/qt6/bin:$PATH
 export PATH
 export HOME=/root
 export XDG_RUNTIME_DIR=/run/user/0
 export XDG_SESSION_TYPE=wayland
 export QT_QPA_PLATFORM=wayland
 export TERM=${TERM:-linux}
+export LANG=${LANG:-C.UTF-8}
+export LC_ALL=${LC_ALL:-C.UTF-8}
 
-mkdir -p "$XDG_RUNTIME_DIR"
+mkdir -p "$XDG_RUNTIME_DIR" /run/dbus /var/lib/dbus /etc/dbus-1
 chmod 700 "$XDG_RUNTIME_DIR"
 
 # Live NVIDIA is nouveau. Keep the proprietary stack unloaded.
 modprobe nouveau 2>/dev/null || :
 
+if [ ! -e /var/run ]; then
+	mkdir -p /var
+	ln -s ../run /var/run
+fi
+if [ ! -s /etc/machine-id ]; then
+	if command -v dbus-uuidgen >/dev/null 2>&1; then
+		dbus-uuidgen --ensure=/etc/machine-id 2>/dev/null || :
+	fi
+fi
+if [ ! -e /var/lib/dbus/machine-id ] && [ -s /etc/machine-id ]; then
+	ln -sf /etc/machine-id /var/lib/dbus/machine-id
+fi
+# The stock system.conf drops privileges to messagebus. The live passwd
+# has no such account, so dbus-daemon --system exits and Plasma cannot
+# talk to the bus. Override that for this disc only.
+if [ ! -f /etc/dbus-1/system-local.conf ]; then
+	printf '%s\n' \
+		'<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"' \
+		' "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">' \
+		'<busconfig>' \
+		'  <user>root</user>' \
+		'</busconfig>' >/etc/dbus-1/system-local.conf
+fi
+
 if command -v dbus-daemon >/dev/null 2>&1; then
-	if [ ! -S /run/dbus/system_bus_socket ]; then
-		mkdir -p /run/dbus
+	if [ ! -S /run/dbus/system_bus_socket ] &&
+	   [ ! -S /var/run/dbus/system_bus_socket ]; then
 		dbus-daemon --system --fork 2>/dev/null || :
 	fi
 fi
@@ -30,6 +57,14 @@ fi
 if command -v startplasma-wayland >/dev/null 2>&1; then
 	# Give the user a console they can see if Wayland dies.
 	chvt 1 2>/dev/null || :
+	# startplasma needs a *session* bus. The system bus above is not that.
+	if command -v dbus-run-session >/dev/null 2>&1; then
+		exec dbus-run-session -- startplasma-wayland
+	fi
+	if command -v dbus-launch >/dev/null 2>&1; then
+		eval "$(dbus-launch --sh-syntax)"
+		exec startplasma-wayland
+	fi
 	exec startplasma-wayland
 fi
 
