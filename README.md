@@ -54,6 +54,8 @@ The split matters. `pkin` does not search repositories. `pkdel` does not solve
 dependencies. `src` does not install anything. `sget` ties the lower-level tools
 together when you want the usual package-manager workflow.
 
+# Below is info on installing the package manager elsewhere, not Splux itself.
+----------------------------
 ## Requirements
 
 SPS does not compile into a binary. The core needs a POSIX `sh`, a POSIX `awk`,
