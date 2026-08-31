@@ -9,7 +9,8 @@ DESTDIR =
 PROGRAMS = src sget mkpkg pkin pkdel pkstat pkcheck pkmark
 AWK_LIBS = common.awk config.awk db.awk deps.awk index.awk package.awk recipe.awk repository.awk relations.awk version.awk
 
-.PHONY: all check lint install install-config clean
+.PHONY: all check lint check-version source-archive release-check \
+	install install-config clean
 
 all:
 	@printf '%s\n' "SPS is interpreted; run 'make check' or 'make install'."
@@ -31,6 +32,101 @@ lint:
 	@awk -f lib/common.awk </dev/null >/dev/null
 	@awk -f lib/common.awk -f lib/config.awk </dev/null >/dev/null
 	@awk -f lib/version.awk </dev/null >/dev/null
+
+check-version:
+	@LC_ALL=C awk '\
+		NR == 1 && $$0 ~ /^[0-9]+\.[0-9]+\.[0-9]+$$/ { valid = 1 } \
+		END { exit !(NR == 1 && valid) } \
+	' VERSION || { \
+		printf '%s\n' 'VERSION must contain one X.Y.Z release number' >&2; \
+		exit 1; \
+	}
+
+# Build from the committed tree so untracked files and local edits can never
+# enter a published source archive. gzip -n omits its timestamp and filename.
+source-archive: check-version
+	@set -eu; \
+	version=$$(sed -n '1p' VERSION); \
+	for tool in git gzip mktemp; do \
+		command -v "$$tool" >/dev/null 2>&1 || { \
+			printf 'source-archive: required tool not found: %s\n' "$$tool" >&2; \
+			exit 1; \
+		}; \
+	done; \
+	git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { \
+		printf '%s\n' 'source-archive: not inside a Git work tree' >&2; \
+		exit 1; \
+	}; \
+	mkdir -p dist; \
+	archive="dist/sps-$$version.tar.gz"; \
+	tmp_tar=$$(mktemp "$${TMPDIR:-/tmp}/sps-source.XXXXXX"); \
+	tmp_archive="$$archive.tmp"; \
+	trap 'rm -f "$$tmp_tar" "$$tmp_archive"' 0 HUP INT TERM; \
+	git archive --format=tar --prefix="sps-$$version/" \
+		--output="$$tmp_tar" HEAD; \
+	gzip -n -9 -c "$$tmp_tar" >"$$tmp_archive"; \
+	mv "$$tmp_archive" "$$archive"; \
+	printf '%s\n' "$$archive"
+
+# Run this after creating vVERSION and before pushing the tag. It verifies
+# that the tag, committed VERSION, work tree, and reproducible archive agree.
+release-check: check source-archive
+	@set -eu; \
+	version=$$(sed -n '1p' VERSION); \
+	tag="v$$version"; \
+	archive="dist/sps-$$version.tar.gz"; \
+	prefix="sps-$$version/"; \
+	if [ -n "$$(git status --porcelain --untracked-files=normal)" ]; then \
+		printf '%s\n' 'release-check: Git work tree is not clean' >&2; \
+		exit 1; \
+	fi; \
+	git diff --check; \
+	tag_commit=$$(git rev-parse -q --verify "$$tag^{commit}") || { \
+		printf 'release-check: tag %s does not exist\n' "$$tag" >&2; \
+		exit 1; \
+	}; \
+	[ "$$(git cat-file -t "$$tag")" = tag ] || { \
+		printf 'release-check: tag %s is not annotated\n' "$$tag" >&2; \
+		exit 1; \
+	}; \
+	head_commit=$$(git rev-parse HEAD); \
+	[ "$$tag_commit" = "$$head_commit" ] || { \
+		printf 'release-check: tag %s does not point to HEAD\n' "$$tag" >&2; \
+		exit 1; \
+	}; \
+	gzip -t "$$archive"; \
+	members=$$(mktemp "$${TMPDIR:-/tmp}/sps-members.XXXXXX"); \
+	repro_tar=$$(mktemp "$${TMPDIR:-/tmp}/sps-repro.XXXXXX"); \
+	repro_archive=$$(mktemp "$${TMPDIR:-/tmp}/sps-repro-gz.XXXXXX"); \
+	trap 'rm -f "$$members" "$$repro_tar" "$$repro_archive"' \
+		0 HUP INT TERM; \
+	tar -tzf "$$archive" >"$$members"; \
+	awk -v prefix="$$prefix" '\
+		index($$0, prefix) != 1 { bad = 1 } \
+		END { exit bad || NR == 0 } \
+	' "$$members" || { \
+		printf '%s\n' 'release-check: archive has an invalid member path' >&2; \
+		exit 1; \
+	}; \
+	for required in VERSION Makefile bin/src; do \
+		grep -F -x "$$prefix$$required" "$$members" >/dev/null || { \
+			printf 'release-check: archive is missing %s\n' "$$required" >&2; \
+			exit 1; \
+		}; \
+	done; \
+	archive_version=$$(tar -xOzf "$$archive" "$$prefix"VERSION); \
+	[ "$$archive_version" = "$$version" ] || { \
+		printf '%s\n' 'release-check: archive VERSION does not match' >&2; \
+		exit 1; \
+	}; \
+	git archive --format=tar --prefix="$$prefix" \
+		--output="$$repro_tar" HEAD; \
+	gzip -n -9 -c "$$repro_tar" >"$$repro_archive"; \
+	cmp "$$archive" "$$repro_archive" >/dev/null || { \
+		printf '%s\n' 'release-check: source archive is not reproducible' >&2; \
+		exit 1; \
+	}; \
+	printf 'release-check: %s is ready\n' "$$archive"
 
 install:
 	install -d "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(LIBDIR)" \
@@ -65,4 +161,3 @@ install-config:
 clean:
 	@find . -type f \( -name '*.pkg.tar' -o -name '*.pkg.tar.gz' -o \
 		-name '*.pkg.tar.xz' -o -name '*.pkg.tar.zst' \) -exec rm -f {} \;
-

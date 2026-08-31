@@ -24,6 +24,12 @@ Source, repository-index, and built-package cache; default
 Temporary build/staging root; default
 .BR /var/tmp/sps .
 .TP
+.BI repo_root " path"
+Parent directory for Git repository checkouts; default
+.BR /usr/src/sps .
+The checkout for repository NAME is
+.IR repo_root /NAME.
+.TP
 .BI makejobs " count"
 Positive per-package build parallelism exported to recipes as
 .BR MAKEJOBS .
@@ -59,16 +65,32 @@ to disable the policy.
 A declaration has the form:
 .PP
 .nf
-repo NAME PATH [PRIORITY]
+git NAME SOURCE [PRIORITY]
+dir NAME ABSOLUTE_PATH [PRIORITY]
 .fi
 .PP
-PATH is a local directory tree. Larger numeric priorities win; configuration
-order breaks equal priorities. Repository transport is outside SPS.
+For
+.BR git ,
+SOURCE is the exact URL or path recorded as the checkout's
+.B origin
+and synchronized by
+.BR src (1).
+For
+.BR dir ,
+ABSOLUTE_PATH is an administrator-managed local recipe tree and SPS performs no
+transport operation. The older keyword
+.B repo
+is accepted as a compatibility alias for
+.BR dir .
+.PP
+PRIORITY is a signed 32-bit integer and defaults to zero. Larger values win;
+configuration order breaks equal priorities. Repository names must be unique.
 .SH ENVIRONMENT
 .BR SPS_ROOT ,
 .BR SPS_DB ,
 .BR SPS_CACHE ,
 .BR SPS_BUILD ,
+.BR SPS_REPO_ROOT ,
 .BR SPS_MAKEJOBS ,
 .BR SPS_COMPRESSION ,
 .BR SPS_ARCH ,
@@ -85,12 +107,14 @@ root /
 db /var/lib/sps
 cache /var/cache/sps
 build /var/tmp/sps
+repo_root /usr/src/sps
 makejobs 8
 compression zstd
 preserve etc
 
-repo core  /usr/src/core  100
-repo local /usr/src/local 200
+dir local /usr/local/src/sps-local 200
+git core https://github.com/RobertFlexx/sps-core.git 100
+git extra https://github.com/RobertFlexx/sps-extra.git 80
 .fi
 .SH SEE ALSO
 .BR src (1),

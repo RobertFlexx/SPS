@@ -39,12 +39,150 @@ src_need_index()
 
 src_cleanup_update()
 {
-    [ -n "${src_work:-}" ] || return
-    rm -f "$src_work/repos.raw" "$src_work/repos" \
-          "$src_work/recipes.unsorted" "$src_work/recipes" \
-          "$src_work/packages.index"
-    rmdir "$src_work" 2>/dev/null || :
-    src_work=
+	if [ -n "${src_clone_work:-}" ]; then
+		rm -rf "$src_clone_work"
+		src_clone_work=
+	fi
+	if [ -n "${src_work:-}" ]; then
+		rm -f "$src_work/repos.raw" "$src_work/repos" \
+		      "$src_work/recipes.unsorted" "$src_work/recipes" \
+		      "$src_work/packages.index"
+		rmdir "$src_work" 2>/dev/null || :
+		src_work=
+	fi
+	sps_lock_release
+}
+
+src_git_verify_checkout()
+{
+	src_verify_checkout=$1
+	src_verify_source=$2
+
+	[ -d "$src_verify_checkout" ] && [ ! -L "$src_verify_checkout" ] ||
+		return 1
+	src_verify_top=$(git -C "$src_verify_checkout" rev-parse --show-toplevel \
+		2>/dev/null) || return 1
+	src_verify_top=$(CDPATH= cd -P "$src_verify_top" 2>/dev/null && pwd -P) ||
+		return 1
+	src_verify_expected=$(CDPATH= cd -P "$src_verify_checkout" 2>/dev/null &&
+		pwd -P) || return 1
+	[ "$src_verify_top" = "$src_verify_expected" ] || return 1
+	src_verify_origin=$(git -C "$src_verify_checkout" remote get-url origin \
+		2>/dev/null) || return 1
+	[ "$src_verify_origin" = "$src_verify_source" ]
+}
+
+src_sync_git()
+{
+	src_git_name=$1
+	src_git_source=$2
+	src_git_checkout=$3
+	sps_require_cmd git
+
+	src_git_parent=${src_git_checkout%/*}
+	[ -n "$src_git_parent" ] || src_git_parent=/
+	sps_mkdir "$src_git_parent"
+
+	if [ ! -e "$src_git_checkout" ] && [ ! -L "$src_git_checkout" ]; then
+		src_clone_work=$(sps_mktemp_dir "$src_git_parent" \
+			"clone-$src_git_name")
+		src_clone_checkout=$src_clone_work/repository
+		if ! git clone -- "$src_git_source" "$src_clone_checkout"; then
+			sps_die "$SPS_EX_NETWORK" \
+				"cannot clone repository '$src_git_name'"
+		fi
+		if ! src_git_verify_checkout "$src_clone_checkout" "$src_git_source"; then
+			sps_die "$SPS_EX_PACKAGE" \
+				"cloned repository '$src_git_name' failed checkout verification"
+		fi
+		if [ -e "$src_git_checkout" ] || [ -L "$src_git_checkout" ]; then
+			sps_die "$SPS_EX_CONFLICT" \
+				"repository checkout appeared while cloning: $src_git_checkout"
+		fi
+		if ! mv "$src_clone_checkout" "$src_git_checkout"; then
+			sps_die "$SPS_EX_PERMISSION" \
+				"cannot commit repository checkout: $src_git_checkout"
+		fi
+		rmdir "$src_clone_work" 2>/dev/null || :
+		src_clone_work=
+		printf "%s: cloned repository '%s' into %s\n" \
+			"$sps_prog" "$src_git_name" "$src_git_checkout" >&2
+		return 0
+	fi
+
+	if ! src_git_verify_checkout "$src_git_checkout" "$src_git_source"; then
+		if [ -d "$src_git_checkout" ] && [ ! -L "$src_git_checkout" ] &&
+		   git -C "$src_git_checkout" rev-parse --is-inside-work-tree \
+			>/dev/null 2>&1; then
+			sps_die "$SPS_EX_CONFLICT" \
+				"repository '$src_git_name' origin does not match its configured source"
+		fi
+		sps_die "$SPS_EX_CONFLICT" \
+			"repository checkout is not the expected Git worktree: $src_git_checkout"
+	fi
+
+	src_git_dirty=$(git -C "$src_git_checkout" status --porcelain \
+		--untracked-files=normal) ||
+		sps_die "$SPS_EX_PACKAGE" \
+			"cannot inspect repository '$src_git_name'"
+	if [ -n "$src_git_dirty" ]; then
+		sps_die "$SPS_EX_CONFLICT" \
+			"repository '$src_git_name' has local modifications; refusing to update $src_git_checkout"
+	fi
+
+	if ! git -C "$src_git_checkout" fetch origin; then
+		sps_die "$SPS_EX_NETWORK" \
+			"cannot fetch repository '$src_git_name'"
+	fi
+
+	if ! src_git_branch=$(git -C "$src_git_checkout" symbolic-ref -q \
+		--short HEAD 2>/dev/null); then
+		printf "%s: repository '%s' is detached and remains pinned at %s\n" \
+			"$sps_prog" "$src_git_name" \
+			"$(git -C "$src_git_checkout" rev-parse --short HEAD)" >&2
+		return 0
+	fi
+	if ! src_git_upstream=$(git -C "$src_git_checkout" rev-parse \
+		--abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null); then
+		printf "%s: repository '%s' branch '%s' has no upstream and remains pinned\n" \
+			"$sps_prog" "$src_git_name" "$src_git_branch" >&2
+		return 0
+	fi
+	case $src_git_upstream in
+		origin/*) ;;
+		*)
+			printf "%s: repository '%s' tracks '%s', not origin, and remains pinned\n" \
+				"$sps_prog" "$src_git_name" "$src_git_upstream" >&2
+			return 0
+			;;
+	esac
+
+	src_git_head=$(git -C "$src_git_checkout" rev-parse HEAD) ||
+		sps_die "$SPS_EX_PACKAGE" "cannot read HEAD for repository '$src_git_name'"
+	src_git_upstream_head=$(git -C "$src_git_checkout" rev-parse \
+		"$src_git_upstream") ||
+		sps_die "$SPS_EX_PACKAGE" \
+			"cannot read upstream for repository '$src_git_name'"
+	if [ "$src_git_head" = "$src_git_upstream_head" ]; then
+		return 0
+	fi
+	if git -C "$src_git_checkout" merge-base --is-ancestor \
+		"$src_git_head" "$src_git_upstream_head"; then
+		if ! git -C "$src_git_checkout" merge --ff-only \
+			"$src_git_upstream" >&2; then
+			sps_die "$SPS_EX_CONFLICT" \
+				"cannot fast-forward repository '$src_git_name'"
+		fi
+		return 0
+	fi
+	if git -C "$src_git_checkout" merge-base --is-ancestor \
+		"$src_git_upstream_head" "$src_git_head"; then
+		printf "%s: repository '%s' is ahead of %s and was left unchanged\n" \
+			"$sps_prog" "$src_git_name" "$src_git_upstream" >&2
+		return 0
+	fi
+	sps_die "$SPS_EX_CONFLICT" \
+		"repository '$src_git_name' has diverged from $src_git_upstream; refusing to update"
 }
 
 src_update()
@@ -54,19 +192,24 @@ src_update()
         exit "$SPS_EX_USAGE"
     }
 
-    sps_mkdir "$sps_index_dir"
-    src_work=$(sps_mktemp_dir "$sps_index_dir" update)
-    trap src_cleanup_update 0
-    trap 'exit 129' 1
-    trap 'exit 130' 2
-    trap 'exit 131' 3
-    trap 'exit 143' 15
+	sps_mkdir "$sps_index_dir"
+	src_work=
+	src_clone_work=
+	sps_lock_acquire "$SPS_CACHE" .src-update 'repository update' ||
+		sps_die "$SPS_EX_CONFLICT" "another repository update is active"
+	trap src_cleanup_update 0
+	trap 'exit 129' 1
+	trap 'exit 130' 2
+	trap 'exit 131' 3
+	trap 'exit 143' 15
+	src_work=$(sps_mktemp_dir "$sps_index_dir" update)
 
     if ! sps_repo_lines > "$src_work/repos.raw"; then
         sps_die "$SPS_EX_USAGE" "cannot read repository configuration"
     fi
-    if ! awk -v action=normalize -v program=src \
-        -f "$SPS_LIBDIR/repository.awk" "$src_work/repos.raw" \
+	if ! awk -v action=normalize -v program=src \
+		-v repo_root="$SPS_REPO_ROOT" \
+		-f "$SPS_LIBDIR/repository.awk" "$src_work/repos.raw" \
         > "$src_work/repos"; then
         sps_die "$SPS_EX_USAGE" "invalid repository configuration"
     fi
@@ -78,18 +221,20 @@ src_update()
     src_package_count=0
     src_failed=0
 
-    while IFS="$sps_tab" read -r src_repo_name src_repo_path \
-          src_repo_priority src_repo_order
-    do
-        [ -n "$src_repo_name" ] || continue
-        case $src_repo_path in
-            *://*|git@*:*)
-                printf "%s: repository '%s' uses an unsupported remote location: %s\n" \
-                    "$sps_prog" "$src_repo_name" "$src_repo_path" >&2
-                src_failed=1
-                break
-                ;;
-        esac
+	while IFS="$sps_tab" read -r src_repo_kind src_repo_name \
+	      src_repo_source src_repo_path src_repo_priority src_repo_order
+	do
+		[ -n "$src_repo_name" ] || continue
+		case $src_repo_kind in
+			git) src_sync_git "$src_repo_name" "$src_repo_source" "$src_repo_path" ;;
+			dir) ;;
+			*)
+				printf "%s: internal error: unsupported repository kind '%s'\n" \
+					"$sps_prog" "$src_repo_kind" >&2
+				src_failed=1
+				break
+				;;
+		esac
         if [ ! -d "$src_repo_path" ]; then
             printf "%s: repository '%s' is not a local directory: %s\n" \
                 "$sps_prog" "$src_repo_name" "$src_repo_path" >&2
@@ -104,8 +249,11 @@ src_update()
             break
         }
 
-        if ! find "$src_repo_absolute" -type f -name recipe -print \
-            > "$src_work/recipes.unsorted"; then
+		if ! find "$src_repo_absolute" \
+			\( -type d \( -name .git -o -name files -o -name patches -o \
+				-name hooks \) -prune \) -o \
+			\( -type f -name recipe -print \) \
+			> "$src_work/recipes.unsorted"; then
             printf "%s: cannot scan repository '%s': %s\n" \
                 "$sps_prog" "$src_repo_name" "$src_repo_absolute" >&2
             src_failed=1
@@ -128,22 +276,22 @@ src_update()
                 src_failed=1
                 break
             fi
-            src_digest=$(sps_sha256 "$src_recipe") || {
-                printf "%s: cannot hash recipe: %s\n" \
-                    "$sps_prog" "$src_recipe" >&2
+			src_digest=$(sps_definition_sha256 "$src_recipe") || {
+				printf "%s: cannot hash package definition: %s\n" \
+					"$sps_prog" "$src_recipe" >&2
                 src_failed=1
                 break
             }
             case $src_digest in
                 ''|*[!0123456789abcdefABCDEF]*)
-                    printf "%s: invalid SHA-256 result for recipe: %s\n" \
+					printf "%s: invalid package definition SHA-256: %s\n" \
                         "$sps_prog" "$src_recipe" >&2
                     src_failed=1
                     break
                     ;;
             esac
             if [ "${#src_digest}" -ne 64 ]; then
-                printf "%s: invalid SHA-256 result for recipe: %s\n" \
+				printf "%s: invalid package definition SHA-256: %s\n" \
                     "$sps_prog" "$src_recipe" >&2
                 src_failed=1
                 break
@@ -170,11 +318,17 @@ src_update()
         sps_die "$SPS_EX_PACKAGE" \
             "repository update failed; previous index was preserved"
     fi
-    if ! awk -v action=validate -v program=src \
-        -f "$SPS_LIBDIR/index.awk" "$src_work/packages.index"; then
+	if ! awk -v action=validate -v program=src \
+		-f "$SPS_LIBDIR/index.awk" "$src_work/packages.index"; then
         sps_die "$SPS_EX_PACKAGE" \
-            "generated repository index is malformed"
-    fi
+			"generated repository index is malformed"
+	fi
+	if ! awk -v action=validate -v include_build=1 -v program=src \
+		-f "$SPS_LIBDIR/version.awk" -f "$SPS_LIBDIR/deps.awk" \
+		"$src_work/packages.index"; then
+		sps_die "$SPS_EX_DEPENDENCY" \
+			"generated repository dependency graph is invalid"
+	fi
     if ! mv "$src_work/packages.index" "$sps_index"; then
         sps_die "$SPS_EX_PERMISSION" "cannot commit repository index"
     fi
@@ -202,9 +356,10 @@ src_repositories()
     else
         [ "$src_raw" -eq 0 ] || src_repo_action=status_raw
     fi
-    sps_repo_lines |
-        awk -v action="$src_repo_action" -v program=src \
-            -v index_file="$sps_index" \
+	sps_repo_lines |
+		awk -v action="$src_repo_action" -v program=src \
+			-v repo_root="$SPS_REPO_ROOT" \
+			-v index_file="$sps_index" \
             -f "$SPS_LIBDIR/repository.awk"
 }
 

@@ -48,7 +48,7 @@ function index_print_show(name) {
                                   ? "-" : index_output_fields[6])
     print "optional dependencies: " (index_output_fields[7] == "" \
                                      ? "-" : index_output_fields[7])
-    print "recipe sha256: " index_output_fields[12]
+    print "definition sha256: " index_output_fields[12]
 }
 
 BEGIN {
@@ -73,6 +73,15 @@ BEGIN {
         length($12) != 64 || $12 !~ /^[[:xdigit:]]+$/) {
         index_error(FILENAME ":" FNR ": invalid index record for '" $1 "'")
         next
+    }
+
+    index_repository_key = $8 SUBSEP $1
+    if (index_repository_key in index_repository_recipe) {
+        index_error(FILENAME ":" FNR ": duplicate package '" $1 \
+                    "' in repository '" $8 "' (also " \
+                    index_repository_recipe[index_repository_key] ")")
+    } else {
+        index_repository_recipe[index_repository_key] = $10
     }
 
     index_records++

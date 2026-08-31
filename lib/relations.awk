@@ -15,12 +15,17 @@ function rel_dep_name(spec,    p) {
     return spec
 }
 
-function rel_add_edges(pkg, list,    n, a, i, d) {
+function rel_add_edges(pkg, list,    n, a, i, d, key) {
     if (list == "") return
     n = split(list, a, /,/)
     for (i = 1; i <= n; i++) {
         d = rel_dep_name(a[i])
-        if (d != "") edge[pkg SUBSEP d] = 1
+        key = pkg SUBSEP d
+        if (d != "" && !(key in edge)) {
+            edge[key] = 1
+            child_count[pkg]++
+            child[pkg SUBSEP child_count[pkg]] = d
+        }
     }
 }
 
@@ -36,13 +41,11 @@ function rel_sort(a, n,    gap,i,j,x) {
     }
 }
 
-function rel_find(cur, target,    k,p,d) {
+function rel_find(cur, target,    i,d) {
     if (cur == target) return 1
     seen[cur]=1
-    for (k in edge) {
-        split(k,p,SUBSEP)
-        if (p[1] != cur) continue
-        d=p[2]
+    for (i = 1; i <= child_count[cur]; i++) {
+        d=child[cur SUBSEP i]
         if (seen[d]) continue
         parent[d]=cur
         if (rel_find(d,target)) return 1

@@ -19,6 +19,22 @@ function deps_error(message) {
     deps_failed = 1
 }
 
+function deps_sort_names(values, count,    gap, i, j, saved) {
+    gap = int(count / 2)
+    while (gap > 0) {
+        for (i = gap + 1; i <= count; i++) {
+            saved = values[i]
+            j = i
+            while (j > gap && values[j - gap] > saved) {
+                values[j] = values[j - gap]
+                j -= gap
+            }
+            values[j] = saved
+        }
+        gap = int(gap / 2)
+    }
+}
+
 function deps_dependency_name(specification, parent,    position, operator,
                               name, wanted) {
     specification = deps_trim(specification)
@@ -164,8 +180,18 @@ BEGIN {
         next
     }
 
-    if (!($1 in deps_selected_priority) ||
-        ($9 + 0) > deps_selected_priority[$1]) {
+    if (!($1 in deps_selected_priority)) {
+        deps_name_count++
+        deps_names[deps_name_count] = $1
+        deps_selected_priority[$1] = $9 + 0
+        deps_version[$1] = $2
+        deps_release[$1] = $3
+        deps_arch[$1] = $4
+        deps_runtime[$1] = $5
+        deps_build[$1] = $6
+        deps_recipe[$1] = $10
+        deps_recipe_sha256[$1] = $12
+    } else if (($9 + 0) > deps_selected_priority[$1]) {
         deps_selected_priority[$1] = $9 + 0
         deps_version[$1] = $2
         deps_release[$1] = $3
@@ -180,6 +206,17 @@ BEGIN {
 END {
     if (deps_failed)
         exit 5
+    if (action == "validate") {
+        deps_sort_names(deps_names, deps_name_count)
+        for (deps_i = 1; deps_i <= deps_name_count; deps_i++) {
+            deps_visit(deps_names[deps_i], "")
+            if (deps_failed)
+                break
+        }
+        if (deps_failed)
+            exit 5
+        exit 0
+    }
     if (roots == "") {
         deps_error("no package specified")
         exit 2

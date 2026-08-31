@@ -1,4 +1,12 @@
-# Parse and print repository configuration. Input is: repo NAME PATH [PRIORITY]
+# Parse and print repository configuration.
+#
+# Input forms:
+#   git NAME SOURCE [PRIORITY]
+#   dir NAME ABSOLUTE_PATH [PRIORITY]
+#   repo NAME ABSOLUTE_PATH [PRIORITY]   (compatibility alias for dir)
+#
+# Normalized records are tab-separated:
+#   KIND NAME SOURCE CHECKOUT PRIORITY ORDER
 
 function repository_trim(value) {
     sub(/^[ \t]+/, "", value)
@@ -27,15 +35,19 @@ function repository_error(message) {
 
     repository_count_fields = split(repository_line, repository_fields,
                                     /[ \t]+/)
+    repository_kind = repository_fields[1]
+    if (repository_kind == "repo")
+        repository_kind = "dir"
     if (repository_count_fields < 3 || repository_count_fields > 4 ||
-        repository_fields[1] != "repo") {
+        (repository_kind != "git" && repository_kind != "dir")) {
         repository_error(FILENAME ":" FNR \
-                         ": expected 'repo NAME PATH [PRIORITY]'")
+                         ": expected 'git NAME SOURCE [PRIORITY]' or " \
+                         "'dir NAME ABSOLUTE_PATH [PRIORITY]'")
         next
     }
 
     repository_name = repository_fields[2]
-    repository_path = repository_fields[3]
+    repository_source = repository_fields[3]
     repository_priority = repository_count_fields == 4 \
                           ? repository_fields[4] : 0
 
@@ -44,13 +56,38 @@ function repository_error(message) {
                          repository_name "'")
         next
     }
-    if (repository_path == "" || repository_path ~ /[[:cntrl:]]/) {
-        repository_error(FILENAME ":" FNR ": invalid path for repository '" \
+    if (repository_source == "" || repository_source ~ /[[:cntrl:]]/) {
+        repository_error(FILENAME ":" FNR ": invalid source for repository '" \
+                         repository_name "'")
+        next
+    }
+    if (repository_kind == "dir" && repository_source !~ /^\//) {
+        repository_error(FILENAME ":" FNR ": directory repository '" \
+                         repository_name "' requires an absolute path")
+        next
+    }
+    if (repository_kind == "git" && substr(repository_source, 1, 1) == "-") {
+        repository_error(FILENAME ":" FNR ": invalid Git source for repository '" \
+                         repository_name "'")
+        next
+    }
+    repository_source_lower = tolower(repository_source)
+    if (repository_kind == "git" &&
+        repository_source_lower ~ /^https?:\/\/[^\/]*@/) {
+        repository_error(FILENAME ":" FNR \
+                         ": credential-bearing HTTP(S) Git source is not permitted for repository '" \
                          repository_name "'")
         next
     }
     if (repository_priority !~ /^-?[[:digit:]]+$/) {
         repository_error(FILENAME ":" FNR ": invalid priority '" \
+                         repository_priority "'")
+        next
+    }
+    repository_priority_number = repository_priority + 0
+    if (repository_priority_number < -2147483648 ||
+        repository_priority_number > 2147483647) {
+        repository_error(FILENAME ":" FNR ": priority out of range '" \
                          repository_priority "'")
         next
     }
@@ -60,11 +97,26 @@ function repository_error(message) {
         next
     }
 
+    if (repository_kind == "git") {
+        if (repo_root !~ /^\// || repo_root ~ /[[:cntrl:]]/) {
+            repository_error("invalid Git repository checkout root '" \
+                             repo_root "'")
+            next
+        }
+        repository_checkout = repo_root == "/" \
+                              ? "/" repository_name \
+                              : repo_root "/" repository_name
+    } else {
+        repository_checkout = repository_source
+    }
+
     repository_seen[repository_name] = 1
     repository_total++
+    repository_kinds[repository_total] = repository_kind
     repository_names[repository_total] = repository_name
-    repository_paths[repository_total] = repository_path
-    repository_priorities[repository_total] = repository_priority
+    repository_sources[repository_total] = repository_source
+    repository_checkouts[repository_total] = repository_checkout
+    repository_priorities[repository_total] = repository_priority_number
 }
 
 END {
@@ -75,16 +127,23 @@ END {
     if (action == "normalize" || action == "raw") {
         for (repository_i = 1; repository_i <= repository_total;
              repository_i++)
-            print repository_names[repository_i],
-                  repository_paths[repository_i],
+            print repository_kinds[repository_i],
+                  repository_names[repository_i],
+                  repository_sources[repository_i],
+                  repository_checkouts[repository_i],
                   repository_priorities[repository_i], repository_i
     } else if (action == "list" || action == "") {
         for (repository_i = 1; repository_i <= repository_total;
-             repository_i++)
-            printf "%s\tpriority %s\t%s\n",
-                   repository_names[repository_i],
+             repository_i++) {
+            repository_kind = repository_kinds[repository_i]
+            printf "%s\t%s\tpriority %s\t%s",
+                   repository_names[repository_i], repository_kind,
                    repository_priorities[repository_i],
-                   repository_paths[repository_i]
+                   repository_sources[repository_i]
+            if (repository_kind == "git")
+                printf "\tcheckout %s", repository_checkouts[repository_i]
+            printf "\n"
+        }
     } else if (action == "status" || action == "status_raw") {
         repository_index_state = "missing"
         if (index_file != "") {
@@ -105,23 +164,25 @@ END {
              repository_i++) {
             repository_name = repository_names[repository_i]
             if (action == "status_raw")
-                print repository_name,
-                      repository_priorities[repository_i],
-                      repository_paths[repository_i],
+                print repository_kinds[repository_i], repository_name,
+                      repository_sources[repository_i],
+                      repository_checkouts[repository_i],
+                      repository_priorities[repository_i], repository_i,
                       (repository_index_state == "present" \
                        ? repository_package_count[repository_name] + 0 \
                        : "not-indexed")
             else if (repository_index_state == "present")
-                printf "%s: %d packages (priority %s, %s)\n",
+                printf "%s: %d packages (%s, priority %s, %s)\n",
                        repository_name,
                        repository_package_count[repository_name] + 0,
+                       repository_kinds[repository_i],
                        repository_priorities[repository_i],
-                       repository_paths[repository_i]
+                       repository_checkouts[repository_i]
             else
-                printf "%s: not indexed (priority %s, %s)\n",
-                       repository_name,
+                printf "%s: not indexed (%s, priority %s, %s)\n",
+                       repository_name, repository_kinds[repository_i],
                        repository_priorities[repository_i],
-                       repository_paths[repository_i]
+                       repository_checkouts[repository_i]
         }
     } else {
         repository_error("unknown repository action '" action "'")

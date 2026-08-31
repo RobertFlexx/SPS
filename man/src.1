@@ -13,13 +13,15 @@ src status [--raw]
 .SH DESCRIPTION
 .B src
 manages source repository metadata. It never builds or installs packages.
-Configured repositories are local directory trees. Use git, rsync, a release
-archive, or a distribution update script to put repository data on disk.
+It synchronizes configured Git repositories conservatively and indexes those
+checkouts together with configured local directory repositories.
 .SH COMMANDS
 .TP
 .B update
-Scan configured repositories, validate recipes, and atomically replace the
-local package index. Invalid input leaves the previous index in place.
+Clone absent Git repositories, fetch existing clean Git repositories,
+fast-forward safe tracking branches, scan configured trees, validate recipes
+and the selected dependency graph, and atomically replace the local package
+index. Invalid input leaves the previous index in place.
 .TP
 .BI search " pattern"
 Search indexed names and descriptions.
@@ -40,7 +42,23 @@ Show repository paths, priorities, and index state.
 selects stable tab-separated output where supported.
 .SH SELECTION
 Higher numeric repository priority wins. Configuration order breaks equal
-priority, followed by lexical recipe path for deterministic selection.
+priority. Duplicate package names within one repository are rejected.
+.SH GIT SAFETY
+Git checkouts are created below
+.BR $SPS_REPO_ROOT ,
+which defaults to
+.BR /usr/src/sps .
+An existing checkout must be the expected top-level worktree and its
+.B origin
+URL must match the configured source exactly.
+.PP
+.B src update
+refuses tracked or untracked local changes before fetching. It never runs
+.BR "git reset" ,
+.BR "git clean" ,
+or an implicit checkout. A clean tracking branch is fast-forwarded only when
+safe. Detached heads and branches without an origin upstream remain pinned;
+locally ahead branches remain unchanged; divergent branches are refused.
 .SH FILES
 .TP
 .B /etc/sps/sps.conf
@@ -53,8 +71,9 @@ Repository declarations.
 Generated local package index.
 .SH EXIT STATUS
 Returns 0 on success, 2 for usage/configuration, 3 for missing index/package,
-4 for malformed recipes/indexes, 6 for hashing failure, and 8 for permission
-failure.
+4 for malformed recipes/indexes, 5 for an invalid dependency graph, 6 for
+hashing failure, 7 for a checkout conflict, 8 for permission failure, and 9 for
+a Git network failure.
 .SH SEE ALSO
 .BR sget (1),
 .BR mkpkg (1),

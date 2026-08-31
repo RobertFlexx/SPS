@@ -40,6 +40,9 @@ Required keys are
 .BR version ,
 and
 .BR release .
+A recipe must also contain at least one
+.B install
+record, and installation must produce a non-empty staged payload.
 Common repeatable keys include
 .BR source ,
 .BR hash ,
@@ -54,11 +57,49 @@ and
 .BR install .
 Metadata parsing never executes these phase records.
 .PP
+Each
+.B source
+must have one corresponding
+.B hash
+in declaration order. The only accepted form is
+.BR sha256:HEX ,
+with exactly 64 hexadecimal digits. There is no checksum-skip value.
+.PP
+The optional
+.B arch
+key defaults to
+.BR SPS_ARCH .
+Use
+.B any
+for an architecture-independent package;
+.B noarch
+is accepted as a compatibility spelling.
+.PP
+A real
+.B files
+or
+.B patches
+directory beside the recipe is copied to
+.B $SRC/files
+or
+.BR $SRC/patches .
+Nothing in these directories is applied or installed automatically.
+.PP
 A recipe directory may provide explicit lifecycle scripts in
 .B hooks/pre-install,
 hooks/post-install, hooks/pre-remove, and hooks/post-remove. No other hook
 names are accepted.
 .SH ENVIRONMENT
+.B PKG
+is the package staging root;
+.B SRC
+contains acquired sources and support trees;
+.B WORK
+is the extracted source root. Each phase starts there and runs with
+.B /bin/sh
+and options
+.BR -eu .
+.PP
 .B SPS_ARCH
 provides the default architecture.
 .B SPS_MAKEJOBS
@@ -74,8 +115,9 @@ created package artifact, suitable for consumption by
 .BR sget (1).
 .SH EXIT STATUS
 Returns 0 on success, 2 for usage, 3 for missing recipe/source, 4 for invalid
-metadata/package content, 6 for checksum failure, 8 for filesystem failure,
-9 for download failure, and 10 for build failure.
+metadata/package content, 6 for checksum failure, 7 when the output artifact
+already exists, 8 for filesystem failure, 9 for download failure, and 10 for
+build failure.
 .SH SEE ALSO
 .BR sget (1),
 .BR pkin (1),

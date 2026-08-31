@@ -10,9 +10,15 @@ point for new recipes.
 Local source paths are resolved from the recipe directory. Downloaded or copied
 sources are available below $SRC. Tar sources are unpacked below $WORK; when an
 archive contains one top-level directory, that directory becomes $WORK.
+Every source has a corresponding `hash sha256:...` record with exactly 64
+hexadecimal digits. Checksums cannot be skipped.
 
 The install phase writes into $PKG. It must not install directly into the live
-root.
+root. At least one install record and a non-empty payload are required.
 
 If files/ or patches/ exist beside the recipe, mkpkg copies them to $SRC/files
-and $SRC/patches.
+and $SRC/patches. Recipes apply patches and install local files explicitly.
+
+Use `arch any` only for architecture-independent packages. Compiled recipes can
+omit `arch` to use the configured target architecture. See
+`../PACKAGE-MAINTAINER.md` for the full recipe and test procedure.

@@ -183,6 +183,8 @@ command -v mktemp >/dev/null 2>&1 || die "mktemp is required"
 recipe_dir=$(CDPATH= cd "$(dirname "$recipe")" 2>/dev/null && pwd) ||
 	die "cannot enter recipe directory"
 recipe_file=$recipe_dir/$(basename "$recipe")
+sps_definition_sha256 "$recipe_file" >/dev/null ||
+	die_status 4 "invalid package definition support inputs"
 default_arch=${SPS_ARCH:-}
 if [ -z "$default_arch" ]; then
     default_arch=$(uname -m 2>/dev/null) || die "cannot determine build architecture"
@@ -283,6 +285,18 @@ function replace(text, token, value, at, out) {
 	}
 	return out text
 }
+function expand(value, pass, previous) {
+	for (pass = 1; pass <= 8; pass++) {
+		previous = value
+		value = replace(value, "${name}", value_for["name"])
+		value = replace(value, "${version}", value_for["version"])
+		value = replace(value, "${release}", value_for["release"])
+		value = replace(value, "${arch}", value_for["arch"])
+		if (value == previous)
+			break
+	}
+	return value
+}
 NR == FNR {
 	key = $1
 	value = substr($0, index($0, "\t") + 1)
@@ -307,10 +321,7 @@ NR == FNR {
 	}
 	key = $1
 	value = substr($0, index($0, "\t") + 1)
-	value = replace(value, "${name}", value_for["name"])
-	value = replace(value, "${version}", value_for["version"])
-	value = replace(value, "${release}", value_for["release"])
-	value = replace(value, "${arch}", value_for["arch"])
+	value = expand(value)
 	print key "\t" value
 }
 END {
@@ -347,6 +358,12 @@ for field in name version release arch; do
 		arch) value=$arch ;;
 	esac
 	if [ "$field" = name ]; then
+		case $value in
+			''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+-]*)
+				die_status 4 "invalid $field '$value'"
+				;;
+		esac
+	elif [ "$field" = arch ]; then
 		case $value in
 			''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+-]*)
 				die_status 4 "invalid $field '$value'"
@@ -507,8 +524,9 @@ while IFS='	' read -r source hash_record; do
 done <"$source_pairs"
 
 for support in files patches; do
-	if [ -d "$recipe_dir/$support" ] || [ -L "$recipe_dir/$support" ]; then
-		[ -d "$recipe_dir/$support" ] || die "$recipe_dir/$support is not a directory"
+	if [ -e "$recipe_dir/$support" ] || [ -L "$recipe_dir/$support" ]; then
+		[ -d "$recipe_dir/$support" ] && [ ! -L "$recipe_dir/$support" ] ||
+			die_status 4 "recipe $support must be a real directory"
 		if [ -e "$source_dir/$support" ] || [ -L "$source_dir/$support" ]; then
 			die_status 4 "source conflicts with recipe $support directory"
 		fi

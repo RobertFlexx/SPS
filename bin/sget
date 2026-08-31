@@ -380,10 +380,10 @@ sget_install()
             [ -n "$sget_action" ] || continue
             [ -f "$sget_recipe" ] ||
                 sps_die "$SPS_EX_NOTFOUND" "recipe for '$sget_package' is missing: $sget_recipe"
-            sget_current_hash=$(sps_sha256 "$sget_recipe") ||
-                sps_die "$SPS_EX_CHECKSUM" "cannot hash recipe for '$sget_package'"
-            [ "$sget_current_hash" = "$sget_recipe_hash" ] ||
-                sps_die "$SPS_EX_CHECKSUM" "recipe for '$sget_package' changed since indexing; run 'src update'"
+			sget_current_hash=$(sps_definition_sha256 "$sget_recipe") ||
+				sps_die "$SPS_EX_CHECKSUM" "cannot hash package definition for '$sget_package'"
+			[ "$sget_current_hash" = "$sget_recipe_hash" ] ||
+				sps_die "$SPS_EX_CHECKSUM" "package definition for '$sget_package' changed since indexing; run 'src update'"
             sget_recipe_dir=${sget_recipe%/*}
             sget_recipe_name=${sget_recipe##*/}
 

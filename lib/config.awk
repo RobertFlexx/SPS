@@ -1,19 +1,23 @@
-# Read SPS config into caller-provided arrays. Repo lines are kept separately
-# because there can be more than one.
+# Read SPS config into caller-provided arrays. Repository declarations are kept
+# separately because there can be more than one. `repo` is the compatibility
+# spelling of `dir`.
 
-function config_read(path, values, repo_name, repo_path, repo_priority,
-		line, fields, n, key, rest, count) {
+function config_read(path, values, repo_kind, repo_name, repo_source,
+		repo_priority, line, fields, n, key, rest, count, kind) {
 	count = 0
 	while ((getline line < path) > 0) {
 		line = sps_trim(line)
 		if (line == "" || line ~ /^#/) continue
 		n = split(line, fields, /[[:space:]]+/)
 		key = fields[1]
-		if (key == "repo") {
-			if (n < 3 || n > 4) sps_error(path ": malformed repo declaration")
+		if (key == "git" || key == "dir" || key == "repo") {
+			if (n < 3 || n > 4)
+				sps_error(path ": malformed repository declaration")
+			kind = key == "repo" ? "dir" : key
 			count++
+			repo_kind[count] = kind
 			repo_name[count] = fields[2]
-			repo_path[count] = fields[3]
+			repo_source[count] = fields[3]
 			repo_priority[count] = n == 4 ? fields[4] : 0
 			continue
 		}
@@ -24,4 +28,3 @@ function config_read(path, values, repo_name, repo_path, repo_priority,
 	close(path)
 	return count
 }
-

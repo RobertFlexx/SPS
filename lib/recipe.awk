@@ -117,9 +117,15 @@ function recipe_process(line,    key, value, separator) {
         recipe_set_once(key, value)
     } else if (key == "depend" || key == "builddep" || key == "optional") {
         recipe_append_dependency(key, value)
-    } else if (key == "source" || key == "hash" || key == "prepare" ||
-               key == "configure" || key == "build" || key == "install") {
-        # mkpkg uses these later; the indexer only records that the fields are valid.
+    } else if (key == "source") {
+        recipe_source_count++
+    } else if (key == "hash") {
+        recipe_hash_count++
+        recipe_hash[recipe_hash_count] = value
+    } else if (key == "install") {
+        recipe_install_count++
+    } else if (key == "prepare" || key == "configure" || key == "build") {
+        # mkpkg executes phase records later; indexing only validates their syntax.
     } else {
         recipe_error("unknown field '" key "'")
     }
@@ -155,6 +161,10 @@ END {
         recipe_error("missing required 'version' field")
     if (!recipe_seen["release"])
         recipe_error("missing required 'release' field")
+    if (!recipe_install_count)
+        recipe_error("missing required 'install' command")
+    if (recipe_source_count != recipe_hash_count)
+        recipe_error("each source must have one corresponding hash")
     if (!recipe_seen["arch"]) {
         if (recipe_default_arch == "") {
             "uname -m" | getline recipe_default_arch
@@ -171,6 +181,16 @@ END {
     recipe_value["depend"] = recipe_expand(recipe_value["depend"])
     recipe_value["builddep"] = recipe_expand(recipe_value["builddep"])
     recipe_value["optional"] = recipe_expand(recipe_value["optional"])
+
+    for (recipe_i = 1; recipe_i <= recipe_hash_count; recipe_i++) {
+        recipe_hash_value = recipe_expand(recipe_hash[recipe_i])
+        recipe_hash_hex = substr(recipe_hash_value, 8)
+        if (substr(recipe_hash_value, 1, 7) != "sha256:" ||
+            length(recipe_hash_hex) != 64 ||
+            recipe_hash_hex !~ /^[0123456789abcdefABCDEF]+$/)
+            recipe_error("invalid source hash '" recipe_hash_value \
+                         "' (expected sha256:<64 hex digits>)")
+    }
 
     if (recipe_value["name"] !~ /^[A-Za-z0-9][A-Za-z0-9+_.-]*$/)
         recipe_error("invalid package name '" recipe_value["name"] "'")

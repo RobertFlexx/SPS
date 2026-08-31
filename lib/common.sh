@@ -108,6 +108,170 @@ sps_sha256()
 	fi
 }
 
+# Hash every input which makes up one package definition.  The manifest uses
+# only fixed, package-relative names, so moving an unchanged package directory
+# does not change its digest.  files/ and patches/ are copied recursively by
+# mkpkg, making their directory and file modes observable build inputs too.
+sps_definition_sha256()
+(
+	sps_definition_input=${1-}
+	case $sps_definition_input in
+		'') sps_warn 'package definition recipe is missing'; return 1 ;;
+		*/*)
+			sps_definition_parent=${sps_definition_input%/*}
+			sps_definition_leaf=${sps_definition_input##*/}
+			;;
+		*)
+			sps_definition_parent=.
+			sps_definition_leaf=$sps_definition_input
+			;;
+	esac
+	case $sps_definition_parent in
+		-*) sps_definition_parent=./$sps_definition_parent ;;
+	esac
+	sps_definition_dir=$(CDPATH= cd -P "$sps_definition_parent" 2>/dev/null &&
+		pwd -P) || {
+		sps_warn 'cannot enter package definition directory'
+		return 1
+	}
+	sps_definition_recipe=$sps_definition_dir/$sps_definition_leaf
+	if [ ! -f "$sps_definition_recipe" ] ||
+	   [ -L "$sps_definition_recipe" ] ||
+	   [ ! -r "$sps_definition_recipe" ]; then
+		sps_warn 'package definition recipe must be a readable regular file'
+		return 1
+	fi
+
+	sps_definition_tmp=$(mktemp -d \
+		"${TMPDIR:-/tmp}/.sps-definition.XXXXXX" 2>/dev/null) || {
+		sps_warn 'cannot create package definition hash workspace'
+		return 1
+	}
+	sps_definition_cleanup()
+	{
+		rm -f "$sps_definition_tmp/manifest" \
+			"$sps_definition_tmp/paths.raw" \
+			"$sps_definition_tmp/paths" \
+			"$sps_definition_tmp/unsafe-path" \
+			"$sps_definition_tmp/unsafe-type"
+		rmdir "$sps_definition_tmp" 2>/dev/null || :
+	}
+	trap 'sps_definition_cleanup' 0
+	trap 'exit 1' 1 2 3 15
+
+	sps_definition_hash_file()
+	{
+		sps_definition_value=$(sps_sha256 "$1") || return $?
+		sps_definition_value=$(printf '%s\n' "$sps_definition_value" |
+			LC_ALL=C tr 'ABCDEF' 'abcdef') || return $?
+		case $sps_definition_value in
+			''|*[!0123456789abcdef]*) return 1 ;;
+		esac
+		[ "${#sps_definition_value}" -eq 64 ] || return 1
+		printf '%s\n' "$sps_definition_value"
+	}
+
+	sps_definition_manifest=$sps_definition_tmp/manifest
+	printf 'sps-package-definition\t1\n' >"$sps_definition_manifest" ||
+		return 1
+	sps_definition_hash=$(sps_definition_hash_file \
+		"$sps_definition_recipe") || {
+		sps_warn 'cannot hash package definition recipe'
+		return 1
+	}
+	printf 'file\t-\t%s\trecipe\n' "$sps_definition_hash" \
+		>>"$sps_definition_manifest" || return 1
+
+	cd "$sps_definition_dir" || return 1
+	for sps_definition_support in files patches hooks; do
+		if [ ! -e "$sps_definition_support" ] &&
+		   [ ! -L "$sps_definition_support" ]; then
+			continue
+		fi
+		if [ ! -d "$sps_definition_support" ] ||
+		   [ -L "$sps_definition_support" ]; then
+			sps_warn "recipe $sps_definition_support must be a real directory"
+			return 1
+		fi
+
+		rm -f "$sps_definition_tmp/unsafe-path" \
+			"$sps_definition_tmp/unsafe-type"
+		if ! find "$sps_definition_support" -exec sh -c '
+			marker=$1
+			shift
+			for path do
+				case $path in
+					*"	"*|*"
+"*) : >"$marker"; exit 0 ;;
+				esac
+			done
+		' sh "$sps_definition_tmp/unsafe-path" {} +; then
+			sps_warn "cannot inspect package definition $sps_definition_support"
+			return 1
+		fi
+		if [ -e "$sps_definition_tmp/unsafe-path" ]; then
+			sps_warn "package definition $sps_definition_support contains a tab or newline in a path"
+			return 1
+		fi
+		if ! find "$sps_definition_support" ! -type d ! -type f \
+			-exec sh -c ': >"$1"' sh \
+			"$sps_definition_tmp/unsafe-type" {} +; then
+			sps_warn "cannot inspect package definition $sps_definition_support"
+			return 1
+		fi
+		if [ -e "$sps_definition_tmp/unsafe-type" ]; then
+			sps_warn "package definition $sps_definition_support contains a symlink or special file"
+			return 1
+		fi
+		if ! find "$sps_definition_support" -print \
+			>"$sps_definition_tmp/paths.raw"; then
+			sps_warn "cannot list package definition $sps_definition_support"
+			return 1
+		fi
+		if ! LC_ALL=C sort "$sps_definition_tmp/paths.raw" \
+			>"$sps_definition_tmp/paths"; then
+			sps_warn "cannot sort package definition $sps_definition_support"
+			return 1
+		fi
+
+		while IFS= read -r sps_definition_path ||
+		      [ -n "$sps_definition_path" ]; do
+			[ -n "$sps_definition_path" ] || continue
+			if [ -d "$sps_definition_path" ] &&
+			   [ ! -L "$sps_definition_path" ]; then
+				sps_definition_mode=$(sps_mode_of \
+					"$sps_definition_path") || {
+					sps_warn "cannot read a $sps_definition_support directory mode"
+					return 1
+				}
+				printf 'directory\t%s\t-\t%s\n' \
+					"$sps_definition_mode" "$sps_definition_path" \
+					>>"$sps_definition_manifest" || return 1
+			elif [ -f "$sps_definition_path" ] &&
+			     [ ! -L "$sps_definition_path" ]; then
+				sps_definition_mode=$(sps_mode_of \
+					"$sps_definition_path") || {
+					sps_warn "cannot read a $sps_definition_support file mode"
+					return 1
+				}
+				sps_definition_hash=$(sps_definition_hash_file \
+					"$sps_definition_path") || {
+					sps_warn "cannot hash a $sps_definition_support file"
+					return 1
+				}
+				printf 'file\t%s\t%s\t%s\n' "$sps_definition_mode" \
+					"$sps_definition_hash" "$sps_definition_path" \
+					>>"$sps_definition_manifest" || return 1
+			else
+				sps_warn "package definition $sps_definition_support changed while hashing"
+				return 1
+			fi
+		done <"$sps_definition_tmp/paths"
+	done
+
+	sps_definition_hash_file "$sps_definition_manifest"
+)
+
 sps_validate_package_name()
 {
 	case ${1-} in
@@ -208,6 +372,7 @@ sps_lock_acquire()
 {
 	sps_lock_base=$1
 	sps_lock_name=${2:-.lock}
+	sps_lock_label=${3:-package database}
 	case $sps_lock_name in ''|*/*|.|..) return 1 ;; esac
 	sps_lock=$sps_lock_base/$sps_lock_name
 	sps_lock_owned=0
@@ -228,7 +393,7 @@ sps_lock_acquire()
 		return 1
 	fi
 
-	sps_warn "removing stale package database lock from pid $sps_lock_pid"
+	sps_warn "removing stale $sps_lock_label lock '$sps_lock' from pid $sps_lock_pid"
 	rm -f "$sps_lock/pid" 2>/dev/null || return 1
 	rmdir "$sps_lock" 2>/dev/null || return 1
 	if mkdir "$sps_lock" 2>/dev/null; then
@@ -250,19 +415,35 @@ sps_lock_release()
 	sps_lock_owned=0
 }
 
-# Print repo lines from the main config and repos.conf.
+# Print repository declarations without normalizing or truncating them. General
+# settings in sps.conf are ignored here; repos.conf is repository-only, so an
+# unknown declaration there is preserved for repository.awk to reject.
 sps_repo_lines()
 {
+	sps_repo_previous=
 	for sps_repo_file in "$SPS_CONFIG" "$SPS_REPOS_CONFIG"; do
 		[ -r "$sps_repo_file" ] || continue
-		awk '
-			/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-			$1 == "repo" && NF >= 3 {
-				printf "repo %s %s", $2, $3
-				if (NF >= 4) printf " %s", $4
-				printf "\n"
+		[ "$sps_repo_file" != "$sps_repo_previous" ] || continue
+		if [ "$sps_repo_file" = "$SPS_CONFIG" ]; then
+			sps_repo_main=1
+		else
+			sps_repo_main=0
+		fi
+		awk -v main_config="$sps_repo_main" '
+			{
+				line = $0
+				sub(/\r$/, "", line)
+				probe = line
+				sub(/^[ \t]+/, "", probe)
+				if (probe == "" || probe ~ /^#/)
+					next
+				split(probe, field, /[ \t]+/)
+				if (!main_config || field[1] == "git" ||
+				    field[1] == "dir" || field[1] == "repo")
+					print line
 			}
-		' "$sps_repo_file"
+		' "$sps_repo_file" || return $?
+		sps_repo_previous=$sps_repo_file
 	done
 }
 
@@ -272,6 +453,7 @@ sps_load_config()
 	[ "${SPS_DB+x}" = x ] && sps_env_db=1 || sps_env_db=0
 	[ "${SPS_CACHE+x}" = x ] && sps_env_cache=1 || sps_env_cache=0
 	[ "${SPS_BUILD+x}" = x ] && sps_env_build=1 || sps_env_build=0
+	[ "${SPS_REPO_ROOT+x}" = x ] && sps_env_repo_root=1 || sps_env_repo_root=0
 	[ "${SPS_MAKEJOBS+x}" = x ] && sps_env_makejobs=1 || sps_env_makejobs=0
 	[ "${SPS_COMPRESSION+x}" = x ] && sps_env_compression=1 || sps_env_compression=0
 	[ "${SPS_ARCH+x}" = x ] && sps_env_arch=1 || sps_env_arch=0
@@ -295,6 +477,7 @@ sps_load_config()
 	sps_cfg_db=/var/lib/sps
 	sps_cfg_cache=/var/cache/sps
 	sps_cfg_build=/var/tmp/sps
+	sps_cfg_repo_root=/usr/src/sps
 	sps_cfg_makejobs=1
 	sps_cfg_compression=auto
 	sps_cfg_arch=$(uname -m 2>/dev/null || printf '%s' unknown)
@@ -308,11 +491,12 @@ sps_load_config()
 				db) sps_cfg_db=$sps_value ;;
 				cache) sps_cfg_cache=$sps_value ;;
 				build) sps_cfg_build=$sps_value ;;
+				repo_root) sps_cfg_repo_root=$sps_value ;;
 				makejobs) sps_cfg_makejobs=$sps_value ;;
 				compression) sps_cfg_compression=$sps_value ;;
 				arch) sps_cfg_arch=$sps_value ;;
 				preserve) sps_cfg_preserve=$sps_value ;;
-				repo) : ;;
+				repo|git|dir) : ;;
 				*) sps_warn "ignoring unknown configuration key '$sps_key' in $SPS_CONFIG" ;;
 			esac
 		done < "$SPS_CONFIG"
@@ -326,6 +510,7 @@ sps_load_config()
 	[ "$sps_env_db" -eq 1 ] || SPS_DB=$(sps_root_path "$sps_cfg_db")
 	[ "$sps_env_cache" -eq 1 ] || SPS_CACHE=$(sps_root_path "$sps_cfg_cache")
 	[ "$sps_env_build" -eq 1 ] || SPS_BUILD=$(sps_root_path "$sps_cfg_build")
+	[ "$sps_env_repo_root" -eq 1 ] || SPS_REPO_ROOT=$(sps_root_path "$sps_cfg_repo_root")
 	[ "$sps_env_makejobs" -eq 1 ] || SPS_MAKEJOBS=$sps_cfg_makejobs
 	[ "$sps_env_compression" -eq 1 ] || SPS_COMPRESSION=$sps_cfg_compression
 	[ "$sps_env_arch" -eq 1 ] || SPS_ARCH=$sps_cfg_arch
@@ -341,12 +526,17 @@ sps_load_config()
 		''|*[!A-Za-z0-9._+-]*|[!A-Za-z0-9]*)
 			sps_die "$SPS_EX_USAGE" "invalid architecture '$SPS_ARCH'" ;;
 	esac
+	case $SPS_REPO_ROOT in
+		/*) ;;
+		*) sps_die "$SPS_EX_USAGE" "SPS_REPO_ROOT must be an absolute path: $SPS_REPO_ROOT" ;;
+	esac
+	[ "$SPS_REPO_ROOT" = / ] || SPS_REPO_ROOT=${SPS_REPO_ROOT%/}
 	case $SPS_PRESERVE in
 		'') sps_die "$SPS_EX_USAGE" "preserve may not be empty" ;;
 		*" "*|*"	"*|*"
 "*) sps_die "$SPS_EX_USAGE" "preserve must be a comma-separated path-prefix list" ;;
 	esac
 
-	export SPS_ROOT SPS_DB SPS_CACHE SPS_BUILD SPS_CONFIG SPS_REPOS_CONFIG
+	export SPS_ROOT SPS_DB SPS_CACHE SPS_BUILD SPS_REPO_ROOT SPS_CONFIG SPS_REPOS_CONFIG
 	export SPS_MAKEJOBS SPS_COMPRESSION SPS_ARCH SPS_PRESERVE
 }

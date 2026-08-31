@@ -4,4 +4,4 @@
 *.pkg.tar.zst
 *.tmp
 .sps-*
-
+/dist/
