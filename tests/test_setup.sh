@@ -31,6 +31,14 @@ contains "$sets" 'wifi'
 contains "$sets" 'firmware'
 contains "$sets" 'bluetooth'
 contains "$sets" 'drivers'
+contains "$sets" 'flatpak'
+
+plan=$("$setup" --plan --target /mnt --profile minimal --disable qol-cli --enable flatpak)
+contains "$plan" 'flatpak'
+contains "$plan" 'json-glib'
+contains "$plan" 'libseccomp'
+contains "$plan" 'gpgme'
+contains "$plan" 'appstream'
 
 plan=$("$setup" --plan --target /mnt --profile minimal --disable qol-cli)
 contains "$plan" 'Profile:    minimal'

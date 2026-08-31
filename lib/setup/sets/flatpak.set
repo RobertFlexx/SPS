@@ -1,9 +1,16 @@
 name        flatpak
 title       Flatpak
-description Flatpak, bubblewrap, and the Flathub remote (added after install if selected).
+description Flatpak, bubblewrap, metadata libraries, and the Flathub remote (added after install if selected).
 default     0
 package     flatpak
 package     bubblewrap
 package     xdg-dbus-proxy
 package     ostree
 package     xdg-desktop-portal
+package     json-glib
+package     libseccomp
+package     gpgme
+package     appstream
+package     fuse3
+package     libxmlb
+package     gdk-pixbuf
