@@ -2,6 +2,8 @@ name        power
 title       Power management
 description UPower, power-profiles-daemon, and related session helpers.
 default     1
+# polkit talks to logind. The extra recipe must optional systemd/elogind;
+# a hard depend elogind makes sget refuse Plasma + systemd.
 package     upower
 package     power-profiles-daemon
 package     polkit

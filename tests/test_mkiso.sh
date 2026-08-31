@@ -94,6 +94,30 @@ grep -q C.UTF-8 "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must set a UTF-8 locale'
 grep -q kdedefaults "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must seed kdedefaults for KSplash'
+if grep -q 'export QT_QPA_PLATFORM=wayland' "$layout/etc/sps/live-plasma"
+then
+	fail 'live-plasma must not force QT_QPA_PLATFORM=wayland on KWin'
+fi
+grep -q FONTCONFIG_PATH "$layout/etc/sps/live-plasma" ||
+	fail 'live-plasma must set FONTCONFIG_PATH'
+grep -q virtio_gpu "$layout/etc/sps/live-rc" ||
+	fail 'live-rc must load virtio_gpu for QEMU/virt-manager'
+grep -q cirrus_qemu "$layout/etc/sps/live-rc" ||
+	fail 'live-rc must load cirrus_qemu for QEMU stdvga fallbacks'
+grep -q /dev/dri/card0 "$layout/etc/sps/live-plasma" ||
+	fail 'live-plasma must wait for a DRM node'
+grep -q /usr/share/kwin "$project_dir/lib/mkiso/plasma-trees" ||
+	fail 'plasma-trees must include /usr/share/kwin'
+grep -q /etc/fonts "$project_dir/lib/mkiso/plasma-trees" ||
+	fail 'plasma-trees must include fontconfig'
+grep -q kglobalacceld "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include kglobalacceld'
+grep -q xdg-desktop-portal-kde "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include xdg-desktop-portal-kde'
+grep -q libgallium "$mkiso" ||
+	fail 'plasma ISO must copy Mesa libgallium'
+grep -q 'video:x:18:root' "$layout/etc/group" ||
+	fail 'live group must include video for seatd/DRM'
 grep -q ksplashqml "$project_dir/lib/mkiso/plasma-bins" ||
 	fail 'plasma-bins must include ksplashqml'
 grep -q plasma_waitforname "$project_dir/lib/mkiso/plasma-bins" ||

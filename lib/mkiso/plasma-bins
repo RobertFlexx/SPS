@@ -18,6 +18,7 @@
 /usr/bin/kded6
 /usr/bin/kdeinit6
 /usr/bin/kglobalacceld
+/usr/libexec/kglobalacceld
 /usr/bin/kcminit
 /usr/bin/kcminit_startup
 /usr/bin/ksmserver
@@ -48,4 +49,6 @@
 /usr/libexec/plasma-dbus-run-session-if-needed
 /usr/libexec/plasma-sourceenv.sh
 /usr/libexec/plasma-startup-sound
+/usr/libexec/xdg-desktop-portal
+/usr/libexec/xdg-desktop-portal-kde
 

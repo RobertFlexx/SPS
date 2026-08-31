@@ -8,10 +8,20 @@ export PATH
 export HOME=/root
 export XDG_RUNTIME_DIR=/run/user/0
 export XDG_SESSION_TYPE=wayland
-export QT_QPA_PLATFORM=wayland
+export XDG_SESSION_CLASS=user
+export XDG_SESSION_DESKTOP=KDE
+export DESKTOP_SESSION=plasma
 export TERM=${TERM:-linux}
 export LANG=${LANG:-C.UTF-8}
 export LC_ALL=${LC_ALL:-C.UTF-8}
+export FONTCONFIG_PATH=/etc/fonts
+export QT_PLUGIN_PATH=/usr/lib64/qt6/plugins
+export QT_QPA_PLATFORM_PLUGIN_PATH=/usr/lib64/qt6/plugins/platforms
+export QML2_IMPORT_PATH=/usr/lib64/qt6/qml
+# KWin is the compositor. QT_QPA_PLATFORM=wayland makes Qt try to
+# connect to a display that does not exist yet, so kwin_wayland dies
+# with "Failed to create wl_display" and plasmashell follows.
+unset QT_QPA_PLATFORM
 
 mkdir -p "$XDG_RUNTIME_DIR" /run/dbus /var/lib/dbus /etc/dbus-1 \
 	/root/.config/kdedefaults
@@ -28,6 +38,9 @@ fi
 
 # Live NVIDIA is nouveau. Keep the proprietary stack unloaded.
 modprobe nouveau 2>/dev/null || :
+for mod in virtio_gpu virtio_dma_buf bochs cirrus_qemu qxl vmwgfx; do
+	modprobe "$mod" 2>/dev/null || :
+done
 
 if [ ! -e /var/run ]; then
 	mkdir -p /var
@@ -84,6 +97,22 @@ fi
 if command -v seatd >/dev/null 2>&1; then
 	seatd -g video >/dev/null 2>&1 &
 	sleep 1
+fi
+
+# kwin_wayland needs a KMS node. live-rc loads virtio_gpu/bochs/qxl;
+# wait here so Plasma does not race the first DRM probe.
+n=0
+while [ "$n" -lt 10 ]; do
+	if [ -e /dev/dri/card0 ] || [ -e /dev/dri/card1 ]; then
+		break
+	fi
+	n=$((n + 1))
+	sleep 1
+done
+if [ ! -e /dev/dri/card0 ] && [ ! -e /dev/dri/card1 ]; then
+	printf '%s\n' "SPS: no /dev/dri/card0; KWin cannot start a compositor."
+	printf '%s\n' "SPS: use tty2 (Ctrl-Alt-F2) for a shell."
+	ls /dev/dri 2>/dev/null || :
 fi
 
 if command -v startplasma-wayland >/dev/null 2>&1; then

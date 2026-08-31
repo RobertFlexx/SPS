@@ -271,6 +271,16 @@ case $plan in
 	*elogind*) fail 'plasma + systemd must not pull elogind' ;;
 esac
 
+# Power is on by default for Plasma. polkit must come from that set
+# without naming elogind; sget resolves polkit's optional logind later.
+plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init systemd \
+	--disable qol-cli --disable firmware)
+contains "$plan" 'polkit'
+contains "$plan" 'init-systemd'
+case $plan in
+	*elogind*) fail 'plasma + systemd + power must not list elogind' ;;
+esac
+
 plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init openrc \
 	--disable qol-cli)
 contains "$plan" 'init-openrc'

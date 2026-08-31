@@ -503,12 +503,26 @@ mkiso_copy_plasma()
 	for mkiso_pat in /usr/lib64/libQt6*.so* /usr/lib64/libKF6*.so* \
 		/usr/lib64/libplasma*.so* /usr/lib64/libkwin*.so* \
 		/usr/lib64/libwayland*.so* /usr/lib64/libGLESv2.so* \
-		/usr/lib64/libEGL.so* /usr/lib64/libGL.so*
+		/usr/lib64/libEGL.so* /usr/lib64/libGL.so* \
+		/usr/lib64/libEGL_mesa.so* /usr/lib64/libGLX_mesa.so* \
+		/usr/lib64/libgallium*.so* /usr/lib64/dri/libdril_dri.so \
+		/usr/lib64/libLLVM.so /usr/lib64/libLLVM.so.[0-9]*
 	do
 		for mkiso_so in $mkiso_pat; do
 			[ -e "$mkiso_so" ] || continue
+			# Skip the rust-wrapped LLVM; the Mesa DRI stack uses libLLVM.so.*
+			case $mkiso_so in
+				*-rust*) continue ;;
+			esac
 			mkiso_copy_path "$mkiso_so"
 		done
+	done
+	# Full /usr/share/fonts/TTF is hundreds of megabytes. DejaVu is enough
+	# for fontconfig's default aliases on the live session.
+	for mkiso_font in /usr/share/fonts/TTF/DejaVu*.ttf
+	do
+		[ -e "$mkiso_font" ] || continue
+		mkiso_copy_path "$mkiso_font"
 	done
 	# Host /etc/dbus-1 may already contain system-local.conf. live-plasma
 	# used to skip the root-user override when that file existed, which
@@ -686,7 +700,15 @@ printf '%s\n' live >"$mkiso_live/etc/sps/live"
 printf '%s\n' splux-live >"$mkiso_live/etc/hostname"
 mkiso_stamp_os_release
 printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' >"$mkiso_live/etc/passwd"
-printf '%s\n' 'root:x:0:' >"$mkiso_live/etc/group"
+printf '%s\n' \
+	'root:x:0:' \
+	'tty:x:5:' \
+	'disk:x:6:' \
+	'audio:x:17:' \
+	'video:x:18:root' \
+	'input:x:71:root' \
+	'render:x:107:root' \
+	>"$mkiso_live/etc/group"
 # Empty password on the live console only.
 printf '%s\n' 'root::0:0:99999:7:::' >"$mkiso_live/etc/shadow"
 chmod 600 "$mkiso_live/etc/shadow"

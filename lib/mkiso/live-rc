@@ -61,9 +61,12 @@ fi
 if [ -d /lib/modules ] && command -v depmod >/dev/null 2>&1; then
 	depmod -a 2>/dev/null || :
 fi
+# QEMU/virt-manager usually presents virtio-gpu, stdvga (bochs), qxl,
+# or cirrus. KWin needs a DRM node; nouveau/bochs alone is not enough.
 for mod in e1000 e1000e r8169 virtio_net virtio_blk virtio_pci virtio_scsi \
 	usbnet hid-generic usbhid atkbd \
-	nouveau bochs drm_kms_helper
+	drm drm_kms_helper drm_ttm_helper ttm virtio_dma_buf virtio_gpu \
+	nouveau bochs cirrus_qemu qxl vmwgfx i915 amdgpu
 do
 	modprobe "$mod" 2>/dev/null || :
 done

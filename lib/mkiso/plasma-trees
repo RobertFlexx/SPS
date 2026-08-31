@@ -33,6 +33,13 @@
 /usr/lib64/dri
 /usr/lib/dri
 /usr/lib64/gbm
+/usr/share/kwin
+/usr/share/kwin-wayland
+/etc/fonts
+/usr/share/fontconfig
+/usr/share/glvnd
+/lib/udev/rules.d
+/usr/lib/udev/rules.d
 /usr/lib64/libkwin.so
 /usr/libexec/kf6
 /usr/libexec/kde
