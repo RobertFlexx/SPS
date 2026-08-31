@@ -330,26 +330,25 @@ mkiso_copy_runtime_libs()
 	mkiso_copy_path /lib/terminfo
 }
 
-# ldd every ELF already in the live root so dlopened plugins (Qt, KWin)
-# pull their DT_NEEDED closure too.
+# ldd live *binaries* so their DT_NEEDED closure is on the disc.
+# Do not walk lib directories: a Plasma tree has tens of thousands of
+# .so files, and ldd-per-file never finishes (the ISO looks hung after
+# "live PID 1 is busybox init"). Plugins are already copied as trees;
+# session binaries are ldd'd from plasma-bins.
 mkiso_close_libs()
 {
 	command -v ldd >/dev/null 2>&1 || return 0
+	printf '%s: resolving shared libraries for live binaries\n' \
+		"$sps_prog" >&2
 	mkiso_find=
-	for mkiso_d in bin sbin usr/bin usr/sbin lib64 usr/lib64 lib usr/lib
+	for mkiso_d in bin sbin usr/bin usr/sbin
 	do
 		[ -d "$mkiso_live/$mkiso_d" ] || continue
 		mkiso_find="$mkiso_find $mkiso_live/$mkiso_d"
 	done
 	[ -n "$mkiso_find" ] || return 0
 	# shellcheck disable=SC2086
-	find $mkiso_find \
-		\( -path "$mkiso_live/usr/lib64/gcc" -o \
-		   -path "$mkiso_live/usr/libexec/gcc" -o \
-		   -path "$mkiso_live/usr/lib64/python3.12" -o \
-		   -path "$mkiso_live/usr/lib64/rustlib" -o \
-		   -path "$mkiso_live/usr/lib64/go1.27.0" \) -prune -o \
-		-type f -print 2>/dev/null |
+	find $mkiso_find -type f -print 2>/dev/null |
 	while IFS= read -r mkiso_elf || [ -n "$mkiso_elf" ]; do
 		[ -n "$mkiso_elf" ] || continue
 		mkiso_copy_libs "$mkiso_elf"
