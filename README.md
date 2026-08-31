@@ -119,6 +119,10 @@ sget why firefox libxml2
 sget remove neovim
 ```
 
+`sget install` prints each package as it begins, then leaves `mkpkg` and the
+upstream build attached to the terminal. An exact cached archive is reused
+instead of rebuilding.
+
 The lower-level tools are always available:
 
 ```sh

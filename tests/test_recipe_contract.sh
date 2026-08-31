@@ -46,6 +46,8 @@ run_builder()
     build_label=$1
     build_recipe=$2
     mkdir -p "$tmp/out-$build_label"
+    result=$tmp/out-$build_label/artifact
+    rm -f "$result"
     SPS_ROOT=$tmp/root \
     SPS_DB=$tmp/db \
     SPS_CACHE=$tmp/cache \
@@ -54,7 +56,9 @@ run_builder()
     SPS_REPOS_CONFIG=/dev/null \
     SPS_COMPRESSION=none \
     SPS_ARCH=testarch \
-        "$mkpkg" --no-download --output "$tmp/out-$build_label" "$build_recipe"
+        "$mkpkg" --artifact-file "$result" --no-download \
+            --output "$tmp/out-$build_label" "$build_recipe" || return $?
+    sed -n '1p' "$result"
 }
 
 expect_builder_failure()

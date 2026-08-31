@@ -63,6 +63,21 @@ Require remote sources to already exist in the source cache.
 .TP
 .B --keep-build
 Keep build and staging directories for inspection after exit.
+.TP
+.BI "--artifact-file " path
+After a successful build, write the absolute package archive path to PATH.
+The file is replaced only when the archive exists. A previous value is removed
+at the start of the run so a failed build cannot leave a stale success. Callers
+such as
+.BR sget (1)
+use this to obtain the artifact without capturing build output.
+.TP
+.B --print-artifact
+Print the absolute package archive path as the final stdout line. Build
+commands also write to stdout, so this is only reliable for recipes whose
+phases produce no output. Prefer
+.B --artifact-file
+for scripts.
 .SH RECIPES
 Required keys are
 .BR name ,
@@ -143,9 +158,23 @@ With
 .B SYSROOT
 is the absolute controlled root directory.
 .SH OUTPUT
-On success the final stdout line is the absolute or requested path of the
-created package artifact, suitable for consumption by
-.BR sget (1).
+SPS status messages go to stderr in the form
+.BR "mkpkg: text" .
+Upstream configure, compile, and install commands keep their own stdout and
+stderr. Remote fetches print
+.B mkpkg: fetching
+then use curl or wget progress when stderr is a terminal, and a quieter
+downloader mode when it is not.
+.PP
+On success,
+.B mkpkg
+reports
+.B mkpkg: built
+followed by the archive basename. The archive path is not printed on stdout
+unless
+.B --print-artifact
+is given. Machine callers should use
+.BR --artifact-file .
 .SH EXIT STATUS
 Returns 0 on success, 2 for usage, 3 for missing recipe/source, 4 for invalid
 metadata/package content, 6 for checksum failure, 7 when the output artifact

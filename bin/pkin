@@ -384,6 +384,7 @@ fi
 # old manifest must never turn into a removal path.
 sps_old_record=$SPS_DB/installed/$sps_name
 sps_old_version=
+sps_old_release=
 : >"$sps_work/old-owned"
 if sps_exists "$sps_old_record" &&
    { [ ! -d "$sps_old_record" ] || [ -L "$sps_old_record" ]; }; then
@@ -410,6 +411,9 @@ if [ -d "$sps_old_record" ]; then
     [ "$sps_old_name" = "$sps_name" ] ||
         sps_fail 11 "installed record name '$sps_old_name' does not match '$sps_name'"
     sps_old_version=$(awk -v sps_action=meta-get -v sps_key_name=version \
+        -v sps_program=pkin -f "$SPS_LIBDIR/package.awk" "$sps_old_record/meta") ||
+        sps_fail 11 "installed metadata for '$sps_name' is malformed"
+    sps_old_release=$(awk -v sps_action=meta-get -v sps_key_name=release \
         -v sps_program=pkin -f "$SPS_LIBDIR/package.awk" "$sps_old_record/meta") ||
         sps_fail 11 "installed metadata for '$sps_name' is malformed"
     while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
@@ -772,7 +776,8 @@ if ! sps_run_hook post-install; then
 fi
 
 if [ -n "$sps_old_version" ]; then
-    printf '%s: upgraded %s %s -> %s-%s\n' "$sps_prog" "$sps_name" "$sps_old_version" "$sps_version" "$sps_release"
+    printf '%s: upgraded %s %s-%s -> %s-%s\n' "$sps_prog" "$sps_name" \
+        "$sps_old_version" "$sps_old_release" "$sps_version" "$sps_release"
 else
     printf '%s: installed %s %s-%s\n' "$sps_prog" "$sps_name" "$sps_version" "$sps_release"
 fi

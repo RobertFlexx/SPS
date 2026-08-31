@@ -251,7 +251,9 @@ run_sps()
     "$@"
 }
 
-artifact=$(run_sps mkpkg --output "$tmp/out" ./recipe)
+result=$(mktemp)
+run_sps mkpkg --artifact-file "$result" --output "$tmp/out" ./recipe
+artifact=$(cat "$result")
 tar -tf "$artifact"
 run_sps pkin "$artifact"
 run_sps pkcheck package-name
@@ -266,11 +268,11 @@ run_sps pkcheck --database
 find "$root" -mindepth 1 -print
 ```
 
-Capture the artifact path printed by `mkpkg`; compression depends on the local
-configuration. Use a fresh output directory because `mkpkg` does not overwrite
-an existing artifact. `--keep-build` retains work and staging paths for failure
-inspection; redirect command output to a log outside Git when preserving a
-build log.
+Read the archive path from `--artifact-file` after `mkpkg` exits 0. Compression
+depends on the local configuration. Use a fresh output directory because `mkpkg`
+does not overwrite an existing artifact. `--keep-build` retains work and staging
+paths for failure inspection; redirect command output to a log outside Git when
+preserving a build log.
 
 `SPS_ROOT` redirects installation but does not chroot a smoke test. Running a
 dynamically linked executable under `$root/usr/bin` may still use host runtime

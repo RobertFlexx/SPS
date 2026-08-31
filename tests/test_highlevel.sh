@@ -63,8 +63,8 @@ recipe "$repo/base" base 2.0
 recipe "$repo/lib" lib 2.0 base
 src update >/dev/null
 plan=$(sget upgrade --plan)
-contains "$plan" 'upgrade    base 2.0-1'
-contains "$plan" 'upgrade    lib 2.0-1'
+contains "$plan" 'upgrade    base 1.0-1 -> 2.0-1'
+contains "$plan" 'upgrade    lib 1.0-1 -> 2.0-1'
 sget upgrade >"$tmp/upgrade.out"
 [ "$(cat "$root/usr/share/sps-test/base")" = 2.0 ] || fail 'base was not upgraded'
 [ "$(cat "$root/usr/share/sps-test/lib")" = 2.0 ] || fail 'lib was not upgraded'

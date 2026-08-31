@@ -148,7 +148,7 @@ mkdir -p "$tmp/db/installed/base"
 : >"$tmp/db/installed/base/hashes"
 outdated_plan=$("$sget" install --plan app)
 case $outdated_plan in
-    *'base 1.0-1'*) ;;
+    *'base 0.9-1 -> 1.0-1'*) ;;
     *) fail 'outdated installed dependency was incorrectly skipped' ;;
 esac
 sed 's/version\t0.9/version\t1.0/' "$tmp/db/installed/base/meta" >"$tmp/base.meta"
@@ -168,10 +168,37 @@ contains "$(cat "$tmp/explicit.out")" 'explicit'
 cat > "$tmp/fakebin/mkpkg" <<'EOF_FAKE_MKPKG'
 #!/bin/sh
 printf "mkpkg\t%s\n" "$PWD" >> "$TEST_LOG"
-name=$(awk '$1=="name" {print $2; exit}' recipe)
-version=$(awk '$1=="version" {print $2; exit}' recipe)
-release=$(awk '$1=="release" {print $2; exit}' recipe)
-arch=$(awk '$1=="arch" {print $2; exit}' recipe)
+artifact_file=
+recipe=recipe
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --output|--output=*)
+            case $1 in
+                --output) shift 2 ;;
+                *) shift ;;
+            esac
+            ;;
+        --artifact-file)
+            artifact_file=$2
+            shift 2
+            ;;
+        --artifact-file=*)
+            artifact_file=${1#*=}
+            shift
+            ;;
+        --print-artifact)
+            shift
+            ;;
+        *)
+            recipe=$1
+            shift
+            ;;
+    esac
+done
+name=$(awk '$1=="name" {print $2; exit}' "$recipe")
+version=$(awk '$1=="version" {print $2; exit}' "$recipe")
+release=$(awk '$1=="release" {print $2; exit}' "$recipe")
+arch=$(awk '$1=="arch" {print $2; exit}' "$recipe")
 [ -n "$arch" ] || arch=$(uname -m)
 work=$PWD/.fakepkg.$$
 mkdir -p "$work/.SPS"
@@ -182,7 +209,9 @@ printf "format\t1\nname\t%s\nversion\t%s\nrelease\t%s\narch\t%s\n" \
 artifact=$PWD/$name-$version-$release-$arch.pkg.tar
 tar -cf "$artifact" -C "$work" .
 rm -rf "$work"
-printf "%s\n" "$artifact"
+if [ -n "$artifact_file" ]; then
+    printf "%s\n" "$artifact" > "$artifact_file"
+fi
 EOF_FAKE_MKPKG
 cat > "$tmp/fakebin/pkin" <<'EOF_FAKE_PKIN'
 #!/bin/sh

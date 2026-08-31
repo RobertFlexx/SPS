@@ -34,6 +34,21 @@ sha256_file()
 	fi
 }
 
+run_mkpkg()
+{
+	result=$tmp/artifact.path
+	rm -f "$result"
+	SPS_ROOT=$tmp/root \
+	SPS_DB=$tmp/db \
+	SPS_CACHE=$tmp/cache \
+	SPS_BUILD=$tmp/build \
+	SPS_CONFIG=/dev/null \
+	SPS_REPOS_CONFIG=/dev/null \
+	SPS_COMPRESSION=none \
+		"$mkpkg" --artifact-file "$result" "$@" || return $?
+	sed -n '1p' "$result"
+}
+
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sps-test-build.XXXXXX") ||
 	fail "cannot create temporary directory"
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
@@ -42,16 +57,8 @@ mkdir -p "$tmp/recipe" "$tmp/out" "$tmp/root"
 cp "$project_dir/examples/hello/recipe" "$tmp/recipe/recipe"
 cp "$project_dir/examples/hello/hello.sh" "$tmp/recipe/hello.sh"
 
-artifact=$(
-	SPS_ROOT=$tmp/root \
-	SPS_DB=$tmp/db \
-	SPS_CACHE=$tmp/cache \
-	SPS_BUILD=$tmp/build \
-	SPS_CONFIG=/dev/null \
-	SPS_REPOS_CONFIG=/dev/null \
-	SPS_COMPRESSION=none \
-	"$mkpkg" --no-download --output "$tmp/out" "$tmp/recipe/recipe"
-) || fail "offline hello package build failed"
+artifact=$(run_mkpkg --no-download --output "$tmp/out" "$tmp/recipe/recipe") ||
+	fail "offline hello package build failed"
 
 expected_artifact=$tmp/out/hello-sps-1.0-1-any.pkg.tar
 assert_equal "$expected_artifact" "$artifact" "mkpkg did not print the artifact path"
@@ -102,6 +109,7 @@ mkdir "$tmp/bad-recipe" "$tmp/bad-out"
 cp "$tmp/recipe/hello.sh" "$tmp/bad-recipe/hello.sh"
 sed 's/sha256:2/sha256:3/' "$tmp/recipe/recipe" >"$tmp/bad-recipe/recipe"
 set +e
+printf 'stale\n' >"$tmp/bad-artifact"
 SPS_ROOT=$tmp/root \
 SPS_DB=$tmp/db \
 SPS_CACHE=$tmp/cache \
@@ -109,13 +117,21 @@ SPS_BUILD=$tmp/build \
 SPS_CONFIG=/dev/null \
 SPS_REPOS_CONFIG=/dev/null \
 SPS_COMPRESSION=none \
-"$mkpkg" --no-download --output "$tmp/bad-out" "$tmp/bad-recipe/recipe" \
+"$mkpkg" --artifact-file "$tmp/bad-artifact" --no-download --output "$tmp/bad-out" \
+	"$tmp/bad-recipe/recipe" \
 	>"$tmp/bad.stdout" 2>"$tmp/bad.stderr"
 bad_status=$?
 set -e
 assert_equal 6 "$bad_status" "checksum failure returned the wrong status"
-grep -q 'checksum failure' "$tmp/bad.stderr" ||
+grep -q 'checksum mismatch' "$tmp/bad.stderr" ||
 	fail "checksum diagnostic did not explain the failure"
+grep -q 'expected ' "$tmp/bad.stderr" ||
+	fail "checksum diagnostic omitted the expected digest"
+grep -q 'got      ' "$tmp/bad.stderr" ||
+	fail "checksum diagnostic omitted the actual digest"
+[ ! -s "$tmp/bad.stdout" ] || fail "failed build wrote artifact path to stdout"
+[ ! -e "$tmp/bad-artifact" ] || [ ! -s "$tmp/bad-artifact" ] ||
+	fail "failed build left a successful artifact result"
 
 # Local tar sources unpack below WORK. Recipe variables expand as data and
 # missing arch falls back to uname -m.
@@ -137,16 +153,8 @@ install     chmod 755 "$PKG/usr/bin/archive-hello"
 EOF
 sed "s/SOURCE_HASH/$archive_hash/" "$tmp/tar-recipe/recipe.in" >"$tmp/tar-recipe/recipe"
 
-tar_artifact=$(
-	SPS_ROOT=$tmp/root \
-	SPS_DB=$tmp/db \
-	SPS_CACHE=$tmp/cache \
-	SPS_BUILD=$tmp/build \
-	SPS_CONFIG=/dev/null \
-	SPS_REPOS_CONFIG=/dev/null \
-	SPS_COMPRESSION=none \
-	"$mkpkg" --no-download --output "$tmp/tar-out" "$tmp/tar-recipe/recipe"
-) || fail "local tar source build failed"
+tar_artifact=$(run_mkpkg --no-download --output "$tmp/tar-out" "$tmp/tar-recipe/recipe") ||
+	fail "local tar source build failed"
 default_arch=$(uname -m)
 assert_equal "$tmp/tar-out/archive-hello-1.0-1-$default_arch.pkg.tar" \
 	"$tar_artifact" "default architecture or metadata expansion is incorrect"
@@ -171,17 +179,9 @@ install     mkdir -p "$PKG/usr/share/sysroot-probe"
 install     printf '%s\n' "${SYSROOT-}" >"$PKG/usr/share/sysroot-probe/sysroot"
 install     printf '%s\n' "$PATH" >"$PKG/usr/share/sysroot-probe/path"
 EOF
-sysroot_artifact=$(
-	SPS_ROOT=$tmp/root \
-	SPS_DB=$tmp/db \
-	SPS_CACHE=$tmp/cache \
-	SPS_BUILD=$tmp/build \
-	SPS_CONFIG=/dev/null \
-	SPS_REPOS_CONFIG=/dev/null \
-	SPS_COMPRESSION=none \
-	"$mkpkg" --no-download --build-root "$tmp/buildroot" \
-		--output "$tmp/sysroot-out" "$tmp/sysroot-recipe/recipe"
-) || fail "sysroot build failed"
+sysroot_artifact=$(run_mkpkg --no-download --build-root "$tmp/buildroot" \
+	--output "$tmp/sysroot-out" "$tmp/sysroot-recipe/recipe") ||
+	fail "sysroot build failed"
 mkdir "$tmp/sysroot-extract"
 tar -xf "$sysroot_artifact" -C "$tmp/sysroot-extract"
 assert_equal "$tmp/buildroot" \

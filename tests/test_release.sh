@@ -37,7 +37,10 @@ install printf '%s\\n' '$config_text' > "\$PKG/etc/$name.conf"
 install printf '%s\\n' '$version' > "\$PKG/var/lib/$name/data"
 install chmod 0700 "\$PKG/var/lib/$name"
 EOF_RECIPE
-    run "$project_dir/bin/mkpkg" --compression none --output "$tmp/pkg" "$dir/recipe"
+    rm -f "$tmp/pkg/artifact"
+    run "$project_dir/bin/mkpkg" --artifact-file "$tmp/pkg/artifact" \
+        --compression none --output "$tmp/pkg" "$dir/recipe" || return $?
+    sed -n '1p' "$tmp/pkg/artifact"
 }
 
 recipe=$tmp/recipe
@@ -80,7 +83,12 @@ EOF_HOOK
 done
 sed 's/version 2.0/version 3.0/' "$recipe/recipe" >"$recipe/recipe.new"
 mv "$recipe/recipe.new" "$recipe/recipe"
-artifact3=$(run "$project_dir/bin/mkpkg" --compression none --output "$tmp/pkg" "$recipe/recipe")
+artifact3=$(
+    rm -f "$tmp/pkg/artifact"
+    run "$project_dir/bin/mkpkg" --artifact-file "$tmp/pkg/artifact" \
+        --compression none --output "$tmp/pkg" "$recipe/recipe" || exit $?
+    sed -n '1p' "$tmp/pkg/artifact"
+)
 run "$project_dir/bin/pkin" "$artifact3" >/dev/null
 [ "$(sed -n '1p' "$root/hook.log")" = pre-install ] || fail 'pre-install hook did not run'
 [ "$(sed -n '2p' "$root/hook.log")" = post-install ] || fail 'post-install hook did not run'
@@ -123,7 +131,12 @@ install printf '%s\n' hookfail > "$PKG/usr/share/hookfail"
 EOF_HOOKFAIL_RECIPE
 printf '%s\n' 'exit 1' >"$hookfail_dir/hooks/post-install"
 printf '%s\n' 'exit 1' >"$hookfail_dir/hooks/post-remove"
-hookfail_artifact=$(run "$project_dir/bin/mkpkg" --compression none --output "$tmp/pkg" "$hookfail_dir/recipe")
+hookfail_artifact=$(
+    rm -f "$tmp/pkg/artifact"
+    run "$project_dir/bin/mkpkg" --artifact-file "$tmp/pkg/artifact" \
+        --compression none --output "$tmp/pkg" "$hookfail_dir/recipe" || exit $?
+    sed -n '1p' "$tmp/pkg/artifact"
+)
 set +e
 run "$project_dir/bin/pkin" "$hookfail_artifact" >/dev/null 2>"$tmp/hookfail-install.err"
 status=$?

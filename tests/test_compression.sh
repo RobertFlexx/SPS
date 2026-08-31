@@ -37,17 +37,18 @@ for compression in gzip xz zstd; do
     out=$tmp/out-$compression
     mkdir -p "$root" "$out"
 
-    artifact=$(
-        SPS_ROOT=$root \
-        SPS_DB=$db \
-        SPS_CACHE=$cache \
-        SPS_BUILD=$build \
-        SPS_CONFIG=/dev/null \
-        SPS_REPOS_CONFIG=/dev/null \
-        SPS_LIBDIR=$project_dir/lib \
-        "$mkpkg" --no-download --compression "$compression" \
-            --output "$out" "$tmp/recipe/recipe"
-    ) || fail "$compression package build failed"
+    SPS_ROOT=$root \
+    SPS_DB=$db \
+    SPS_CACHE=$cache \
+    SPS_BUILD=$build \
+    SPS_CONFIG=/dev/null \
+    SPS_REPOS_CONFIG=/dev/null \
+    SPS_LIBDIR=$project_dir/lib \
+        "$mkpkg" --artifact-file "$out/artifact" --no-download \
+            --compression "$compression" \
+            --output "$out" "$tmp/recipe/recipe" ||
+        fail "$compression package build failed"
+    artifact=$(sed -n '1p' "$out/artifact")
 
     expected=$out/hello-sps-1.0-1-any.pkg.tar$suffix
     [ "$artifact" = "$expected" ] ||

@@ -13,6 +13,10 @@ recipe=
 build_dir=
 stage_dir=
 build_root=
+artifact_file=
+print_artifact=0
+artifact_tmp=
+download_tmp=
 
 usage()
 {
@@ -28,6 +32,8 @@ options:
                             first on PATH and expose it as \$SYSROOT
       --no-download        use only local sources and cached downloads
       --keep-build         retain build and staging directories
+      --artifact-file PATH write the package archive path to PATH
+      --print-artifact     print the package archive path on stdout
   -h, --help               show this help
 EOF
 }
@@ -55,6 +61,8 @@ cleanup()
 {
 	cleanup_status=$?
 	trap - 0 HUP INT TERM
+	[ -z "$download_tmp" ] || rm -f "$download_tmp"
+	[ -z "$artifact_tmp" ] || rm -f "$artifact_tmp"
 	if [ "$keep_build" -eq 1 ]; then
 		[ -z "$build_dir" ] || say "build directory retained at $build_dir"
 		[ -z "$stage_dir" ] || say "stage directory retained at $stage_dir"
@@ -112,6 +120,21 @@ while [ "$#" -gt 0 ]; do
 			keep_build=1
 			shift
 			;;
+		--artifact-file)
+			[ "$#" -ge 2 ] || die_status 2 "$1 requires a path"
+			artifact_file=$2
+			[ -n "$artifact_file" ] || die_status 2 "--artifact-file requires a path"
+			shift 2
+			;;
+		--artifact-file=*)
+			artifact_file=${1#*=}
+			[ -n "$artifact_file" ] || die_status 2 "--artifact-file requires a path"
+			shift
+			;;
+		--print-artifact)
+			print_artifact=1
+			shift
+			;;
 		-h|--help)
 			usage
 			exit 0
@@ -143,6 +166,24 @@ if [ -d "$recipe" ]; then
 fi
 [ -f "$recipe" ] || die_status 3 "recipe not found: $recipe"
 [ -r "$recipe" ] || die_status 8 "recipe is not readable: $recipe"
+
+if [ -n "$artifact_file" ]; then
+	case $artifact_file in
+		/*) ;;
+		*) artifact_file=$PWD/$artifact_file ;;
+	esac
+	artifact_parent=${artifact_file%/*}
+	[ -n "$artifact_parent" ] || artifact_parent=/
+	[ -d "$artifact_parent" ] ||
+		die_status 8 "--artifact-file directory does not exist: $artifact_parent"
+	if [ -e "$artifact_file" ] || [ -L "$artifact_file" ]; then
+		if [ -d "$artifact_file" ] && [ ! -L "$artifact_file" ]; then
+			die_status 8 "--artifact-file is a directory: $artifact_file"
+		fi
+		rm -f "$artifact_file" ||
+			die_status 8 "cannot replace artifact result file: $artifact_file"
+	fi
+fi
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" 2>/dev/null && pwd) ||
 	die "cannot determine program directory"
@@ -403,6 +444,7 @@ for field in name version release arch; do
 		*) die_status 4 "$field must begin with an alphanumeric character" ;;
 	esac
 done
+say "$name $version-$release"
 
 sources=$build_dir/sources.list
 hashes=$build_dir/source-hashes.list
@@ -443,8 +485,13 @@ verify_source()
 	verify_actual=$(sha256_file "$verify_file") ||
 		die_status 10 "cannot hash source $verify_file"
 	verify_actual=$(printf '%s\n' "$verify_actual" | tr 'ABCDEF' 'abcdef')
-	[ "$verify_actual" = "$verify_expected" ] ||
-		die_status 6 "checksum failure for ${verify_file##*/}: expected $verify_expected, got $verify_actual"
+	if [ "$verify_actual" != "$verify_expected" ]; then
+		say "checksum mismatch for ${verify_file##*/}"
+		say "expected $verify_expected"
+		say "got      $verify_actual"
+		exit 6
+	fi
+	say "checksum ok"
 }
 
 source_name()
@@ -472,10 +519,20 @@ download_http()
 {
 	download_url=$1
 	download_dest=$2
+	# Progress belongs to the downloader. Use a TTY progress display when
+	# stderr is a terminal; otherwise stay quiet enough for log files.
 	if command -v curl >/dev/null 2>&1; then
-		curl -fL -o "$download_dest" "$download_url"
+		if [ -t 2 ]; then
+			curl -fL -# -o "$download_dest" "$download_url"
+		else
+			curl -fL -sS -o "$download_dest" "$download_url"
+		fi
 	elif command -v wget >/dev/null 2>&1; then
-		wget -O "$download_dest" "$download_url"
+		if [ -t 2 ]; then
+			wget -O "$download_dest" "$download_url"
+		else
+			wget -q -O "$download_dest" "$download_url"
+		fi
 	else
 		die_status 9 "cannot download $download_url: curl or wget is required"
 	fi
@@ -503,32 +560,39 @@ while IFS='	' read -r source hash_record; do
 			expected=${hash_record#sha256:}
 			cache_file=$SPS_CACHE/sources/$expected-$leaf
 			if [ -f "$cache_file" ]; then
+				say "source cache hit $leaf"
 				verify_source "$cache_file" "$hash_record"
 				cp "$cache_file" "$destination" || die "cannot copy cached source $leaf"
 			else
 				[ "$no_download" -eq 0 ] ||
 					die_status 9 "source is not cached and downloads are disabled: $source"
+				say "fetching $leaf"
 				download_tmp=$(mktemp "$SPS_CACHE/sources/.download.XXXXXX") ||
 					die_status 8 "cannot create source download file"
 				if ! download_http "$source" "$download_tmp"; then
 					rm -f "$download_tmp"
+					download_tmp=
 					die_status 9 "download failed: $source"
 				fi
 				if ! verify_source "$download_tmp" "$hash_record"; then
 					rm -f "$download_tmp"
+					download_tmp=
 					exit 1
 				fi
 				chmod 644 "$download_tmp"
 				if ! mv "$download_tmp" "$cache_file"; then
 					rm -f "$download_tmp"
+					download_tmp=
 					die "cannot commit source to cache: $cache_file"
 				fi
+				download_tmp=
 				cp "$cache_file" "$destination" || die "cannot copy downloaded source $leaf"
 			fi
 			;;
 		file://*)
 			local_source=${source#file://}
 			[ -f "$local_source" ] || die_status 3 "local source not found: $source"
+			say "source $leaf"
 			cp "$local_source" "$destination" || die "cannot copy source $source"
 			verify_source "$destination" "$hash_record"
 			;;
@@ -538,6 +602,7 @@ while IFS='	' read -r source hash_record; do
 				*) local_source=$recipe_dir/$source ;;
 			esac
 			[ -f "$local_source" ] || die_status 3 "local source not found: $source"
+			say "source $leaf"
 			cp "$local_source" "$destination" || die "cannot copy source $source"
 			verify_source "$destination" "$hash_record"
 			;;
@@ -627,9 +692,13 @@ else
 fi
 
 # Write each build phase to a temporary script. These are the recipe fields we
-# actually execute.
+# actually execute.  The scripts live in a dedicated run directory rather than
+# at the top of the build directory: names such as install.sh are exactly what
+# autotools' auxiliary-directory heuristics look for, and a matching file in a
+# parent directory would corrupt generated build systems.
+mkdir -p "$build_dir/run"
 for phase in prepare configure build install; do
-	record_values "$phase" >"$build_dir/$phase.sh"
+	record_values "$phase" >"$build_dir/run/$phase.sh"
 done
 
 PKG=$stage_dir
@@ -652,7 +721,7 @@ fi
 run_phase()
 {
 	phase_name=$1
-	phase_file=$build_dir/$phase_name.sh
+	phase_file=$build_dir/run/$phase_name.sh
 	[ -s "$phase_file" ] || return 0
 	say "running $phase_name phase"
 	if [ -n "$run_env" ]; then
@@ -666,6 +735,7 @@ run_phase()
 	fi
 }
 
+printf '\n' >&2
 run_phase prepare
 run_phase configure
 run_phase build
@@ -836,5 +906,22 @@ esac
 chmod 644 "$output_tmp"
 mv "$output_tmp" "$artifact" || die "cannot commit package archive: $artifact"
 
-# Keep stdout clean for sget: one artifact path.
-printf '%s\n' "$artifact"
+# sget needs the package path without swallowing build output.
+if [ -n "$artifact_file" ]; then
+	artifact_tmp=$(mktemp "$artifact_file.XXXXXX") ||
+		die_status 8 "cannot create artifact result file"
+	if ! printf '%s\n' "$artifact" >"$artifact_tmp"; then
+		rm -f "$artifact_tmp"
+		artifact_tmp=
+		die_status 8 "cannot write artifact result file"
+	fi
+	chmod 644 "$artifact_tmp"
+	mv "$artifact_tmp" "$artifact_file" ||
+		die "cannot commit artifact result file: $artifact_file"
+	artifact_tmp=
+fi
+
+say "built ${artifact##*/}"
+if [ "$print_artifact" -eq 1 ]; then
+	printf '%s\n' "$artifact"
+fi

@@ -38,15 +38,21 @@ sget_begin_transaction()
 sget_usage()
 {
     cat <<'EOF_USAGE'
-usage: sget search PATTERN [--raw]
-       sget info PACKAGE [--raw]
-       sget depends PACKAGE [--raw] [--build]
-       sget dependees PACKAGE [--build]
-       sget why PACKAGE DEPENDENCY [--build]
-       sget install [--plan] [--nodeps] [--reinstall] PACKAGE...
-       sget upgrade [--plan] [--downgrade]
-       sget remove [--plan] [--nodeps] PACKAGE...
+usage: sget [-q|--quiet] [-v|--verbose] search PATTERN [--raw]
+       sget [-q|--quiet] [-v|--verbose] info PACKAGE [--raw]
+       sget [-q|--quiet] [-v|--verbose] depends PACKAGE [--raw] [--build]
+       sget [-q|--quiet] [-v|--verbose] dependees PACKAGE [--build]
+       sget [-q|--quiet] [-v|--verbose] why PACKAGE DEPENDENCY [--build]
+       sget [-q|--quiet] [-v|--verbose] install [--plan] [--nodeps] [--reinstall] PACKAGE...
+       sget [-q|--quiet] [-v|--verbose] upgrade [--plan] [--downgrade]
+       sget [-q|--quiet] [-v|--verbose] remove [--plan] [--nodeps] PACKAGE...
 EOF_USAGE
+}
+
+sget_note()
+{
+    [ "${sget_verbose:-0}" -eq 1 ] || return 0
+    printf '%s: %s\n' "$sps_prog" "$*" >&2
 }
 
 sget_need_index()
@@ -251,6 +257,8 @@ sget_install()
             --nodeps) sget_nodeps=1; shift ;;
             --reinstall) sget_reinstall=1; shift ;;
             --downgrade) sget_allow_downgrade=1; shift ;;
+            -q|--quiet) sget_quiet=1; shift ;;
+            -v|--verbose) sget_verbose=1; shift ;;
             --) shift; break ;;
             -*) sps_die "$SPS_EX_USAGE" "unknown option '$1'" ;;
             *) break ;;
@@ -325,6 +333,7 @@ sget_install()
                 if [ "$sget_reinstall" -eq 1 ] && [ "$sget_upgrade_mode" -eq 0 ]; then
                     sget_action=reinstall
                 else
+                    sget_note "$sget_package satisfied by $sget_installed_version-$sget_installed_release"
                     continue
                 fi
             elif [ "$sget_cmp" -gt 0 ]; then
@@ -339,9 +348,18 @@ sget_install()
                 fi
             fi
         fi
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        sget_old_version=
+        sget_old_release=
+        case $sget_action in
+            upgrade|downgrade|reinstall)
+                sget_old_version=$sget_installed_version
+                sget_old_release=$sget_installed_release
+                ;;
+        esac
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$sget_action" "$sget_package" "$sget_recipe" "$sget_recipe_hash" \
-            "$sget_version" "$sget_release" "$sget_arch" >>"$sget_work/todo"
+            "$sget_version" "$sget_release" "$sget_arch" \
+            "$sget_old_version" "$sget_old_release" >>"$sget_work/todo"
         sget_count=$((sget_count + 1))
     done <"$sget_work/resolution"
 
@@ -356,15 +374,28 @@ sget_install()
             printf '%s\n' 'No changes are needed.'
         else
             while IFS="$sps_tab" read -r sget_action sget_package sget_recipe \
-                  sget_recipe_hash sget_version sget_release sget_arch || [ -n "$sget_action" ]
+                  sget_recipe_hash sget_version sget_release sget_arch \
+                  sget_old_version sget_old_release || [ -n "$sget_action" ]
             do
-                [ -n "$sget_action" ] && printf '  %-10s %s %s-%s\n' \
-                    "$sget_action" "$sget_package" "$sget_version" "$sget_release"
+                [ -n "$sget_action" ] || continue
+                if [ "$sget_action" = upgrade ] || [ "$sget_action" = downgrade ]; then
+                    printf '  %-10s %s %s-%s -> %s-%s\n' \
+                        "$sget_action" "$sget_package" \
+                        "$sget_old_version" "$sget_old_release" \
+                        "$sget_version" "$sget_release"
+                else
+                    printf '  %-10s %s %s-%s\n' \
+                        "$sget_action" "$sget_package" "$sget_version" "$sget_release"
+                fi
             done <"$sget_work/todo"
             while IFS= read -r sget_package || [ -n "$sget_package" ]; do
                 [ -n "$sget_package" ] && printf '  %-10s %s\n' explicit "$sget_package"
             done <"$sget_work/mark-explicit"
-            printf '\n%d package builds, %d reason changes\n' "$sget_count" "$sget_mark_count"
+            if [ "$sget_mark_count" -gt 0 ]; then
+                printf '\n%d packages, %d reason changes\n' "$sget_count" "$sget_mark_count"
+            else
+                printf '\n%d packages\n' "$sget_count"
+            fi
         fi
         sget_cleanup_install
         trap - 0 1 2 3 15
@@ -374,8 +405,10 @@ sget_install()
     if [ "$sget_count" -gt 0 ]; then
         sps_require_cmd mkpkg
         sps_require_cmd pkin
+        sget_seen=0
         while IFS="$sps_tab" read -r sget_action sget_package sget_recipe \
-              sget_recipe_hash sget_version sget_release sget_arch || [ -n "$sget_action" ]
+              sget_recipe_hash sget_version sget_release sget_arch \
+              sget_old_version sget_old_release || [ -n "$sget_action" ]
         do
             [ -n "$sget_action" ] || continue
             [ -f "$sget_recipe" ] ||
@@ -386,8 +419,23 @@ sget_install()
 				sps_die "$SPS_EX_CHECKSUM" "package definition for '$sget_package' changed since indexing; run 'src update'"
             sget_recipe_dir=${sget_recipe%/*}
             sget_recipe_name=${sget_recipe##*/}
+            sget_note "selected $sget_recipe $sget_version-$sget_release"
 
-            printf '%s %s\n' "$sget_action" "$sget_package"
+            if [ "$sget_seen" -eq 1 ]; then
+                printf '\n'
+            fi
+            sget_seen=1
+            case $sget_action in
+                upgrade|downgrade)
+                    printf '%s %s %s-%s -> %s-%s\n' "$sget_action" "$sget_package" \
+                        "$sget_old_version" "$sget_old_release" \
+                        "$sget_version" "$sget_release"
+                    ;;
+                *)
+                    printf '%s %s %s-%s\n' "$sget_action" "$sget_package" \
+                        "$sget_version" "$sget_release"
+                    ;;
+            esac
             sget_cache_base=$SPS_CACHE/packages/$sget_package-$sget_version-$sget_release-$sget_arch.pkg.tar
             sget_artifact=
             for sget_candidate in "$sget_cache_base.zst" "$sget_cache_base.xz" \
@@ -401,18 +449,35 @@ sget_install()
                 sget_verify_artifact_identity "$sget_artifact" "$sget_package" \
                     "$sget_version" "$sget_release" "$sget_arch" ||
                     sps_die "$SPS_EX_PACKAGE" "cached artifact identity is invalid for '$sget_package': $sget_artifact"
-                printf 'using cached %s\n' "${sget_artifact##*/}"
+                sget_note "binary cache hit"
+                printf '%s: using cached %s\n' "$sps_prog" "${sget_artifact##*/}"
             else
-                sget_mkpkg_output=$(cd "$sget_recipe_dir" &&
-                                    mkpkg --output "$SPS_CACHE/packages" "./$sget_recipe_name")
-                sget_mkpkg_status=$?
-                [ "$sget_mkpkg_status" -eq 0 ] ||
-                    sps_die "$SPS_EX_BUILD" "build failed for '$sget_package'"
-                sget_artifact=$(printf '%s\n' "$sget_mkpkg_output" |
-                               awk 'NF { result = $0 } END { print result }')
+                sget_note "binary cache miss"
+                sget_note "building $sget_recipe_dir"
+                sget_artifact_file=$sget_work/artifact-$sget_package
+                sget_build_log=$sget_work/build-$sget_package.log
+                if [ "${sget_quiet:-0}" -eq 1 ]; then
+                    if (CDPATH= cd "$sget_recipe_dir" &&
+                        mkpkg --artifact-file "$sget_artifact_file" \
+                            --output "$SPS_CACHE/packages" "./$sget_recipe_name" \
+                            >"$sget_build_log" 2>&1)
+                    then
+                        :
+                    else
+                        [ ! -s "$sget_build_log" ] || cat "$sget_build_log" >&2
+                        sps_die "$SPS_EX_BUILD" \
+                            "failed to build $sget_package $sget_version-$sget_release"
+                    fi
+                else
+                    (CDPATH= cd "$sget_recipe_dir" &&
+                     mkpkg --artifact-file "$sget_artifact_file" \
+                         --output "$SPS_CACHE/packages" "./$sget_recipe_name") ||
+                        sps_die "$SPS_EX_BUILD" \
+                            "failed to build $sget_package $sget_version-$sget_release"
+                fi
+                sget_artifact=$(sed -n '1p' "$sget_artifact_file" 2>/dev/null) || sget_artifact=
                 [ -n "$sget_artifact" ] ||
                     sps_die "$SPS_EX_BUILD" "mkpkg did not report an artifact for '$sget_package'"
-                case $sget_artifact in /*) ;; *) sget_artifact=$sget_recipe_dir/$sget_artifact ;; esac
                 [ -f "$sget_artifact" ] ||
                     sps_die "$SPS_EX_BUILD" "mkpkg artifact for '$sget_package' is missing: $sget_artifact"
                 sget_verify_artifact_identity "$sget_artifact" "$sget_package" \
@@ -449,6 +514,8 @@ sget_upgrade()
         case $1 in
             --plan) sget_upgrade_plan=1 ;;
             --downgrade) sget_upgrade_downgrade=1 ;;
+            -q|--quiet) sget_quiet=1 ;;
+            -v|--verbose) sget_verbose=1 ;;
             *) sget_usage >&2; exit "$SPS_EX_USAGE" ;;
         esac
         shift
@@ -477,6 +544,8 @@ sget_remove()
         case $1 in
             --plan) sget_remove_plan=1; shift ;;
             --nodeps) sget_remove_nodeps=1; shift ;;
+            -q|--quiet) sget_quiet=1; shift ;;
+            -v|--verbose) sget_verbose=1; shift ;;
             --) shift; break ;;
             -*) sps_die "$SPS_EX_USAGE" "unknown option '$1'" ;;
             *) break ;;
@@ -577,6 +646,22 @@ sget_remove()
 
 # Keep a whole sget install/upgrade/remove from interleaving with another one.
 # Low-level tools still use their shorter database lock. Queries and plans do not.
+sget_quiet=0
+sget_verbose=0
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -q|--quiet) sget_quiet=1; shift ;;
+        -v|--verbose) sget_verbose=1; shift ;;
+        -h|--help) sget_usage; exit 0 ;;
+        --) shift; break ;;
+        -*)
+            sget_usage >&2
+            exit "$SPS_EX_USAGE"
+            ;;
+        *) break ;;
+    esac
+done
+
 sget_top_command=${1-}
 case $sget_top_command in
     install|upgrade|remove)

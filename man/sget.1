@@ -3,14 +3,14 @@
 sget \- resolve and coordinate SPS source packages
 .SH SYNOPSIS
 .nf
-sget search PATTERN [--raw]
-sget info PACKAGE [--raw]
-sget depends PACKAGE [--raw] [--build]
-sget dependees PACKAGE [--build]
-sget why PACKAGE DEPENDENCY [--build]
-sget install [--plan] [--nodeps] [--reinstall] PACKAGE...
-sget upgrade [--plan] [--downgrade]
-sget remove [--plan] [--nodeps] PACKAGE...
+sget [-q|--quiet] [-v|--verbose] search PATTERN [--raw]
+sget [-q|--quiet] [-v|--verbose] info PACKAGE [--raw]
+sget [-q|--quiet] [-v|--verbose] depends PACKAGE [--raw] [--build]
+sget [-q|--quiet] [-v|--verbose] dependees PACKAGE [--build]
+sget [-q|--quiet] [-v|--verbose] why PACKAGE DEPENDENCY [--build]
+sget [-q|--quiet] [-v|--verbose] install [--plan] [--nodeps] [--reinstall] PACKAGE...
+sget [-q|--quiet] [-v|--verbose] upgrade [--plan] [--downgrade]
+sget [-q|--quiet] [-v|--verbose] remove [--plan] [--nodeps] PACKAGE...
 .fi
 .SH DESCRIPTION
 .B sget
@@ -21,6 +21,16 @@ resolves package graphs, calls
 when a binary artifact is not already cached, and hands archives to
 .BR pkin (1).
 It does not refresh repositories implicitly.
+.PP
+During install and upgrade,
+.B sget
+prints one line for the package being processed, then runs
+.BR mkpkg (1)
+with the terminal attached so compiler and build-system output appear live.
+.B mkpkg
+reports the finished archive;
+.BR pkin (1)
+reports installation. An exact cached archive is reused without a build.
 .SH COMMANDS
 .TP
 .BI search " pattern"
@@ -65,6 +75,19 @@ Remove packages through
 By default SPS refuses a removal when another installed package outside the
 requested removal set directly requires it.
 .SH OPTIONS
+.TP
+.BR -q ", " --quiet
+Hide routine
+.B mkpkg
+status and upstream build output. Package-level
+.B sget
+and
+.B pkin
+lines remain. If a build fails, the captured log is written to stderr.
+.TP
+.BR -v ", " --verbose
+Print resolver decisions such as selected recipes, already-satisfied
+dependencies, and binary cache hits or misses.
 .TP
 .B --plan
 Print package-level actions without building, installing, removing, or changing
