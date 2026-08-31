@@ -33,6 +33,7 @@ sps_load_config
 [ "$SPS_DB" = "$test_root/state/db" ]
 [ "$SPS_CACHE" = "$test_root/state/cache" ]
 [ "$SPS_BUILD" = "$test_root/state/build" ]
+[ "$SPS_REPO_ROOT" = "$test_root/usr/src/sps" ]
 [ "$SPS_MAKEJOBS" = 3 ]
 [ "$SPS_ARCH" = test-arch ]
 [ "$SPS_PRESERVE" = etc,usr/local/etc ]

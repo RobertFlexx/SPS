@@ -3,10 +3,6 @@ set -eu
 
 case $0 in */*) test_dir=${0%/*} ;; *) test_dir=. ;; esac
 project_dir=$(CDPATH= cd "$test_dir/.." 2>/dev/null && pwd)
-if [ ! -r "$project_dir/lib/common.sh" ]; then
-    printf '%s\n' 'repository tests skipped: lib/common.sh is not integrated'
-    exit 0
-fi
 
 fail()
 {
@@ -22,96 +18,99 @@ contains()
     esac
 }
 
+expect_update_failure()
+{
+    expected=$1
+    if "$src" update >"$tmp/failure.out" 2>"$tmp/failure.err"; then
+        fail "repository update unexpectedly succeeded: $expected"
+    fi
+    contains "$(sed -n '1,30p' "$tmp/failure.err")" "$expected"
+}
+
+write_recipe()
+{
+    recipe_path=$1
+    recipe_name=$2
+    recipe_version=$3
+    shift 3
+    mkdir -p "${recipe_path%/*}"
+    {
+        printf 'name %s\n' "$recipe_name"
+        printf 'version %s\n' "$recipe_version"
+        printf '%s\n' 'release 1'
+        printf 'description Repository test package %s\n' "$recipe_name"
+        for recipe_field
+        do
+            printf '%s\n' "$recipe_field"
+        done
+        printf '%s\n' 'install true'
+    } >"$recipe_path"
+}
+
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sps-repository.XXXXXX")
 trap 'rm -rf "$tmp"' 0 1 2 3 15
 
 mkdir -p "$tmp/root" "$tmp/cache" "$tmp/db" "$tmp/build" \
-    "$tmp/core/base/alpha" "$tmp/core/base/tie" "$tmp/core/z/tie" \
-    "$tmp/extra/apps/alpha" "$tmp/later/apps/tie"
-: > "$tmp/sps.conf"
+    "$tmp/core/base" "$tmp/extra/apps" "$tmp/later/apps"
+: >"$tmp/sps.conf"
+
+write_recipe "$tmp/core/base/alpha/recipe" alpha 1.0 'depend tie'
+write_recipe "$tmp/core/base/tie/recipe" tie 1.0
+write_recipe "$tmp/extra/apps/alpha/recipe" alpha 2.0 \
+    'optional unavailable-optional'
+write_recipe "$tmp/later/apps/tie/recipe" tie 9.0
+
+# Support trees may legitimately contain a file named recipe; they are data,
+# not additional package definitions.
+for support in files patches hooks .git; do
+    mkdir -p "$tmp/core/base/alpha/$support/nested"
+    printf '%s\n' 'this is not package metadata' \
+        >"$tmp/core/base/alpha/$support/nested/recipe"
+done
 
 {
-    printf '%s\n' 'name alpha'
-    printf '%s\n' 'version 1.0'
-    printf '%s\n' 'release 1'
-    printf '%s\n' 'description Core alpha'
-    printf '%s\n' 'depend tie'
-    printf '%s\n' 'install true'
-} > "$tmp/core/base/alpha/recipe"
-{
-    printf '%s\n' 'name tie'
-    printf '%s\n' 'version 1.0'
-    printf '%s\n' 'release 1'
-    printf '%s\n' 'description First configured tie'
-    printf '%s\n' 'install true'
-} > "$tmp/core/base/tie/recipe"
-{
-    printf '%s\n' 'name tie'
-    printf '%s\n' 'version 8.0'
-    printf '%s\n' 'release 1'
-    printf '%s\n' 'description Later path in the same repository'
-    printf '%s\n' 'install true'
-} > "$tmp/core/z/tie/recipe"
-{
-    printf '%s\n' 'name alpha'
-    printf '%s\n' 'version 2.0'
-    printf '%s\n' 'release 3'
-    printf '%s\n' 'description Alpha override \'
-    printf '%s\n' '  from the local repository'
-    printf '%s\n' 'install true'
-} > "$tmp/extra/apps/alpha/recipe"
-{
-    printf '%s\n' 'name tie'
-    printf '%s\n' 'version 9.0'
-    printf '%s\n' 'release 1'
-    printf '%s\n' 'description Later configured tie'
-    printf '%s\n' 'install true'
-} > "$tmp/later/apps/tie/recipe"
-
-{
-    printf 'repo core %s 10\n' "$tmp/core"
-    printf 'repo extra %s 20\n' "$tmp/extra"
+    printf 'dir core %s 10\n' "$tmp/core"
+    printf 'dir extra %s 20\n' "$tmp/extra"
     printf 'repo later %s 10\n' "$tmp/later"
-} > "$tmp/repos.conf"
+} >"$tmp/repos.conf"
 
 SPS_ROOT=$tmp/root
 SPS_DB=$tmp/db
 SPS_CACHE=$tmp/cache
 SPS_BUILD=$tmp/build
+SPS_REPO_ROOT=$tmp/checkouts
 SPS_CONFIG=$tmp/sps.conf
 SPS_REPOS_CONFIG=$tmp/repos.conf
-export SPS_ROOT SPS_DB SPS_CACHE SPS_BUILD SPS_CONFIG SPS_REPOS_CONFIG
+export SPS_ROOT SPS_DB SPS_CACHE SPS_BUILD SPS_REPO_ROOT SPS_CONFIG
+export SPS_REPOS_CONFIG
 
 src=$project_dir/bin/src
 update_output=$("$src" update)
-contains "$update_output" 'updated 3 repositories, 5 package records'
+contains "$update_output" 'updated 3 repositories, 4 package records'
 
 index=$tmp/cache/indexes/packages.index
 [ -r "$index" ] || fail 'aggregate index was not created'
-awk -F '	' 'NF != 12 { bad = 1 }
-             END { exit bad || NR != 5 }' "$index" ||
-    fail 'aggregate index does not contain five valid 12-field records'
+awk -F '\t' 'NF != 12 { bad = 1 }
+             END { exit bad || NR != 4 }' "$index" ||
+    fail 'aggregate index does not contain four valid records'
 
 alpha_raw=$("$src" show alpha --raw)
-[ "$(printf '%s\n' "$alpha_raw" | awk -F '	' '{ print $8 }')" = extra ] ||
+[ "$(printf '%s\n' "$alpha_raw" | awk -F '\t' '{ print $8 }')" = extra ] ||
     fail 'higher-priority repository did not win'
-[ "$(printf '%s\n' "$alpha_raw" | awk -F '	' '{ print $2 "-" $3 }')" = 2.0-3 ] ||
+[ "$(printf '%s\n' "$alpha_raw" | awk -F '\t' '{ print $2 "-" $3 }')" = 2.0-1 ] ||
     fail 'selected package version is wrong'
 
 tie_raw=$("$src" show tie --raw)
-[ "$(printf '%s\n' "$tie_raw" | awk -F '	' '{ print $8 }')" = core ] ||
-    fail 'repository configuration order did not break an equal-priority tie'
-[ "$(printf '%s\n' "$tie_raw" | awk -F '	' '{ print $10 }')" = \
-   "$tmp/core/base/tie/recipe" ] ||
-    fail 'recipe path order did not break an equal-priority intra-repository tie'
+[ "$(printf '%s\n' "$tie_raw" | awk -F '\t' '{ print $8 }')" = core ] ||
+    fail 'configuration order did not break an equal-priority cross-repository tie'
 
-search_output=$("$src" search 'LOCAL REPOSITORY')
+search_output=$("$src" search 'REPOSITORY TEST')
 contains "$search_output" 'alpha'
-contains "$search_output" 'extra'
+contains "$search_output" 'tie'
 
 show_output=$("$src" show alpha)
-contains "$show_output" 'description: Alpha override'
 contains "$show_output" 'repository: extra'
+contains "$show_output" 'optional dependencies: unavailable-optional'
 
 which_output=$("$src" which alpha)
 contains "$which_output" 'selected: extra'
@@ -120,18 +119,84 @@ contains "$which_output" 'core'
 
 list_output=$("$src" list)
 contains "$list_output" 'core'
+contains "$list_output" 'dir'
 contains "$list_output" 'priority 20'
+list_raw=$("$src" list --raw)
+[ "$(printf '%s\n' "$list_raw" | awk -F '\t' 'NR == 3 { print $1 }')" = dir ] ||
+    fail 'repo compatibility alias was not normalized to dir'
 status_output=$("$src" status)
-contains "$status_output" 'core: 3 packages'
+contains "$status_output" 'core: 2 packages'
 contains "$status_output" 'extra: 1 packages'
 
 old_index=$(cksum "$index")
-printf 'repo remote https://example.invalid/sps 100\n' >> "$tmp/repos.conf"
-if "$src" update > "$tmp/remote.out" 2> "$tmp/remote.err"; then
-    fail 'remote repository unexpectedly succeeded in SPS 1.0'
-fi
-contains "$(sed -n '1,20p' "$tmp/remote.err")" 'unsupported remote location'
-[ "$(cksum "$index")" = "$old_index" ] ||
-    fail 'a failed update replaced the previous aggregate index'
+cp "$tmp/repos.conf" "$tmp/repos.good"
 
+printf '%s\n' 'dir malformed' >>"$tmp/repos.conf"
+expect_update_failure "expected 'git NAME SOURCE"
+[ "$(cksum "$index")" = "$old_index" ] ||
+    fail 'malformed configuration replaced the previous index'
+cp "$tmp/repos.good" "$tmp/repos.conf"
+
+printf 'dir too-many %s 1 trailing-field\n' "$tmp/core" >>"$tmp/repos.conf"
+expect_update_failure "expected 'git NAME SOURCE"
+cp "$tmp/repos.good" "$tmp/repos.conf"
+
+printf '%s\n' 'dir relative relative/path 1' >>"$tmp/repos.conf"
+expect_update_failure 'requires an absolute path'
+cp "$tmp/repos.good" "$tmp/repos.conf"
+
+printf 'dir bad-priority %s high\n' "$tmp/core" >>"$tmp/repos.conf"
+expect_update_failure "invalid priority 'high'"
+cp "$tmp/repos.good" "$tmp/repos.conf"
+
+printf 'dir huge %s 2147483648\n' "$tmp/core" >>"$tmp/repos.conf"
+expect_update_failure 'priority out of range'
+cp "$tmp/repos.good" "$tmp/repos.conf"
+
+printf 'dir core %s 30\n' "$tmp/core" >>"$tmp/repos.conf"
+expect_update_failure "duplicate repository 'core'"
+cp "$tmp/repos.good" "$tmp/repos.conf"
+
+printf 'bogus bad %s 1\n' "$tmp/core" >>"$tmp/repos.conf"
+expect_update_failure "expected 'git NAME SOURCE"
+cp "$tmp/repos.good" "$tmp/repos.conf"
+
+printf '%s\n' \
+    'git credential https://reader:supersecret123@example.invalid/packages.git 1' \
+    >>"$tmp/repos.conf"
+expect_update_failure 'credential-bearing HTTP(S) Git source'
+if grep -F 'supersecret123' "$tmp/failure.err" >/dev/null; then
+    fail 'credential-bearing Git source was repeated in an error'
+fi
+cp "$tmp/repos.good" "$tmp/repos.conf"
+
+write_recipe "$tmp/core/other/tie/recipe" tie 3.0
+expect_update_failure "duplicate package 'tie' in repository 'core'"
+[ "$(cksum "$index")" = "$old_index" ] ||
+    fail 'duplicate package replaced the previous index'
+rm -rf "$tmp/core/other"
+
+write_recipe "$tmp/core/base/broken-runtime/recipe" broken-runtime 1.0 \
+    'depend unavailable-runtime'
+expect_update_failure "dependency 'unavailable-runtime'"
+[ "$(cksum "$index")" = "$old_index" ] ||
+    fail 'missing dependency replaced the previous index'
+rm -rf "$tmp/core/base/broken-runtime"
+
+write_recipe "$tmp/core/base/broken-build/recipe" broken-build 1.0 \
+    'builddep unavailable-build'
+expect_update_failure "dependency 'unavailable-build'"
+rm -rf "$tmp/core/base/broken-build"
+
+write_recipe "$tmp/core/base/cycle-a/recipe" cycle-a 1.0 'depend cycle-b'
+write_recipe "$tmp/core/base/cycle-b/recipe" cycle-b 1.0 'depend cycle-a'
+expect_update_failure 'dependency cycle:'
+rm -rf "$tmp/core/base/cycle-a" "$tmp/core/base/cycle-b"
+
+mkdir "$tmp/cache/.src-update"
+printf '%s\n' $$ >"$tmp/cache/.src-update/pid"
+expect_update_failure 'another repository update is active'
+rm -rf "$tmp/cache/.src-update"
+
+"$src" update >/dev/null || fail 'repository did not recover after failed updates'
 printf '%s\n' 'repository and query tests passed'

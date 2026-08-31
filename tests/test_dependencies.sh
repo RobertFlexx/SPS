@@ -27,7 +27,7 @@ trap 'rm -rf "$tmp"' 0 1 2 3 15
 
 mkdir -p "$tmp/root" "$tmp/cache" "$tmp/db/installed" "$tmp/build" \
     "$tmp/repo/base" "$tmp/repo/lib" "$tmp/repo/tool" "$tmp/repo/app" \
-    "$tmp/repo/broken" "$tmp/repo/cycle-a" "$tmp/repo/cycle-b" \
+    "$tmp/repo/left" "$tmp/repo/right" "$tmp/repo/diamond" \
     "$tmp/fakebin"
 : > "$tmp/sps.conf"
 printf 'repo test %s 10\n' "$tmp/repo" > "$tmp/repos.conf"
@@ -55,9 +55,14 @@ make_recipe "$tmp/repo/base" base 1.0
 make_recipe "$tmp/repo/lib" lib 2.1 'depend base>=1.0'
 make_recipe "$tmp/repo/tool" tool 3.0
 make_recipe "$tmp/repo/app" app 4.0 'depend lib>=2.0' 'builddep tool'
-make_recipe "$tmp/repo/broken" broken 1.0 'depend unavailable'
-make_recipe "$tmp/repo/cycle-a" cycle-a 1.0 'depend cycle-b'
-make_recipe "$tmp/repo/cycle-b" cycle-b 1.0 'depend cycle-a'
+make_recipe "$tmp/repo/left" left 1.0 'depend base'
+make_recipe "$tmp/repo/right" right 1.0 'depend base'
+make_recipe "$tmp/repo/diamond" diamond 1.0 'depend right left'
+mkdir -p "$tmp/repo/app/files" "$tmp/repo/app/patches" \
+    "$tmp/repo/app/hooks"
+printf '%s\n' 'default=true' >"$tmp/repo/app/files/app.conf"
+printf '%s\n' 'initial patch input' >"$tmp/repo/app/patches/build.patch"
+printf '%s\n' 'exit 0' >"$tmp/repo/app/hooks/post-install"
 
 SPS_ROOT=$tmp/root
 SPS_DB=$tmp/db
@@ -82,6 +87,10 @@ esac
 tree_with_build=$("$sget" depends app --build)
 contains "$tree_with_build" 'tool'
 
+why_path=$("$sget" why diamond base)
+[ "$why_path" = "$(printf 'diamond\nright\nbase')" ] ||
+    fail "dependency path did not follow deterministic declaration order: $why_path"
+
 plan=$("$sget" install --plan app)
 plan_names=$(printf '%s\n' "$plan" |
     awk '/^  / { print $2 }')
@@ -95,15 +104,30 @@ nodeps_names=$(printf '%s\n' "$nodeps_plan" |
 [ "$nodeps_names" = app ] ||
     fail '--nodeps did not restrict the plan to the requested package'
 
-if "$sget" install --plan broken > "$tmp/broken.out" 2> "$tmp/broken.err"; then
-    fail 'missing dependency unexpectedly resolved'
+# src validates the complete selected runtime/build graph before replacing the
+# usable index. These fixtures exercise the same resolver used by sget.
+index=$tmp/cache/indexes/packages.index
+old_index=$(cksum "$index")
+mkdir "$tmp/repo/broken"
+make_recipe "$tmp/repo/broken" broken 1.0 'depend unavailable'
+if "$src" update > "$tmp/broken.out" 2> "$tmp/broken.err"; then
+    fail 'repository with a missing dependency unexpectedly indexed'
 fi
 contains "$(sed -n '1,20p' "$tmp/broken.err")" "dependency 'unavailable'"
+[ "$(cksum "$index")" = "$old_index" ] ||
+    fail 'missing dependency replaced the previous repository index'
+rm -rf "$tmp/repo/broken"
 
-if "$sget" install --plan cycle-a > "$tmp/cycle.out" 2> "$tmp/cycle.err"; then
-    fail 'dependency cycle unexpectedly resolved'
+mkdir "$tmp/repo/cycle-a" "$tmp/repo/cycle-b"
+make_recipe "$tmp/repo/cycle-a" cycle-a 1.0 'depend cycle-b'
+make_recipe "$tmp/repo/cycle-b" cycle-b 1.0 'depend cycle-a'
+if "$src" update > "$tmp/cycle.out" 2> "$tmp/cycle.err"; then
+    fail 'repository dependency cycle unexpectedly indexed'
 fi
 contains "$(sed -n '1,20p' "$tmp/cycle.err")" 'dependency cycle:'
+[ "$(cksum "$index")" = "$old_index" ] ||
+    fail 'dependency cycle replaced the previous repository index'
+rm -rf "$tmp/repo/cycle-a" "$tmp/repo/cycle-b"
 
 [ "$(awk -v version_action=compare -v version_a=1.10 -v version_b=1.9 \
     -f "$project_dir/lib/version.awk" /dev/null)" = 1 ] ||
@@ -182,14 +206,42 @@ PATH="$tmp/fakebin:$PATH" "$sget" install app > "$tmp/install.out"
                   END { print count + 0 }' "$TEST_LOG")" = 1 ] ||
     fail 'requested package was not passed to pkin with explicit reason'
 
+mkdir -p "$tmp/cache/packages"
+app_arch=$(uname -m)
+app_cache=$tmp/cache/packages/app-4.0-1-$app_arch.pkg.tar
+cp "$tmp/repo/app/app-4.0-1-$app_arch.pkg.tar" "$app_cache" ||
+    fail 'could not prepare cached app artifact for stale-input tests'
+
 old_log_lines=$(wc -l < "$TEST_LOG" | awk '{ print $1 }')
+expect_stale_definition()
+{
+    stale_label=$1
+    if PATH="$tmp/fakebin:$PATH" "$sget" install --nodeps app \
+        > "$tmp/stale-$stale_label.out" 2> "$tmp/stale-$stale_label.err"; then
+        fail "sget reused or built an artifact after a stale $stale_label change"
+    fi
+    contains "$(sed -n '1,20p' "$tmp/stale-$stale_label.err")" \
+        'changed since indexing'
+    [ "$(wc -l < "$TEST_LOG" | awk '{ print $1 }')" = "$old_log_lines" ] ||
+        fail "mkpkg or pkin ran after stale $stale_label detection"
+    case $(cat "$tmp/stale-$stale_label.out") in
+        *'using cached'*) fail "cached artifact was considered before stale $stale_label detection" ;;
+    esac
+}
+
+printf '%s\n' 'local override=true' >>"$tmp/repo/app/files/app.conf"
+expect_stale_definition file
+"$src" update >/dev/null
+
+printf '%s\n' 'changed patch input' >>"$tmp/repo/app/patches/build.patch"
+expect_stale_definition patch
+"$src" update >/dev/null
+
+printf '%s\n' 'changed hook input' >>"$tmp/repo/app/hooks/post-install"
+expect_stale_definition hook
+"$src" update >/dev/null
+
 printf '%s\n' '# changed after indexing' >> "$tmp/repo/app/recipe"
-if PATH="$tmp/fakebin:$PATH" "$sget" install --nodeps app \
-    > "$tmp/stale.out" 2> "$tmp/stale.err"; then
-    fail 'sget built a recipe that changed after indexing'
-fi
-contains "$(sed -n '1,20p' "$tmp/stale.err")" 'changed since indexing'
-[ "$(wc -l < "$TEST_LOG" | awk '{ print $1 }')" = "$old_log_lines" ] ||
-    fail 'mkpkg or pkin ran after stale recipe detection'
+expect_stale_definition recipe
 
 printf '%s\n' 'dependency resolution and install orchestration tests passed'
