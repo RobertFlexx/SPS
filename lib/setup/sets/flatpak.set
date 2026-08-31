@@ -1,0 +1,9 @@
+name        flatpak
+title       Flatpak
+description Flatpak, bubblewrap, and the Flathub remote (added after install if selected).
+default     0
+package     flatpak
+package     bubblewrap
+package     xdg-dbus-proxy
+package     ostree
+package     xdg-desktop-portal

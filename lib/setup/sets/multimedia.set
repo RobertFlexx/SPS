@@ -1,0 +1,13 @@
+name        multimedia
+title       Multimedia
+description PipeWire, WirePlumber, FFmpeg, and desktop audio/video libraries.
+default     0
+package     pipewire
+package     wireplumber
+package     ffmpeg
+package     gstreamer
+package     gst-plugins-base
+package     gst-plugins-good
+package     alsa-lib
+package     alsa-utils
+package     vulkan-loader

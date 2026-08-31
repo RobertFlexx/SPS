@@ -1,0 +1,7 @@
+name        wifi
+title       Wireless
+description iwd, wpa_supplicant, and iw.
+default     0
+package     iwd
+package     wpa_supplicant
+package     iw

@@ -6,7 +6,7 @@ MANDIR = $(PREFIX)/share/man
 SYSCONFDIR = /etc/sps
 DESTDIR =
 
-PROGRAMS = src sget mkpkg pkin pkdel pkstat pkcheck pkmark
+PROGRAMS = src sget mkpkg pkin pkdel pkstat pkcheck pkmark setup mkiso
 AWK_LIBS = common.awk config.awk db.awk deps.awk index.awk package.awk recipe.awk repository.awk relations.awk version.awk
 
 .PHONY: all check lint check-version source-archive release-check \
@@ -147,6 +147,27 @@ install:
 	done
 	@set -e; for page in man/*.5; do \
 		install -m 0644 $$page "$(DESTDIR)$(MANDIR)/man5/$${page##*/}"; \
+	done
+	install -d "$(DESTDIR)$(LIBDIR)/setup/profiles" \
+		"$(DESTDIR)$(LIBDIR)/setup/sets"
+	install -m 0644 lib/setup/keymaps lib/setup/timezones \
+		lib/setup/locales lib/setup/shells lib/setup/extras \
+		"$(DESTDIR)$(LIBDIR)/setup/"
+	@set -e; for f in lib/setup/profiles/*.profile; do \
+		install -m 0644 $$f "$(DESTDIR)$(LIBDIR)/setup/profiles/"; \
+	done
+	@set -e; for f in lib/setup/sets/*.set; do \
+		install -m 0644 $$f "$(DESTDIR)$(LIBDIR)/setup/sets/"; \
+	done
+	install -d "$(DESTDIR)$(LIBDIR)/mkiso"
+	@set -e; for f in lib/mkiso/*; do \
+		[ -f "$$f" ] || continue; \
+		case $$f in \
+			*/live-init|*/initrd-init) \
+				install -m 0755 $$f "$(DESTDIR)$(LIBDIR)/mkiso/" ;; \
+			*) \
+				install -m 0644 $$f "$(DESTDIR)$(LIBDIR)/mkiso/" ;; \
+		esac; \
 	done
 
 # Configuration is separate so installation never overwrites administrator

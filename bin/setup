@@ -1,0 +1,1014 @@
+#!/bin/sh
+# SPS system installer. Interactive screens use dialog(1); every choice is
+# also available as a command-line option for scripts and tests.
+
+sps_prog=setup
+sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
+if [ -z "${SPS_LIBDIR+x}" ]; then
+	if [ -r "$sps_bin_dir/../lib/common.sh" ]; then
+		SPS_LIBDIR=$sps_bin_dir/../lib
+	else
+		SPS_LIBDIR=$sps_bin_dir/../lib/sps
+	fi
+fi
+if ! . "$SPS_LIBDIR/common.sh"; then
+	printf '%s\n' "setup: cannot load $SPS_LIBDIR/common.sh" >&2
+	exit 1
+fi
+sps_load_config || exit $?
+
+setup_usage()
+{
+	cat <<'EOF'
+usage: setup [options]
+
+Install an SPS system into a target root using dialog(1) screens, or the
+same choices from the command line.
+
+options:
+  --target DIR              installation root (SPS_ROOT)
+  --profile NAME            minimal, server, plasma-desktop, or plasma-full
+  --enable SET[,SET...]     extra sets (repeatable)
+  --disable SET[,SET...]    extra sets to leave off (repeatable)
+  --hostname NAME
+  --timezone ZONE           e.g. UTC or America/Los_Angeles
+  --keymap MAP              e.g. us, uk, de, dvorak
+  --locale NAME             e.g. C.UTF-8 or en_US.UTF-8
+  --shell PATH              login shell for the first user
+  --user NAME               first unprivileged user (uid 1000)
+  --user-gecos TEXT
+  --extra PKG[,PKG...]      individual packages in addition to sets
+  --ssh yes|no              include the ssh set (OpenSSH)
+  --printing yes|no         include the printing set (CUPS)
+  --flatpak yes|no          add Flathub after install when flatpak is present
+  --nvidia yes|no           include the nvidia set
+  --bootloader none|grub    write bootloader notes; never runs grub-install
+  --install-bootloader      actually run grub-install (explicit, dangerous)
+  --update|--no-update      run or skip src update before installing
+  --non-interactive         do not start dialog; all choices from options
+  --plan                    print the package list and exit
+  --write-answers FILE      write the resolved answers
+  --read-answers FILE       load answers (options override file values)
+  --list-profiles
+  --list-sets
+  -h, --help
+EOF
+}
+
+setup_dir=${SPS_SETUP_DIR:-$SPS_LIBDIR/setup}
+setup_work=
+setup_interactive=1
+setup_plan=0
+setup_list_profiles=0
+setup_list_sets=0
+setup_do_update=1
+setup_install_bootloader=0
+setup_target=
+setup_profile=
+setup_hostname=
+setup_timezone=
+setup_keymap=
+setup_locale=
+setup_shell=
+setup_user=
+setup_user_gecos=
+setup_extra=
+setup_ssh=
+setup_printing=
+setup_flatpak=
+setup_nvidia=
+setup_bootloader=none
+setup_answers_in=
+setup_answers_out=
+setup_enable=
+setup_disable=
+
+setup_cleanup()
+{
+	if [ -n "$setup_work" ] && [ -d "$setup_work" ]; then
+		rm -rf "$setup_work"
+	fi
+}
+
+setup_fail()
+{
+	setup_code=$1
+	shift
+	printf '%s: %s\n' "$sps_prog" "$*" >&2
+	exit "$setup_code"
+}
+
+setup_need_value()
+{
+	[ "$#" -ge 2 ] && [ -n "${2-}" ] ||
+		setup_fail "$SPS_EX_USAGE" "option '$1' requires an argument"
+}
+
+setup_append_csv()
+{
+	setup_dest=$1
+	setup_csv=$2
+	setup_old=$3
+	setup_item=
+	setup_rest=$setup_csv,
+	while [ -n "$setup_rest" ]; do
+		setup_item=${setup_rest%%,*}
+		setup_rest=${setup_rest#*,}
+		[ -n "$setup_item" ] || continue
+		case " $setup_old " in
+			*" $setup_item "*) ;;
+			*) setup_old="$setup_old $setup_item" ;;
+		esac
+	done
+	eval "$setup_dest=\"\$(printf '%s' \"\$setup_old\" | sed 's/^ //')\""
+}
+
+while [ "$#" -gt 0 ]; do
+	case $1 in
+		-h|--help)
+			setup_usage
+			exit 0
+			;;
+		--target)
+			setup_need_value "$@"
+			setup_target=$2
+			shift 2
+			;;
+		--profile)
+			setup_need_value "$@"
+			setup_profile=$2
+			shift 2
+			;;
+		--enable)
+			setup_need_value "$@"
+			setup_append_csv setup_enable "$2" "$setup_enable"
+			shift 2
+			;;
+		--disable)
+			setup_need_value "$@"
+			setup_append_csv setup_disable "$2" "$setup_disable"
+			shift 2
+			;;
+		--hostname)
+			setup_need_value "$@"
+			setup_hostname=$2
+			shift 2
+			;;
+		--timezone)
+			setup_need_value "$@"
+			setup_timezone=$2
+			shift 2
+			;;
+		--keymap)
+			setup_need_value "$@"
+			setup_keymap=$2
+			shift 2
+			;;
+		--locale)
+			setup_need_value "$@"
+			setup_locale=$2
+			shift 2
+			;;
+		--shell)
+			setup_need_value "$@"
+			setup_shell=$2
+			shift 2
+			;;
+		--extra)
+			setup_need_value "$@"
+			setup_append_csv setup_extra "$2" "$setup_extra"
+			shift 2
+			;;
+		--ssh)
+			setup_need_value "$@"
+			setup_ssh=$2
+			shift 2
+			;;
+		--printing)
+			setup_need_value "$@"
+			setup_printing=$2
+			shift 2
+			;;
+		--user)
+			setup_need_value "$@"
+			setup_user=$2
+			shift 2
+			;;
+		--user-gecos)
+			setup_need_value "$@"
+			setup_user_gecos=$2
+			shift 2
+			;;
+		--flatpak)
+			setup_need_value "$@"
+			setup_flatpak=$2
+			shift 2
+			;;
+		--nvidia)
+			setup_need_value "$@"
+			setup_nvidia=$2
+			shift 2
+			;;
+		--bootloader)
+			setup_need_value "$@"
+			setup_bootloader=$2
+			shift 2
+			;;
+		--install-bootloader)
+			setup_install_bootloader=1
+			shift
+			;;
+		--update)
+			setup_do_update=1
+			shift
+			;;
+		--no-update)
+			setup_do_update=0
+			shift
+			;;
+		--non-interactive)
+			setup_interactive=0
+			shift
+			;;
+		--plan)
+			setup_plan=1
+			setup_interactive=0
+			shift
+			;;
+		--write-answers)
+			setup_need_value "$@"
+			setup_answers_out=$2
+			shift 2
+			;;
+		--read-answers)
+			setup_need_value "$@"
+			setup_answers_in=$2
+			shift 2
+			;;
+		--list-profiles)
+			setup_list_profiles=1
+			shift
+			;;
+		--list-sets)
+			setup_list_sets=1
+			shift
+			;;
+		--)
+			shift
+			break
+			;;
+		-*)
+			setup_fail "$SPS_EX_USAGE" "unknown option: $1"
+			;;
+		*)
+			setup_fail "$SPS_EX_USAGE" "unexpected argument: $1"
+			;;
+	esac
+done
+
+[ "$#" -eq 0 ] || setup_fail "$SPS_EX_USAGE" "unexpected argument: $1"
+
+setup_field()
+{
+	setup_file=$1
+	setup_key=$2
+	awk -v k="$setup_key" '
+		$1 == k {
+			$1 = ""
+			sub(/^[ \t]+/, "")
+			print
+			exit
+		}
+	' "$setup_file"
+}
+
+setup_packages_from()
+{
+	awk '
+		$1 == "package" {
+			$1 = ""
+			sub(/^[ \t]+/, "")
+			if ($0 != "") print
+		}
+	' "$1"
+}
+
+setup_profile_file()
+{
+	printf '%s/profiles/%s.profile' "$setup_dir" "$1"
+}
+
+setup_set_file()
+{
+	printf '%s/sets/%s.set' "$setup_dir" "$1"
+}
+
+setup_each_profile()
+{
+	setup_p=
+	for setup_p in "$setup_dir"/profiles/*.profile; do
+		[ -f "$setup_p" ] || continue
+		setup_field "$setup_p" name
+	done
+}
+
+setup_each_set()
+{
+	setup_s=
+	for setup_s in "$setup_dir"/sets/*.set; do
+		[ -f "$setup_s" ] || continue
+		setup_field "$setup_s" name
+	done
+}
+
+setup_valid_profile()
+{
+	[ -f "$(setup_profile_file "$1")" ]
+}
+
+setup_valid_set()
+{
+	[ -f "$(setup_set_file "$1")" ]
+}
+
+setup_default_sets_for_profile()
+{
+	setup_ds=
+	setup_sf=
+	for setup_sf in "$setup_dir"/sets/*.set; do
+		[ -f "$setup_sf" ] || continue
+		setup_sn=$(setup_field "$setup_sf" name)
+		setup_def=$(setup_field "$setup_sf" default)
+		[ "$setup_def" = 1 ] || continue
+		case $setup_profile in
+			plasma-desktop|plasma-full)
+				setup_ds="$setup_ds $setup_sn"
+				;;
+			*)
+				# Power defaults on for desktops only.
+				[ "$setup_sn" = power ] && continue
+				[ "$setup_sn" = qol-cli ] &&
+					setup_ds="$setup_ds $setup_sn"
+				;;
+		esac
+	done
+	printf '%s' "$setup_ds" | sed 's/^ //'
+}
+
+if [ "$setup_list_profiles" -eq 1 ]; then
+	for setup_pf in "$setup_dir"/profiles/*.profile; do
+		[ -f "$setup_pf" ] || continue
+		printf '%s\t%s\t%s\n' \
+			"$(setup_field "$setup_pf" name)" \
+			"$(setup_field "$setup_pf" title)" \
+			"$(setup_field "$setup_pf" description)"
+	done
+	exit 0
+fi
+
+if [ "$setup_list_sets" -eq 1 ]; then
+	for setup_sf in "$setup_dir"/sets/*.set; do
+		[ -f "$setup_sf" ] || continue
+		printf '%s\t%s\t%s\n' \
+			"$(setup_field "$setup_sf" name)" \
+			"$(setup_field "$setup_sf" title)" \
+			"$(setup_field "$setup_sf" description)"
+	done
+	exit 0
+fi
+
+setup_load_answers()
+{
+	setup_af=$1
+	[ -f "$setup_af" ] && [ -r "$setup_af" ] ||
+		setup_fail "$SPS_EX_NOTFOUND" "cannot read answers file: $setup_af"
+	while IFS= read -r setup_line || [ -n "$setup_line" ]; do
+		case $setup_line in
+			''|\#*) continue ;;
+		esac
+		setup_ak=${setup_line%% *}
+		setup_av=${setup_line#* }
+		[ "$setup_ak" = "$setup_line" ] && setup_av=
+		case $setup_ak in
+			target) [ -n "$setup_target" ] || setup_target=$setup_av ;;
+			profile) [ -n "$setup_profile" ] || setup_profile=$setup_av ;;
+			hostname) [ -n "$setup_hostname" ] || setup_hostname=$setup_av ;;
+			timezone) [ -n "$setup_timezone" ] || setup_timezone=$setup_av ;;
+			keymap) [ -n "$setup_keymap" ] || setup_keymap=$setup_av ;;
+			locale) [ -n "$setup_locale" ] || setup_locale=$setup_av ;;
+			shell) [ -n "$setup_shell" ] || setup_shell=$setup_av ;;
+			user) [ -n "$setup_user" ] || setup_user=$setup_av ;;
+			user-gecos) [ -n "$setup_user_gecos" ] || setup_user_gecos=$setup_av ;;
+			extra) setup_append_csv setup_extra "$setup_av" "$setup_extra" ;;
+			ssh) [ -n "$setup_ssh" ] || setup_ssh=$setup_av ;;
+			printing) [ -n "$setup_printing" ] || setup_printing=$setup_av ;;
+			flatpak) [ -n "$setup_flatpak" ] || setup_flatpak=$setup_av ;;
+			nvidia) [ -n "$setup_nvidia" ] || setup_nvidia=$setup_av ;;
+			bootloader) [ "$setup_bootloader" = none ] && [ -n "$setup_av" ] && setup_bootloader=$setup_av ;;
+			enable) setup_append_csv setup_enable "$setup_av" "$setup_enable" ;;
+			disable) setup_append_csv setup_disable "$setup_av" "$setup_disable" ;;
+			update)
+				[ "$setup_av" = no ] && setup_do_update=0
+				[ "$setup_av" = yes ] && setup_do_update=1
+				;;
+		esac
+	done <"$setup_af"
+}
+
+[ -z "$setup_answers_in" ] || setup_load_answers "$setup_answers_in"
+
+setup_yesno_norm()
+{
+	case $1 in
+		yes|y|true|1) printf 'yes\n' ;;
+		no|n|false|0|'') printf 'no\n' ;;
+		*) setup_fail "$SPS_EX_USAGE" "expected yes or no, got '$1'" ;;
+	esac
+}
+
+setup_dialog()
+{
+	command -v dialog >/dev/null 2>&1 ||
+		setup_fail "$SPS_EX_PACKAGE" \
+			"dialog is not on PATH; install it or use --non-interactive"
+	dialog --backtitle "SPS Linux installer" --output-fd 1 "$@"
+}
+
+setup_msg()
+{
+	if [ "$setup_interactive" -eq 1 ]; then
+		dialog --backtitle "SPS Linux installer" --msgbox "$1" 12 64 || :
+	else
+		printf '%s\n' "$1"
+	fi
+}
+
+setup_confirm()
+{
+	if [ "$setup_interactive" -eq 1 ]; then
+		dialog --backtitle "SPS Linux installer" --yesno "$1" 14 64
+	else
+		return 0
+	fi
+}
+
+# Interactive defaults when flags were omitted.
+if [ "$setup_interactive" -eq 1 ] && [ ! -t 0 ]; then
+	setup_fail "$SPS_EX_USAGE" \
+		"stdin is not a terminal; use --non-interactive"
+fi
+
+if [ "$setup_interactive" -eq 1 ]; then
+	command -v dialog >/dev/null 2>&1 ||
+		setup_fail "$SPS_EX_PACKAGE" \
+			"dialog is required for interactive setup"
+fi
+
+setup_work=$(sps_mktemp_dir "${TMPDIR:-/tmp}" setup) || exit $?
+trap setup_cleanup 0 HUP INT TERM
+
+if [ "$setup_interactive" -eq 1 ]; then
+	if [ -f /etc/sps/live ]; then
+		setup_msg \
+			"This is the SPS live TTY. Mount the destination filesystem on /mnt first.
+
+Then continue. The installer never partitions disks. Bootloader install is a separate, explicit step."
+	else
+		setup_msg \
+			"This installer configures an SPS root the way Slackware and FreeBSD setup do: a sequence of dialog screens, then a visible package install.
+
+It never partitions disks. Point it at a mounted filesystem. Installing the bootloader is a separate, explicit step."
+	fi
+
+	if [ -z "$setup_target" ]; then
+		setup_target=$(setup_dialog --title "Installation target" \
+			--inputbox "Absolute path of the target root.
+
+Use /mnt after mounting the destination filesystem. / is the live system." \
+			10 64 "${setup_target:-/mnt}") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
+	fi
+
+	if [ -z "$setup_profile" ]; then
+		setup_menu_args=
+		for setup_pf in "$setup_dir"/profiles/*.profile; do
+			[ -f "$setup_pf" ] || continue
+			setup_pn=$(setup_field "$setup_pf" name)
+			setup_pt=$(setup_field "$setup_pf" title)
+			setup_menu_args="$setup_menu_args $setup_pn '$setup_pt'"
+		done
+		setup_profile=$(eval "setup_dialog --title 'Installation profile' \
+			--menu 'Choose a base system.' 16 64 8 $setup_menu_args") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
+	fi
+
+	if [ -z "$setup_hostname" ]; then
+		setup_hostname=$(setup_dialog --title "Hostname" \
+			--inputbox "System hostname." 8 50 "${setup_hostname:-sps}") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
+	fi
+
+	if [ -z "$setup_timezone" ]; then
+		setup_tz_args=
+		while IFS= read -r setup_tz || [ -n "$setup_tz" ]; do
+			[ -n "$setup_tz" ] || continue
+			setup_tz_args="$setup_tz_args $setup_tz '$setup_tz'"
+		done <"$setup_dir/timezones"
+		setup_timezone=$(eval "setup_dialog --title 'Timezone' \
+			--menu 'Select a timezone.' 20 60 12 $setup_tz_args") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
+	fi
+
+	if [ -z "$setup_locale" ]; then
+		setup_loc_args=
+		while IFS= read -r setup_loc || [ -n "$setup_loc" ]; do
+			[ -n "$setup_loc" ] || continue
+			setup_loc_args="$setup_loc_args $setup_loc '$setup_loc'"
+		done <"$setup_dir/locales"
+		setup_locale=$(eval "setup_dialog --title 'Locale' \
+			--menu 'LANG for /etc/locale.conf. C.UTF-8 needs no generated locales.' 20 60 12 $setup_loc_args") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
+	fi
+
+	if [ -z "$setup_keymap" ]; then
+		setup_km_args=
+		while IFS= read -r setup_km || [ -n "$setup_km" ]; do
+			[ -n "$setup_km" ] || continue
+			setup_km_args="$setup_km_args $setup_km '$setup_km'"
+		done <"$setup_dir/keymaps"
+		setup_keymap=$(eval "setup_dialog --title 'Keyboard' \
+			--menu 'Keyboard map for the console.' 18 50 12 $setup_km_args") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
+	fi
+
+	setup_chk_args=
+	for setup_sf in "$setup_dir"/sets/*.set; do
+		[ -f "$setup_sf" ] || continue
+		setup_sn=$(setup_field "$setup_sf" name)
+		setup_st=$(setup_field "$setup_sf" title)
+		setup_sd=$(setup_field "$setup_sf" description)
+		setup_on=off
+		case " $setup_enable " in *" $setup_sn "*) setup_on=on ;; esac
+		if [ -z "$setup_enable" ]; then
+			setup_def=$(setup_field "$setup_sf" default)
+			if [ "$setup_def" = 1 ]; then
+				case $setup_profile in
+					plasma-desktop|plasma-full) setup_on=on ;;
+					*)
+						[ "$setup_sn" = qol-cli ] && setup_on=on
+						;;
+				esac
+			fi
+		fi
+		case " $setup_disable " in *" $setup_sn "*) setup_on=off ;; esac
+		setup_chk_args="$setup_chk_args $setup_sn '$setup_st' $setup_on"
+	done
+	setup_sel=$(eval "setup_dialog --title 'Optional sets' \
+		--checklist 'Space toggles a set. These are installed in addition to the profile.' \
+		20 72 12 $setup_chk_args") ||
+		setup_fail "$SPS_EX_USAGE" "cancelled"
+	setup_enable=
+	# dialog may quote tags
+	set -- $setup_sel
+	for setup_tok; do
+		setup_tok=${setup_tok#\"}
+		setup_tok=${setup_tok%\"}
+		[ -n "$setup_tok" ] || continue
+		setup_append_csv setup_enable "$setup_tok" "$setup_enable"
+	done
+
+	if [ -f "$setup_dir/extras" ]; then
+		setup_ex_args=
+		while IFS= read -r setup_exline || [ -n "$setup_exline" ]; do
+			[ -n "$setup_exline" ] || continue
+			case $setup_exline in \#*) continue ;; esac
+			setup_en=${setup_exline%%	*}
+			setup_et=${setup_exline#*	}
+			[ -n "$setup_en" ] || continue
+			[ "$setup_et" != "$setup_exline" ] || setup_et=$setup_en
+			setup_on=off
+			case " $setup_extra " in *" $setup_en "*) setup_on=on ;; esac
+			setup_ex_args="$setup_ex_args $setup_en '$setup_et' $setup_on"
+		done <"$setup_dir/extras"
+		if [ -n "$setup_ex_args" ]; then
+			setup_sel=$(eval "setup_dialog --title 'Extra packages' \
+				--checklist 'Optional packages on top of the profile and sets. Space toggles an item.' \
+				22 72 14 $setup_ex_args") ||
+				setup_fail "$SPS_EX_USAGE" "cancelled"
+			set -- $setup_sel
+			for setup_tok; do
+				setup_tok=${setup_tok#\"}
+				setup_tok=${setup_tok%\"}
+				[ -n "$setup_tok" ] || continue
+				setup_append_csv setup_extra "$setup_tok" "$setup_extra"
+			done
+		fi
+	fi
+
+	if [ -z "$setup_nvidia" ]; then
+		if setup_dialog --title "NVIDIA" --yesno \
+			"Include NVIDIA open kernel modules and user-space utilities?
+
+This requires a matching kernel on the target and is off by default." 10 64
+		then
+			setup_nvidia=yes
+		else
+			setup_nvidia=no
+		fi
+	fi
+
+	if [ -z "$setup_flatpak" ]; then
+		if setup_dialog --title "Flatpak" --yesno \
+			"Install Flatpak and add the Flathub remote after package installation?" 9 64
+		then
+			setup_flatpak=yes
+		else
+			setup_flatpak=no
+		fi
+	fi
+
+	if [ -z "$setup_user" ]; then
+		setup_user=$(setup_dialog --title "First user" \
+			--inputbox "Unprivileged account (uid 1000). Leave empty to skip." \
+			9 50 "${setup_user:-}") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
+	fi
+
+	if [ -z "$setup_user_gecos" ] && [ -n "$setup_user" ]; then
+		setup_user_gecos=$(setup_dialog --title "User full name" \
+			--inputbox "GECOS / display name for $setup_user." \
+			8 50 "$setup_user") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
+	fi
+
+	if [ -z "$setup_shell" ]; then
+		setup_sh_args=
+		if [ -f "$setup_dir/shells" ]; then
+			while IFS= read -r setup_sh || [ -n "$setup_sh" ]; do
+				[ -n "$setup_sh" ] || continue
+				setup_sh_args="$setup_sh_args $setup_sh '$setup_sh'"
+			done <"$setup_dir/shells"
+		fi
+		[ -n "$setup_sh_args" ] || setup_sh_args="/bin/sh '/bin/sh' /bin/bash '/bin/bash'"
+		setup_shell=$(eval "setup_dialog --title 'Login shell' \
+			--menu 'Login shell for the first user, or the default account later. zsh and fish need the shells-extra set.' 16 64 6 $setup_sh_args") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
+	fi
+
+	setup_dialog --title "Network" --msgbox \
+		"This installer does not configure DHCP, static addresses, or wireless.
+
+After the first boot, put an interface file in /etc/network or use the NetworkManager applet on Plasma. Notes are written to /root/sps-network.txt." 12 64 || :
+
+	setup_dialog --title "Disks" --msgbox \
+		"This installer does not partition, format, or write /etc/fstab.
+
+Mount the destination filesystem on the target path before running setup. Swap and fstab remain administrator work. Notes are written to /root/sps-fstab.txt." 12 64 || :
+
+	setup_bl=$(setup_dialog --title "Bootloader" \
+		--menu "SPS never runs grub-install unless you pass --install-bootloader. The usual choice is to write notes only." \
+		14 64 3 \
+		none "Write /root/sps-bootloader.txt only" \
+		grub "Write GRUB notes (still does not install)") ||
+		setup_fail "$SPS_EX_USAGE" "cancelled"
+	setup_bootloader=$setup_bl
+fi
+
+# Non-interactive defaults
+[ -n "$setup_target" ] || setup_target=/mnt
+[ -n "$setup_profile" ] || setup_profile=minimal
+[ -n "$setup_hostname" ] || setup_hostname=sps
+[ -n "$setup_timezone" ] || setup_timezone=UTC
+[ -n "$setup_keymap" ] || setup_keymap=us
+[ -n "$setup_locale" ] || setup_locale=C.UTF-8
+[ -n "$setup_shell" ] || setup_shell=/bin/sh
+setup_flatpak=$(setup_yesno_norm "${setup_flatpak:-no}")
+setup_nvidia=$(setup_yesno_norm "${setup_nvidia:-no}")
+setup_ssh=$(setup_yesno_norm "${setup_ssh:-no}")
+setup_printing=$(setup_yesno_norm "${setup_printing:-no}")
+case $setup_bootloader in
+	none|grub) ;;
+	*) setup_fail "$SPS_EX_USAGE" "bootloader must be none or grub" ;;
+esac
+
+setup_valid_profile "$setup_profile" ||
+	setup_fail "$SPS_EX_NOTFOUND" "unknown profile: $setup_profile"
+
+case $setup_target in
+	/*) ;;
+	*) setup_fail "$SPS_EX_USAGE" "target must be an absolute path: $setup_target" ;;
+esac
+
+case $setup_hostname in
+	*[!A-Za-z0-9.-]*|'') setup_fail "$SPS_EX_USAGE" "invalid hostname: $setup_hostname" ;;
+esac
+
+case $setup_locale in
+	*[!A-Za-z0-9._+-]*|'') setup_fail "$SPS_EX_USAGE" "invalid locale: $setup_locale" ;;
+esac
+
+case $setup_shell in
+	/*) ;;
+	*) setup_fail "$SPS_EX_USAGE" "shell must be an absolute path: $setup_shell" ;;
+esac
+
+if [ -n "$setup_user" ]; then
+	case $setup_user in
+		*[!a-z0-9_-]*|''|root|nobody)
+			setup_fail "$SPS_EX_USAGE" "invalid user name: $setup_user"
+			;;
+	esac
+fi
+
+# Non-interactive installs start from profile defaults, then --enable.
+if [ "$setup_interactive" -eq 0 ]; then
+	setup_defs=$(setup_default_sets_for_profile)
+	for setup_def in $setup_defs; do
+		setup_append_csv setup_enable "$setup_def" "$setup_enable"
+	done
+fi
+
+# Apply nvidia/flatpak convenience flags to sets.
+if [ "$setup_nvidia" = yes ]; then
+	setup_append_csv setup_enable nvidia "$setup_enable"
+fi
+if [ "$setup_flatpak" = yes ]; then
+	setup_append_csv setup_enable flatpak "$setup_enable"
+fi
+if [ "$setup_ssh" = yes ]; then
+	setup_append_csv setup_enable ssh "$setup_enable"
+fi
+if [ "$setup_printing" = yes ]; then
+	setup_append_csv setup_enable printing "$setup_enable"
+fi
+case $setup_shell in
+	*/zsh|*/fish)
+		setup_append_csv setup_enable shells-extra "$setup_enable"
+		;;
+esac
+
+# --disable wins
+setup_en_new=
+for setup_item in $setup_enable; do
+	setup_skip=0
+	for setup_d in $setup_disable; do
+		[ "$setup_item" = "$setup_d" ] && setup_skip=1
+	done
+	[ "$setup_skip" -eq 0 ] || continue
+	setup_valid_set "$setup_item" ||
+		setup_fail "$SPS_EX_NOTFOUND" "unknown set: $setup_item"
+	setup_en_new="$setup_en_new $setup_item"
+done
+setup_enable=$(printf '%s' "$setup_en_new" | sed 's/^ //')
+
+setup_pkg_file=$setup_work/packages
+: >"$setup_pkg_file"
+setup_add_pkg()
+{
+	setup_pkg=$1
+	[ -n "$setup_pkg" ] || return 0
+	grep -qx "$setup_pkg" "$setup_pkg_file" 2>/dev/null && return 0
+	printf '%s\n' "$setup_pkg" >>"$setup_pkg_file"
+}
+
+setup_packages_from "$(setup_profile_file "$setup_profile")" |
+	while IFS= read -r setup_pkg; do
+		setup_add_pkg "$setup_pkg"
+	done
+
+# The pipeline subshell cannot update the file... actually it can, the file is
+# in the filesystem. setup_add_pkg appends. Good.
+
+for setup_item in $setup_enable; do
+	setup_packages_from "$(setup_set_file "$setup_item")" |
+		while IFS= read -r setup_pkg; do
+			setup_add_pkg "$setup_pkg"
+		done
+done
+
+for setup_item in $setup_extra; do
+	setup_add_pkg "$setup_item"
+done
+
+setup_write_answers_file()
+{
+	setup_out=$1
+	{
+		printf 'target %s\n' "$setup_target"
+		printf 'profile %s\n' "$setup_profile"
+		printf 'hostname %s\n' "$setup_hostname"
+		printf 'timezone %s\n' "$setup_timezone"
+		printf 'keymap %s\n' "$setup_keymap"
+		printf 'locale %s\n' "$setup_locale"
+		printf 'shell %s\n' "$setup_shell"
+		[ -n "$setup_user" ] && printf 'user %s\n' "$setup_user"
+		[ -n "$setup_user_gecos" ] && printf 'user-gecos %s\n' "$setup_user_gecos"
+		printf 'flatpak %s\n' "$setup_flatpak"
+		printf 'nvidia %s\n' "$setup_nvidia"
+		printf 'ssh %s\n' "$setup_ssh"
+		printf 'printing %s\n' "$setup_printing"
+		printf 'bootloader %s\n' "$setup_bootloader"
+		printf 'update %s\n' "$([ "$setup_do_update" -eq 1 ] && printf yes || printf no)"
+		for setup_item in $setup_enable; do
+			printf 'enable %s\n' "$setup_item"
+		done
+		for setup_item in $setup_extra; do
+			printf 'extra %s\n' "$setup_item"
+		done
+	} >"$setup_out"
+}
+
+setup_summary()
+{
+	printf 'Target:     %s\n' "$setup_target"
+	printf 'Profile:    %s\n' "$setup_profile"
+	printf 'Hostname:   %s\n' "$setup_hostname"
+	printf 'Timezone:   %s\n' "$setup_timezone"
+	printf 'Keymap:     %s\n' "$setup_keymap"
+	printf 'Locale:     %s\n' "$setup_locale"
+	printf 'Shell:      %s\n' "$setup_shell"
+	printf 'User:       %s\n' "${setup_user:-<none>}"
+	printf 'Sets:       %s\n' "${setup_enable:-<none>}"
+	printf 'Extra:      %s\n' "${setup_extra:-<none>}"
+	printf 'Flatpak:    %s\n' "$setup_flatpak"
+	printf 'NVIDIA:     %s\n' "$setup_nvidia"
+	printf 'SSH:        %s\n' "$setup_ssh"
+	printf 'Printing:   %s\n' "$setup_printing"
+	printf 'Bootloader: %s\n' "$setup_bootloader"
+	printf '\nPackages:\n'
+	sort -u "$setup_pkg_file"
+}
+
+if [ -n "$setup_answers_out" ]; then
+	setup_write_answers_file "$setup_answers_out"
+fi
+
+if [ "$setup_plan" -eq 1 ]; then
+	setup_summary
+	exit 0
+fi
+
+if [ "$setup_interactive" -eq 1 ]; then
+	setup_confirm "Install with this configuration?
+
+$(setup_summary)
+
+Package builds run on this terminal. Source packages may take a long time." ||
+		setup_fail "$SPS_EX_USAGE" "cancelled"
+fi
+
+setup_apply_config()
+{
+	setup_etc=$setup_root/etc
+	mkdir -p "$setup_etc/sps" "$setup_root/root" \
+		"$setup_etc" ||
+		setup_fail "$SPS_EX_PERMISSION" "cannot create target directories"
+
+	printf '%s\n' "$setup_hostname" >"$setup_etc/hostname"
+	printf '%s\n' "$setup_timezone" >"$setup_etc/timezone"
+	printf 'KEYMAP=%s\n' "$setup_keymap" >"$setup_etc/vconsole.conf"
+	printf 'keymap %s\n' "$setup_keymap" >"$setup_etc/sps/keymap"
+	printf 'LANG=%s\n' "$setup_locale" >"$setup_etc/locale.conf"
+
+	if [ -f /usr/share/zoneinfo/"$setup_timezone" ]; then
+		cp /usr/share/zoneinfo/"$setup_timezone" "$setup_etc/localtime" 2>/dev/null || :
+	fi
+
+	setup_write_answers_file "$setup_etc/sps/setup-answers"
+
+	if [ -n "$setup_user" ]; then
+		setup_home=/home/$setup_user
+		mkdir -p "$setup_root$setup_home"
+		if [ ! -f "$setup_etc/passwd" ]; then
+			printf '%s\n' \
+				'root:x:0:0:root:/root:/bin/sh' \
+				'nobody:x:65534:65534:Unprivileged User:/:/usr/bin/nologin' \
+				>"$setup_etc/passwd"
+			printf '%s\n' 'root:x:0:' 'nogroup:x:65534:' \
+				>"$setup_etc/group"
+			printf '%s\n' \
+				'root:!:0:0:99999:7:::' \
+				'nobody:!:0:0:99999:7:::' \
+				>"$setup_etc/shadow"
+		fi
+		if ! grep -q "^$setup_user:" "$setup_etc/passwd"; then
+			printf '%s:x:1000:1000:%s:%s:%s\n' \
+				"$setup_user" \
+				"${setup_user_gecos:-$setup_user}" \
+				"$setup_home" \
+				"$setup_shell" >>"$setup_etc/passwd"
+		fi
+		if [ -f "$setup_etc/group" ] &&
+		   ! grep -q "^$setup_user:" "$setup_etc/group"; then
+			printf '%s:x:1000:\n' "$setup_user" >>"$setup_etc/group"
+		fi
+		if [ -f "$setup_etc/shadow" ] &&
+		   ! grep -q "^$setup_user:" "$setup_etc/shadow"; then
+			printf '%s:!:0:0:99999:7:::\n' "$setup_user" >>"$setup_etc/shadow"
+		fi
+		cat >"$setup_root/root/sps-user.txt" <<EOF
+The account '$setup_user' (uid 1000) was recorded in /etc/passwd.
+The password is locked. From a live root run:
+
+    passwd $setup_user
+EOF
+	fi
+
+	cat >"$setup_root/root/sps-bootloader.txt" <<EOF
+SPS does not run grub-install or change EFI variables during setup.
+
+To install GRUB yourself, after chrooting into $setup_root:
+
+    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=SPS
+    grub-mkconfig -o /boot/grub/grub.cfg
+
+Or for BIOS:
+
+    grub-install /dev/DISK
+    grub-mkconfig -o /boot/grub/grub.cfg
+
+Replace DISK with the actual disk. This is an administrator action.
+EOF
+
+	cat >"$setup_root/root/sps-network.txt" <<EOF
+SPS setup does not write DHCP or static network configuration.
+
+On a Plasma system, use plasma-nm after the first graphical login.
+On a console system, configure the interface by hand, for example with
+ip(8) and a simple /etc/network script of your own.
+
+OpenSSH is installed when the server profile or the ssh set is selected.
+EOF
+
+	cat >"$setup_root/root/sps-fstab.txt" <<EOF
+SPS setup does not partition disks or write /etc/fstab.
+
+Mount the target filesystem on the path you passed to --target (or the
+target screen) before running the installer. Add swap and extra mounts
+yourself after inspecting lsblk and writing /etc/fstab.
+EOF
+}
+
+# Packages first, then hostname/user so filesystem's passwd is already present.
+setup_root=${setup_target%/}
+mkdir -p "$setup_root" ||
+	setup_fail "$SPS_EX_PERMISSION" "cannot create target: $setup_root"
+
+export SPS_ROOT=$setup_root
+
+if [ "$setup_do_update" -eq 1 ]; then
+	printf '%s: updating source repositories\n' "$sps_prog" >&2
+	src update || setup_fail "$SPS_EX_NETWORK" "src update failed"
+fi
+
+setup_pkgs=
+while IFS= read -r setup_pkg; do
+	[ -n "$setup_pkg" ] || continue
+	setup_pkgs="$setup_pkgs $setup_pkg"
+done <<EOF
+$(sort -u "$setup_pkg_file")
+EOF
+
+printf '%s: installing packages:%s\n' "$sps_prog" "$setup_pkgs" >&2
+# sget treats requested names as explicit world roots.
+# shellcheck disable=SC2086
+sget install $setup_pkgs ||
+	setup_fail "$SPS_EX_BUILD" "package installation failed"
+
+# Hostname, user, and notes land after packages so filesystem's passwd wins.
+setup_apply_config
+
+if [ "$setup_flatpak" = yes ]; then
+	setup_fp=$setup_root/usr/bin/flatpak
+	if [ -x "$setup_fp" ]; then
+		printf '%s: adding Flathub remote\n' "$sps_prog" >&2
+		"$setup_fp" --installation=system remote-add --if-not-exists flathub \
+			https://dl.flathub.org/repo/flathub.flatpakrepo \
+			--user=false 2>/dev/null ||
+			SPS_ROOT=$setup_root "$setup_fp" remote-add --if-not-exists \
+				flathub https://dl.flathub.org/repo/flathub.flatpakrepo ||
+			printf '%s: could not add Flathub; add it after first boot\n' \
+				"$sps_prog" >&2
+	else
+		printf '%s: flatpak is not in the target yet; Flathub skipped\n' \
+			"$sps_prog" >&2
+	fi
+fi
+
+if [ "$setup_install_bootloader" -eq 1 ]; then
+	command -v grub-install >/dev/null 2>&1 ||
+		setup_fail "$SPS_EX_PACKAGE" "grub-install is not available"
+	setup_fail "$SPS_EX_USAGE" \
+		"--install-bootloader requires a disk argument; refusing to guess. See /root/sps-bootloader.txt"
+fi
+
+setup_msg "Installation finished.
+
+Target: $setup_root
+Answers: $setup_root/etc/sps/setup-answers
+Bootloader notes: $setup_root/root/sps-bootloader.txt
+
+Set passwords before the first login. If you selected NVIDIA, rebuild the
+kernel modules against the installed kernel."
+
+exit 0

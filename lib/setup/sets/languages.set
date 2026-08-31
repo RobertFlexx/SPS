@@ -1,0 +1,5 @@
+name        languages
+title       Language toolchains
+description Python, Lua, Go, Rust, Node.js, Perl, and Ruby interpreters and compilers.
+default     0
+package     languages

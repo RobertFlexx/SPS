@@ -24,6 +24,8 @@ SPS is a set of tools rather than one large front end:
 - `pkstat` reads the installed package database.
 - `pkcheck` checks installed files and database consistency.
 - `pkmark` changes whether an installed package is explicit or dependency-only.
+- `setup` is a dialog(1) system installer (Slackware/FreeBSD style).
+- `mkiso` builds a live TTY ISO you can flash and boot into `setup`.
 
 The split matters. `pkin` does not search repositories. `pkdel` does not solve
 dependencies. `src` does not install anything. `sget` ties the lower-level tools
@@ -135,6 +137,56 @@ pkdel foo
 
 This is useful for recovery work, distro installers, package development, and
 cases where the administrator wants to bypass dependency policy on purpose.
+
+## Install a system
+
+`setup` is the distro installer. It uses `dialog` screens, or the same choices
+from flags for scripts:
+
+```sh
+setup
+setup --plan --profile plasma-desktop --target /mnt --user alex
+setup --non-interactive --profile minimal --target /mnt --hostname darkstar
+```
+
+Profiles are `minimal`, `server`, `plasma-desktop`, and `plasma-full`. Optional
+sets cover CLI tools, development, languages, KDE apps, NVIDIA, Flatpak, power
+management, multimedia, printing, browsers, extra shells, fonts, office tools,
+SSH, and more. `setup --list-sets` prints them. There is also an extra-package
+checklist (`--extra`) plus locale and login-shell screens.
+
+The installer writes hostname, timezone, keymap, and a first user into the
+target, then runs `src update` and `sget install`. It does not partition disks
+and does not run `grub-install` unless you pass `--install-bootloader`, which
+still refuses to guess a disk.
+
+## Live TTY ISO
+
+`mkiso` writes a hybrid ISO. Flash it to USB, boot to a console, mount a
+destination filesystem on `/mnt`, and run `setup`. A GitHub release attached
+to this repository is the downloadable image:
+
+```sh
+mkiso --output dist/sps-live.iso \
+  --busybox /path/to/busybox \
+  --core /usr/src/sps/core \
+  --extra /usr/src/sps/extra
+```
+
+`--layout DIR` writes the live root without making an ISO. `--no-seed` skips
+copying the host compiler. `--with-firmware` copies `/lib/firmware` (large;
+published images omit it). The live image never runs `grub-install` on a disk.
+
+Download a ready-made hybrid ISO from this repository's GitHub Releases, flash
+it to USB, boot the "SPS live TTY" entry, mount a destination filesystem on
+`/mnt`, and run `setup`. The image includes the installer, sps-core and
+sps-extra recipes, and a host seed compiler so `setup` can build packages.
+A full Plasma install compiles Qt and KDE from source and takes a long time.
+
+```sh
+# flash (example)
+dd if=sps-live-tty.iso of=/dev/sdX bs=4M status=progress conv=fsync
+```
 
 ## Alternate roots
 

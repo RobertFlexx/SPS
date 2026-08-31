@@ -1,0 +1,7 @@
+name        editors-extra
+title       Extra editors
+description Emacs, Helix, and Kakoune in addition to nano/vim/neovim.
+default     0
+package     emacs
+package     helix
+package     kakoune

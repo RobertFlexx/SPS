@@ -1,0 +1,7 @@
+name        containers
+title       Containers
+description bubblewrap sandboxing. Docker/Podman are not part of the base set.
+default     0
+package     bubblewrap
+package     slirp4netns
+package     fuse-overlayfs

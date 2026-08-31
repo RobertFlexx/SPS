@@ -1,0 +1,12 @@
+name        network-extra
+title       Extra networking
+description nmap, traceroute helpers, bind-tools, and wget/curl already in core.
+default     0
+package     nmap
+package     traceroute
+package     bind-tools
+package     iperf3
+package     wireshark-cli
+package     ethtool
+package     nftables
+package     wireguard-tools

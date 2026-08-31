@@ -1,0 +1,173 @@
+.TH SETUP 1 "2026-08-31" "SPS 1.0" "SPS Commands"
+.SH NAME
+setup \- dialog-based SPS system installer
+.SH SYNOPSIS
+.nf
+setup [options]
+setup --list-profiles
+setup --list-sets
+setup --plan [options]
+.fi
+.SH DESCRIPTION
+.B setup
+installs an SPS system into a target root. Interactive use is a sequence of
+.BR dialog (1)
+screens in the same spirit as the Slackware and FreeBSD installers: profile,
+optional package sets, extra packages, locale, hostname, timezone, keymap,
+first user, login shell, then a visible package build.
+.PP
+Every screen has a command-line equivalent. Scripts and tests should pass
+.B --non-interactive
+or
+.B --plan .
+.B --plan
+does not start
+.BR dialog (1).
+.PP
+The installer does not partition disks, format filesystems, or run
+.B grub-install
+unless
+.B --install-bootloader
+is given, and even then it refuses to guess a disk. Bootloader instructions
+are written to
+.I /root/sps-bootloader.txt
+in the target.
+.SH PROFILES
+.TP
+.B minimal
+.B base-system
+and
+.BR dialog (1).
+.TP
+.B server
+Minimal plus OpenSSH, GnuPG, rsync, and sudo.
+.TP
+.B plasma-desktop
+KDE Plasma session without the full application suite.
+.TP
+.B plasma-full
+Plasma plus
+.BR kde-apps ,
+Firefox, and Flatpak.
+.SH SETS
+Optional sets are listed by
+.B --list-sets
+and stored as text files under
+.I $SPS_LIBDIR/setup/sets .
+They include quality-of-life CLI tools, development tools, language
+toolchains, KDE applications, NVIDIA drivers, Flatpak, power management,
+multimedia, extra network tools, extra editors, container helpers, printing,
+browsers, extra shells, extra fonts, office tools, and OpenSSH.
+.PP
+.B plasma-desktop
+and
+.B plasma-full
+turn the power and qol-cli sets on by default.
+.B --enable
+adds sets.
+.B --disable
+removes them.
+.SH OPTIONS
+.TP
+.BI --target " dir"
+Installation root. Must be an absolute path. Becomes
+.B SPS_ROOT
+for
+.BR src (1)
+and
+.BR sget (1).
+.TP
+.BI --profile " name"
+One of the profiles above.
+.TP
+.BI --enable " set[,set...]"
+.TP
+.BI --disable " set[,set...]"
+.TP
+.BI --hostname " name"
+.TP
+.BI --timezone " zone"
+.TP
+.BI --keymap " map"
+.TP
+.BI --locale " name"
+.B LANG
+written to
+.I /etc/locale.conf .
+Default
+.BR C.UTF-8 .
+.TP
+.BI --shell " path"
+Login shell for the first user. Default
+.IR /bin/sh .
+Choosing zsh or fish also enables the
+.B shells-extra
+set.
+.TP
+.BI --extra " pkg[,pkg...]"
+Individual packages in addition to the profile and sets.
+.TP
+.B --ssh yes|no
+Enable the OpenSSH set.
+.TP
+.B --printing yes|no
+Enable CUPS and related printing packages.
+.TP
+.BI --user " name"
+First unprivileged account (uid 1000). The password is left locked; see
+.I /root/sps-user.txt .
+.TP
+.B --flatpak yes|no
+Install the Flatpak set and attempt to add Flathub after packages land.
+.TP
+.B --nvidia yes|no
+Install NVIDIA open kernel modules and utilities. A matching kernel is
+required; this installer does not build one.
+.TP
+.B --bootloader none|grub
+Write notes only.
+.TP
+.B --install-bootloader
+Refuses to guess a disk. See the notes file.
+.TP
+.B --no-update
+Skip
+.B src update
+before
+.B sget install .
+.TP
+.B --non-interactive
+Never start
+.BR dialog (1).
+.TP
+.B --plan
+Print the resolved configuration and package list, then exit.
+.TP
+.BI --write-answers " file"
+.TP
+.BI --read-answers " file"
+Options override values from the file.
+.TP
+.B --list-profiles
+.TP
+.B --list-sets
+.SH FILES
+.TP
+.I $SPS_LIBDIR/setup
+Profiles, sets, keymaps, and timezones.
+.TP
+.I $SPS_SETUP_DIR
+Optional override of that directory, used by tests.
+.TP
+.I /etc/sps/setup-answers
+Copy of the resolved answers in the target root.
+.SH EXIT STATUS
+Returns 0 on success, 2 for usage errors, 3 when a profile or set is unknown,
+8 for permission problems, 9 when
+.B src update
+fails, and 10 when package installation fails.
+.SH SEE ALSO
+.BR dialog (1),
+.BR sget (1),
+.BR src (1),
+.BR pkin (1)

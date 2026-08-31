@@ -1,0 +1,16 @@
+name        storage
+title       Disk tools
+description ext4, FAT, XFS, Btrfs, LVM, and cryptsetup.
+default     0
+package     e2fsprogs
+package     dosfstools
+package     xfsprogs
+package     btrfs-progs
+package     lvm2
+package     cryptsetup
+package     mdadm
+package     ntfs-3g
+package     exfatprogs
+package     parted
+package     gptfdisk
+package     smartmontools

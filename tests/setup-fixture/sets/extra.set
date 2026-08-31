@@ -1,0 +1,5 @@
+name        extra
+title       Extra fixture set
+description Fixture set
+default     0
+package     extra-pkg

@@ -1,0 +1,5 @@
+name        browsers
+title       Web browsers
+description Firefox. Falkon is also pulled in by kde-apps.
+default     0
+package     firefox

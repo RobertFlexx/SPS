@@ -1,0 +1,5 @@
+name        kde-apps
+title       KDE applications
+description Dolphin, Konsole, Kate, Ark, Okular, Gwenview, Spectacle, and other KDE apps.
+default     0
+package     kde-apps

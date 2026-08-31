@@ -1,0 +1,5 @@
+name        ssh
+title       OpenSSH server
+description OpenSSH client and server. On by default for the server profile.
+default     0
+package     openssh

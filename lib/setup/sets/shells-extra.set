@@ -1,0 +1,6 @@
+name        shells-extra
+title       Extra shells
+description zsh and fish in addition to bash.
+default     0
+package     zsh
+package     fish

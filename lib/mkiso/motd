@@ -1,0 +1,20 @@
+SPS Linux live TTY
+
+This disc boots a console. It does not partition disks.
+
+1. Plug in or identify the destination disk (lsblk).
+2. Partition and format it yourself, then mount it on /mnt.
+3. Run:  setup --target /mnt
+   Or just: setup
+   and point the target screen at /mnt.
+
+Optional: setup --plan --profile plasma-full --target /mnt
+
+Recipes for sps-core and sps-extra are in /usr/src/sps. Package
+builds run on this live system into the mounted target. A Plasma
+install compiles Qt and KDE from source and takes a long time.
+
+Kernel modules match the kernel on this disc. NVIDIA modules still
+need that kernel after the first boot of the installed system.
+
+Root has an open shell on the live image. Set passwords after install.

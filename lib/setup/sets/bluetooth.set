@@ -1,0 +1,5 @@
+name        bluetooth
+title       Bluetooth
+description BlueZ stack. Plasma Bluetooth UI comes with plasma-full.
+default     0
+package     bluez

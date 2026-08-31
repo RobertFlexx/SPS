@@ -1,0 +1,8 @@
+name        power
+title       Power management
+description UPower, power-profiles-daemon, and related session helpers.
+default     1
+package     upower
+package     power-profiles-daemon
+package     polkit
+package     elogind

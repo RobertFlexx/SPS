@@ -1,0 +1,72 @@
+#!/bin/sh
+# PID 1 on the live squashfs. Bring up consoles and optionally start setup.
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+if [ -d /usr/lib64/go1.27.0/go/bin ]; then
+	PATH=/usr/lib64/go1.27.0/go/bin:$PATH
+fi
+export PATH
+export HOME=/root
+export TERM=${TERM:-linux}
+export CARGO_HOME=${CARGO_HOME:-/root/.cargo}
+
+mkdir -p /proc /sys /dev /run /tmp /root /mnt /etc/sps
+mount -t proc proc /proc 2>/dev/null || :
+mount -t sysfs sysfs /sys 2>/dev/null || :
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || :
+mkdir -p /dev/pts /dev/shm
+mount -t devpts devpts /dev/pts 2>/dev/null || :
+mount -t tmpfs tmpfs /run 2>/dev/null || :
+mount -t tmpfs tmpfs /tmp 2>/dev/null || :
+
+if command -v ldconfig >/dev/null 2>&1; then
+	ldconfig 2>/dev/null || :
+fi
+
+ln -sf /proc/self/fd /dev/fd 2>/dev/null || :
+ln -sf /proc/self/fd/0 /dev/stdin 2>/dev/null || :
+ln -sf /proc/self/fd/1 /dev/stdout 2>/dev/null || :
+ln -sf /proc/self/fd/2 /dev/stderr 2>/dev/null || :
+
+hostname sps-live 2>/dev/null || :
+[ -f /etc/hostname ] || printf '%s\n' sps-live >/etc/hostname
+
+# Load remaining modules from the live image if present.
+if [ -d /lib/modules ] && command -v depmod >/dev/null 2>&1; then
+	depmod -a 2>/dev/null || :
+fi
+for mod in e1000 e1000e r8169 virtio_net usbnet hid-generic usbhid atkbd
+do
+	modprobe "$mod" 2>/dev/null || :
+done
+
+if command -v ip >/dev/null 2>&1; then
+	ip link set lo up 2>/dev/null || :
+fi
+if command -v dhcpcd >/dev/null 2>&1; then
+	dhcpcd -b 2>/dev/null || :
+elif command -v dhclient >/dev/null 2>&1; then
+	dhclient -nw 2>/dev/null || :
+fi
+
+cat /etc/issue 2>/dev/null || :
+cat /etc/motd 2>/dev/null || :
+
+cmdline=$(cat /proc/cmdline 2>/dev/null || :)
+case " $cmdline " in
+	*" sps=setup "*)
+		if command -v setup >/dev/null 2>&1; then
+			setup || :
+		fi
+		;;
+esac
+
+# Consoles: a root shell. There is no login prompt on the live image.
+# ttyS0 is for qemu -nographic; tty1 is a hardware VGA console.
+if [ -c /dev/tty1 ]; then
+	setsid /bin/sh -c 'exec /bin/sh <>/dev/tty1 >&0 2>&1' &
+fi
+if [ -c /dev/ttyS0 ]; then
+	exec setsid /bin/sh -c 'exec /bin/sh <>/dev/ttyS0 >&0 2>&1'
+fi
+exec /bin/sh </dev/console >/dev/console 2>&1

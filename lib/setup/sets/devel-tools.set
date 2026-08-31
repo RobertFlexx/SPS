@@ -1,0 +1,5 @@
+name        devel-tools
+title       Development tools
+description Compilers' companions: cmake, meson, ninja, gdb, pkgconf, and autotools.
+default     0
+package     devel-tools

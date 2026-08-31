@@ -1,0 +1,7 @@
+name        printing
+title       Printing
+description CUPS and related printing support.
+default     0
+package     cups
+package     cups-filters
+package     print-manager

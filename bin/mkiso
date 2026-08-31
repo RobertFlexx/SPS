@@ -1,0 +1,569 @@
+#!/bin/sh
+# Build a bootable SPS live TTY ISO. Users flash it, boot to a console, mount
+# a destination filesystem, and run setup(1). It never runs grub-install on a
+# disk.
+
+sps_prog=mkiso
+sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
+if [ -z "${SPS_LIBDIR+x}" ]; then
+	if [ -r "$sps_bin_dir/../lib/common.sh" ]; then
+		SPS_LIBDIR=$sps_bin_dir/../lib
+	else
+		SPS_LIBDIR=$sps_bin_dir/../lib/sps
+	fi
+fi
+if ! . "$SPS_LIBDIR/common.sh"; then
+	printf '%s\n' "mkiso: cannot load $SPS_LIBDIR/common.sh" >&2
+	exit 1
+fi
+
+mkiso_usage()
+{
+	cat <<'EOF'
+usage: mkiso --output FILE.iso [options]
+       mkiso --layout DIR [options]
+
+Build a live TTY ISO (or a layout directory) that boots to a console with
+setup(1) on PATH.
+
+options:
+  --output FILE         write a hybrid ISO
+  --layout DIR          populate a live root and stop (tests, inspection)
+  --work DIR            working directory (default: a temp dir)
+  --kernel FILE         vmlinuz (default: /boot/vmlinuz)
+  --modules DIR         kernel modules (default: /lib/modules/RELEASE)
+  --busybox FILE        static busybox for the initramfs
+  --core DIR            sps-core recipes (copied to /usr/src/sps/core)
+  --extra DIR           sps-extra recipes (copied to /usr/src/sps/extra)
+  --with-rust           copy rustc and cargo from the host
+  --with-go             copy the host Go toolchain
+  --with-firmware       copy /lib/firmware (large; omit from published ISOs)
+  --no-modules          do not copy /lib/modules (smaller, less hardware)
+  --no-seed             do not copy host compiler tools (layout/tests)
+  -h, --help
+EOF
+}
+
+mkiso_output=
+mkiso_layout=
+mkiso_work=
+mkiso_work_created=0
+mkiso_kernel=
+mkiso_modules=
+mkiso_busybox=
+mkiso_core=
+mkiso_extra=
+mkiso_with_rust=0
+mkiso_with_go=0
+mkiso_with_firmware=0
+mkiso_copy_modules=1
+mkiso_copy_seed=1
+mkiso_libdir=$SPS_LIBDIR/mkiso
+
+mkiso_need_value()
+{
+	[ "$#" -ge 2 ] && [ -n "${2-}" ] ||
+		sps_die "$SPS_EX_USAGE" "option '$1' requires an argument"
+}
+
+while [ "$#" -gt 0 ]; do
+	case $1 in
+		-h|--help)
+			mkiso_usage
+			exit 0
+			;;
+		--output)
+			mkiso_need_value "$@"
+			mkiso_output=$2
+			shift 2
+			;;
+		--layout)
+			mkiso_need_value "$@"
+			mkiso_layout=$2
+			shift 2
+			;;
+		--work)
+			mkiso_need_value "$@"
+			mkiso_work=$2
+			shift 2
+			;;
+		--kernel)
+			mkiso_need_value "$@"
+			mkiso_kernel=$2
+			shift 2
+			;;
+		--modules)
+			mkiso_need_value "$@"
+			mkiso_modules=$2
+			shift 2
+			;;
+		--busybox)
+			mkiso_need_value "$@"
+			mkiso_busybox=$2
+			shift 2
+			;;
+		--core)
+			mkiso_need_value "$@"
+			mkiso_core=$2
+			shift 2
+			;;
+		--extra)
+			mkiso_need_value "$@"
+			mkiso_extra=$2
+			shift 2
+			;;
+		--with-rust) mkiso_with_rust=1; shift ;;
+		--with-go) mkiso_with_go=1; shift ;;
+		--with-firmware) mkiso_with_firmware=1; shift ;;
+		--no-modules) mkiso_copy_modules=0; shift ;;
+		--no-seed) mkiso_copy_seed=0; shift ;;
+		-*)
+			sps_die "$SPS_EX_USAGE" "unknown option: $1"
+			;;
+		*)
+			sps_die "$SPS_EX_USAGE" "unexpected argument: $1"
+			;;
+	esac
+done
+
+if [ -z "$mkiso_output" ] && [ -z "$mkiso_layout" ]; then
+	sps_die "$SPS_EX_USAGE" "pass --output FILE.iso or --layout DIR"
+fi
+
+mkiso_cleanup()
+{
+	if [ "$mkiso_work_created" -eq 1 ] && [ -n "$mkiso_work" ] &&
+	   [ -d "$mkiso_work" ]; then
+		rm -rf "$mkiso_work"
+	fi
+}
+
+if [ -z "$mkiso_work" ]; then
+	mkiso_work=$(sps_mktemp_dir "${TMPDIR:-/tmp}" mkiso) || exit $?
+	mkiso_work_created=1
+	trap mkiso_cleanup 0 HUP INT TERM
+else
+	case $mkiso_work in
+		/*) ;;
+		*) sps_die "$SPS_EX_USAGE" "work directory must be absolute" ;;
+	esac
+	mkdir -p "$mkiso_work" ||
+		sps_die "$SPS_EX_PERMISSION" "cannot create $mkiso_work"
+fi
+
+if [ -n "$mkiso_layout" ]; then
+	case $mkiso_layout in
+		/*) ;;
+		*) sps_die "$SPS_EX_USAGE" "layout directory must be absolute" ;;
+	esac
+	mkiso_live=$mkiso_layout
+else
+	mkiso_live=$mkiso_work/live-root
+fi
+
+mkdir -p "$mkiso_live" ||
+	sps_die "$SPS_EX_PERMISSION" "cannot create live root"
+
+# --- copy helpers -------------------------------------------------------
+
+mkiso_copy_path()
+{
+	mkiso_src=$1
+	[ -e "$mkiso_src" ] || [ -L "$mkiso_src" ] || return 0
+	mkiso_dest=$mkiso_live$mkiso_src
+	mkdir -p "$(dirname "$mkiso_dest")" || return 1
+	if [ -d "$mkiso_src" ] && [ ! -L "$mkiso_src" ]; then
+		mkdir -p "$mkiso_dest"
+		cp -a "$mkiso_src" "$mkiso_dest" 2>/dev/null ||
+			cp -R "$mkiso_src" "$mkiso_dest" 2>/dev/null || :
+	else
+		cp -a "$mkiso_src" "$mkiso_dest" 2>/dev/null ||
+			cp "$mkiso_src" "$mkiso_dest" 2>/dev/null || :
+	fi
+}
+
+mkiso_copy_libs()
+{
+	mkiso_bin=$1
+	[ -f "$mkiso_bin" ] || return 0
+	command -v ldd >/dev/null 2>&1 || return 0
+	ldd "$mkiso_bin" 2>/dev/null | while IFS= read -r mkiso_line; do
+		mkiso_lib=
+		case $mkiso_line in
+			*linux-vdso*) continue ;;
+		esac
+		# "libx.so => /lib64/libx.so (0x...)"
+		mkiso_lib=${mkiso_line#*=> }
+		mkiso_lib=${mkiso_lib%% (*}
+		mkiso_lib=${mkiso_lib## }
+		case $mkiso_lib in
+			/*) mkiso_copy_path "$mkiso_lib" ;;
+		esac
+		# interpreter-only lines: "/lib64/ld-linux-x86-64.so.2 (0x...)"
+		case $mkiso_line in
+			"	/"*|" /"*)
+				mkiso_interp=${mkiso_line%% (*}
+				mkiso_interp=${mkiso_interp## }
+				mkiso_interp=${mkiso_interp#	}
+				case $mkiso_interp in
+					/*) mkiso_copy_path "$mkiso_interp" ;;
+				esac
+				;;
+		esac
+	done
+}
+
+# BusyBox --install -s writes absolute symlinks to the host path. Relative
+# links keep applets working inside the squashfs and initramfs.
+mkiso_busybox_links()
+{
+	mkiso_bbdir=$1
+	[ -x "$mkiso_bbdir/busybox" ] || return 1
+	"$mkiso_bbdir/busybox" --list | while IFS= read -r mkiso_ap || [ -n "$mkiso_ap" ]
+	do
+		[ -n "$mkiso_ap" ] || continue
+		[ "$mkiso_ap" = busybox ] && continue
+		ln -sf busybox "$mkiso_bbdir/$mkiso_ap"
+	done
+	ln -sf busybox "$mkiso_bbdir/sh"
+}
+
+# --- live root contents -------------------------------------------------
+
+printf '%s\n' "mkiso: installing SPS tools into the live root" >&2
+make -C "$sps_bin_dir/.." \
+	DESTDIR="$mkiso_live" PREFIX=/usr \
+	install install-config >/dev/null ||
+	sps_die "$SPS_EX_BUILD" "make install into the live root failed"
+
+mkdir -p "$mkiso_live/bin" "$mkiso_live/sbin" "$mkiso_live/usr/bin" \
+	"$mkiso_live/usr/sbin" "$mkiso_live/root" "$mkiso_live/mnt" \
+	"$mkiso_live/proc" "$mkiso_live/sys" "$mkiso_live/dev" \
+	"$mkiso_live/tmp" "$mkiso_live/run" "$mkiso_live/etc/sps" \
+	"$mkiso_live/usr/src/sps" "$mkiso_live/var/cache/sps" \
+	"$mkiso_live/var/lib/sps" "$mkiso_live/var/tmp/sps"
+
+if [ -z "$mkiso_busybox" ]; then
+	for mkiso_bb in /tmp/sps-wave/busybox.static \
+		"$mkiso_libdir/busybox" /usr/bin/busybox /bin/busybox
+	do
+		if [ -x "$mkiso_bb" ]; then
+			mkiso_busybox=$mkiso_bb
+			break
+		fi
+	done
+fi
+[ -n "$mkiso_busybox" ] && [ -x "$mkiso_busybox" ] || {
+	if [ -n "$mkiso_output" ]; then
+		sps_die "$SPS_EX_PACKAGE" \
+			"busybox is required for an ISO (pass --busybox FILE)"
+	fi
+}
+
+if [ -n "$mkiso_busybox" ] && [ -x "$mkiso_busybox" ]; then
+	cp -a "$mkiso_busybox" "$mkiso_live/bin/busybox"
+	chmod 755 "$mkiso_live/bin/busybox"
+	mkiso_busybox_links "$mkiso_live/bin"
+	ln -sf ../bin/busybox "$mkiso_live/sbin/busybox" 2>/dev/null || :
+fi
+
+install -m 0755 "$mkiso_libdir/live-init" "$mkiso_live/sbin/init"
+install -m 0644 "$mkiso_libdir/motd" "$mkiso_live/etc/motd"
+install -m 0644 "$mkiso_libdir/issue" "$mkiso_live/etc/issue"
+printf '%s\n' live >"$mkiso_live/etc/sps/live"
+printf '%s\n' sps-live >"$mkiso_live/etc/hostname"
+printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' >"$mkiso_live/etc/passwd"
+printf '%s\n' 'root:x:0:' >"$mkiso_live/etc/group"
+# Empty password on the live console only.
+printf '%s\n' 'root::0:0:99999:7:::' >"$mkiso_live/etc/shadow"
+chmod 600 "$mkiso_live/etc/shadow"
+
+printf '%s\n' \
+	'db /var/lib/sps' \
+	'cache /var/cache/sps' \
+	'build /var/tmp/sps' \
+	'repo_root /usr/src/sps' \
+	"makejobs ${SPS_MAKEJOBS:-$(nproc 2>/dev/null || printf 2)}" \
+	'compression auto' \
+	'preserve etc' \
+	>"$mkiso_live/etc/sps/sps.conf"
+
+mkiso_repos=$mkiso_live/etc/sps/repos.conf
+: >"$mkiso_repos"
+
+if [ -n "$mkiso_core" ] && [ -d "$mkiso_core" ]; then
+	printf '%s: copying sps-core recipes\n' "$sps_prog" >&2
+	rm -rf "$mkiso_live/usr/src/sps/core"
+	mkdir -p "$mkiso_live/usr/src/sps/core"
+	cp -a "$mkiso_core"/. "$mkiso_live/usr/src/sps/core"/
+	rm -rf "$mkiso_live/usr/src/sps/core/.git"
+	printf 'dir core /usr/src/sps/core 100\n' >>"$mkiso_repos"
+fi
+if [ -n "$mkiso_extra" ] && [ -d "$mkiso_extra" ]; then
+	printf '%s: copying sps-extra recipes\n' "$sps_prog" >&2
+	rm -rf "$mkiso_live/usr/src/sps/extra"
+	mkdir -p "$mkiso_live/usr/src/sps/extra"
+	cp -a "$mkiso_extra"/. "$mkiso_live/usr/src/sps/extra"/
+	rm -rf "$mkiso_live/usr/src/sps/extra/.git"
+	printf 'dir extra /usr/src/sps/extra 80\n' >>"$mkiso_repos"
+fi
+if [ ! -s "$mkiso_repos" ]; then
+	cat >>"$mkiso_repos" <<'EOF'
+git core https://github.com/RobertFlexx/sps-core.git 100
+git extra https://github.com/RobertFlexx/sps-extra.git 80
+EOF
+fi
+
+if [ "$mkiso_copy_seed" -eq 1 ] && [ -f "$mkiso_libdir/seed-bins" ]; then
+	printf '%s: copying host seed tools\n' "$sps_prog" >&2
+	while IFS= read -r mkiso_bin || [ -n "$mkiso_bin" ]; do
+		case $mkiso_bin in ''|\#*) continue ;; esac
+		[ -e "$mkiso_bin" ] || continue
+		mkiso_copy_path "$mkiso_bin"
+		mkiso_copy_libs "$mkiso_bin"
+	done <"$mkiso_libdir/seed-bins"
+	# Compiler support files.
+	mkiso_copy_path /usr/libexec/gcc
+	mkiso_copy_path /usr/lib64/gcc
+	mkiso_copy_path /usr/include
+	mkiso_copy_path /usr/lib64/python3.12
+	mkiso_copy_path /usr/share/terminfo
+	mkiso_copy_path /usr/share/zoneinfo
+	mkiso_copy_path /etc/ssl
+	mkiso_copy_path /etc/ca-certificates
+	mkiso_copy_path /usr/share/ca-certificates
+	mkiso_copy_path /etc/ld.so.conf
+	mkiso_copy_path /etc/ld.so.conf.d
+	mkiso_copy_path /usr/lib64/grub
+	mkiso_copy_path /usr/lib/grub
+	mkiso_copy_path /usr/share/grub
+	if [ "$mkiso_with_firmware" -eq 1 ] && [ -d /lib/firmware ]; then
+		printf '%s: copying /lib/firmware\n' "$sps_prog" >&2
+		mkiso_copy_path /lib/firmware
+	fi
+	if [ "$mkiso_with_rust" -eq 1 ]; then
+		mkiso_copy_path /usr/lib64/rustlib
+		mkiso_copy_path /usr/bin/rustc
+		mkiso_copy_path /usr/bin/cargo
+		mkiso_copy_libs /usr/bin/rustc
+		mkiso_copy_libs /usr/bin/cargo
+	fi
+	if [ "$mkiso_with_go" -eq 1 ]; then
+		mkiso_copy_path /usr/lib64/go1.27.0
+	fi
+fi
+
+# Initramfs modules are required to mount the ISO even when the live
+# squashfs does not ship the full /lib/modules tree.
+if [ -z "$mkiso_modules" ]; then
+	mkiso_krel=$(uname -r)
+	mkiso_modules=/lib/modules/$mkiso_krel
+fi
+if [ "$mkiso_copy_modules" -eq 1 ] && [ -d "$mkiso_modules" ]; then
+	printf '%s: copying kernel modules from %s\n' \
+		"$sps_prog" "$mkiso_modules" >&2
+	mkdir -p "$mkiso_live/lib/modules"
+	cp -a "$mkiso_modules" "$mkiso_live/lib/modules/"
+fi
+
+# Busybox getty/init must win over a dangling seed copy of /sbin/init.
+install -m 0755 "$mkiso_libdir/live-init" "$mkiso_live/sbin/init"
+
+if [ -n "$mkiso_layout" ] && [ -z "$mkiso_output" ]; then
+	printf '%s\n' "$mkiso_live"
+	exit 0
+fi
+
+# --- squashfs + initrd + ISO --------------------------------------------
+
+command -v mksquashfs >/dev/null 2>&1 ||
+	sps_die "$SPS_EX_PACKAGE" "mksquashfs is required"
+command -v xorriso >/dev/null 2>&1 ||
+	sps_die "$SPS_EX_PACKAGE" "xorriso is required"
+
+if [ -z "$mkiso_kernel" ]; then
+	if [ -f /boot/vmlinuz-$(uname -r) ]; then
+		mkiso_kernel=/boot/vmlinuz-$(uname -r)
+	elif [ -f /boot/vmlinuz ]; then
+		mkiso_kernel=/boot/vmlinuz
+	fi
+fi
+# Follow a single symlink so the ISO contains a real kernel, not a dangling link.
+if [ -L "$mkiso_kernel" ]; then
+	mkiso_ktarget=$(readlink "$mkiso_kernel")
+	case $mkiso_ktarget in
+		/*) mkiso_kernel=$mkiso_ktarget ;;
+		*) mkiso_kernel=$(dirname "$mkiso_kernel")/$mkiso_ktarget ;;
+	esac
+fi
+[ -f "$mkiso_kernel" ] ||
+	sps_die "$SPS_EX_NOTFOUND" "kernel not found: $mkiso_kernel"
+
+mkiso_iso=$mkiso_work/iso
+mkdir -p "$mkiso_iso/live" "$mkiso_iso/boot/grub"
+cp -a "$mkiso_kernel" "$mkiso_iso/live/vmlinuz"
+
+printf '%s: writing squashfs (this takes a while)\n' "$sps_prog" >&2
+mksquashfs "$mkiso_live" "$mkiso_iso/live/filesystem.squashfs" \
+	-comp xz -e boot -noappend >/dev/null ||
+	sps_die "$SPS_EX_BUILD" "mksquashfs failed"
+
+# Initramfs: busybox + init + filesystem modules.
+mkiso_ird=$mkiso_work/initrd-root
+rm -rf "$mkiso_ird"
+mkdir -p "$mkiso_ird/bin" "$mkiso_ird/sbin" "$mkiso_ird/lib/modules" \
+	"$mkiso_ird/proc" "$mkiso_ird/sys" "$mkiso_ird/dev" "$mkiso_ird/mnt"
+cp -a "$mkiso_busybox" "$mkiso_ird/bin/busybox"
+chmod 755 "$mkiso_ird/bin/busybox"
+mkiso_busybox_links "$mkiso_ird/bin"
+install -m 0755 "$mkiso_libdir/initrd-init" "$mkiso_ird/init"
+
+if [ -d "$mkiso_modules" ]; then
+	mkiso_kver=$(basename "$mkiso_modules")
+	mkdir -p "$mkiso_ird/lib/modules/$mkiso_kver"
+	# Copy only what the initramfs needs to find and mount the ISO.
+	# Follow host module dependencies so overlay/loop are complete.
+	mkiso_copy_one_mod()
+	{
+		mkiso_mp=$1
+		[ -f "$mkiso_mp" ] || return 0
+		mkiso_rel=${mkiso_mp#"$mkiso_modules"/}
+		mkdir -p "$mkiso_ird/lib/modules/$mkiso_kver/$(dirname "$mkiso_rel")"
+		case $mkiso_mp in
+			*.ko.xz)
+				xz -dc "$mkiso_mp" >"$mkiso_ird/lib/modules/$mkiso_kver/${mkiso_rel%.xz}"
+				;;
+			*.ko.zst)
+				zstd -q -dc "$mkiso_mp" >"$mkiso_ird/lib/modules/$mkiso_kver/${mkiso_rel%.zst}"
+				;;
+			*)
+				cp -a "$mkiso_mp" \
+					"$mkiso_ird/lib/modules/$mkiso_kver/$mkiso_rel"
+				;;
+		esac
+	}
+	for mkiso_mod in squashfs overlay loop isofs cdrom sr_mod sd_mod \
+		ahci nvme usb-storage xhci-pci ehci-hcd uhci-hcd \
+		virtio_blk virtio_pci virtio_scsi virtio_net \
+		nls_cp437 nls_iso8859-1 vfat fat crc32c libcrc32c
+	do
+		if command -v modprobe >/dev/null 2>&1; then
+			modprobe -D "$mkiso_mod" 2>/dev/null | while IFS= read -r mkiso_line
+			do
+				mkiso_cmd=${mkiso_line%% *}
+				mkiso_mp=${mkiso_line#* }
+				mkiso_mp=${mkiso_mp%% *}
+				[ "$mkiso_cmd" = insmod ] || continue
+				mkiso_copy_one_mod "$mkiso_mp"
+			done
+		fi
+		find "$mkiso_modules" -name "${mkiso_mod}.ko*" 2>/dev/null |
+			while IFS= read -r mkiso_mp; do
+				mkiso_copy_one_mod "$mkiso_mp"
+			done
+	done
+	cp -a "$mkiso_modules"/modules.dep \
+		"$mkiso_ird/lib/modules/$mkiso_kver"/ 2>/dev/null || :
+	cp -a "$mkiso_modules"/modules.alias \
+		"$mkiso_ird/lib/modules/$mkiso_kver"/ 2>/dev/null || :
+	cp -a "$mkiso_modules"/modules.builtin \
+		"$mkiso_ird/lib/modules/$mkiso_kver"/ 2>/dev/null || :
+fi
+
+printf '%s: packing initramfs\n' "$sps_prog" >&2
+(
+	cd "$mkiso_ird" || exit 1
+	find . | cpio -o -H newc 2>/dev/null
+) | gzip -n -9 >"$mkiso_iso/live/initrd.img" ||
+	sps_die "$SPS_EX_BUILD" "initramfs cpio failed"
+
+cat >"$mkiso_iso/boot/grub/grub.cfg" <<'EOF'
+set timeout=8
+set default=0
+serial --unit=0 --speed=115200
+terminal_input serial console
+terminal_output serial console
+
+menuentry "SPS live TTY" {
+	linux /live/vmlinuz boot=live console=tty0 console=ttyS0,115200n8
+	initrd /live/initrd.img
+}
+
+menuentry "SPS live TTY (run setup)" {
+	linux /live/vmlinuz boot=live sps=setup console=tty0 console=ttyS0,115200n8
+	initrd /live/initrd.img
+}
+EOF
+
+# BIOS + UEFI hybrid ISO. grub-mkrescue on this host requires
+# /usr/share/grub/unicode.pf2, which is not shipped, so mkiso builds
+# the image with grub-mkimage and xorriso instead. It never runs
+# grub-install on a disk.
+command -v grub-mkimage >/dev/null 2>&1 ||
+	sps_die "$SPS_EX_PACKAGE" "grub-mkimage is required"
+mkiso_pc=
+mkiso_efi=
+for mkiso_gdir in /usr/lib64/grub /usr/lib/grub
+do
+	[ -d "$mkiso_gdir/i386-pc" ] && mkiso_pc=$mkiso_gdir/i386-pc
+	[ -d "$mkiso_gdir/x86_64-efi" ] && mkiso_efi=$mkiso_gdir/x86_64-efi
+done
+[ -n "$mkiso_pc" ] ||
+	sps_die "$SPS_EX_PACKAGE" "GRUB i386-pc modules not found"
+
+mkiso_grub_mods='iso9660 linux normal configfile echo search fat part_gpt part_msdos ext2 serial'
+grub-mkimage -O i386-pc -o "$mkiso_work/core.img" -p /boot/grub \
+	biosdisk $mkiso_grub_mods ||
+	sps_die "$SPS_EX_BUILD" "grub-mkimage (i386-pc) failed"
+cat "$mkiso_pc/cdboot.img" "$mkiso_work/core.img" >"$mkiso_iso/boot/grub/bios.img"
+
+mkdir -p "$mkiso_iso/EFI/BOOT"
+if [ -n "$mkiso_efi" ]; then
+	grub-mkimage -O x86_64-efi -o "$mkiso_iso/EFI/BOOT/BOOTX64.EFI" \
+		-p /boot/grub $mkiso_grub_mods ||
+		sps_die "$SPS_EX_BUILD" "grub-mkimage (x86_64-efi) failed"
+	truncate -s 8M "$mkiso_iso/boot/grub/efi.img"
+	if command -v mformat >/dev/null 2>&1 && command -v mcopy >/dev/null 2>&1; then
+		mformat -v SPS_EFI -i "$mkiso_iso/boot/grub/efi.img" ::
+		mmd -i "$mkiso_iso/boot/grub/efi.img" ::EFI ::EFI/BOOT
+		mcopy -i "$mkiso_iso/boot/grub/efi.img" \
+			"$mkiso_iso/EFI/BOOT/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI
+	elif command -v mkfs.vfat >/dev/null 2>&1 || [ -x /sbin/mkfs.vfat ]; then
+		mkiso_mkfs=$(command -v mkfs.vfat 2>/dev/null || printf /sbin/mkfs.vfat)
+		"$mkiso_mkfs" "$mkiso_iso/boot/grub/efi.img" >/dev/null
+		mmd -i "$mkiso_iso/boot/grub/efi.img" ::EFI ::EFI/BOOT
+		mcopy -i "$mkiso_iso/boot/grub/efi.img" \
+			"$mkiso_iso/EFI/BOOT/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI
+	fi
+fi
+
+printf '%s: writing ISO\n' "$sps_prog" >&2
+case $mkiso_output in
+	/*) ;;
+	*) mkiso_output=$(CDPATH= cd -P "$(pwd)" && printf '%s/%s' "$(pwd)" "$mkiso_output") ;;
+esac
+mkdir -p "$(dirname "$mkiso_output")"
+mkiso_xorriso_log=$mkiso_work/xorriso.log
+if [ -f "$mkiso_iso/boot/grub/efi.img" ]; then
+	xorriso -as mkisofs -r -J -V SPS_LIVE \
+		-o "$mkiso_output" \
+		-b boot/grub/bios.img -no-emul-boot -boot-load-size 4 \
+		-boot-info-table --grub2-boot-info \
+		--grub2-mbr "$mkiso_pc/boot_hybrid.img" \
+		-eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
+		-isohybrid-gpt-basdat \
+		"$mkiso_iso" >"$mkiso_xorriso_log" 2>&1 ||
+		sps_die "$SPS_EX_BUILD" "xorriso failed (see $mkiso_xorriso_log)"
+else
+	xorriso -as mkisofs -r -J -V SPS_LIVE \
+		-o "$mkiso_output" \
+		-b boot/grub/bios.img -no-emul-boot -boot-load-size 4 \
+		-boot-info-table --grub2-boot-info \
+		--grub2-mbr "$mkiso_pc/boot_hybrid.img" \
+		"$mkiso_iso" >"$mkiso_xorriso_log" 2>&1 ||
+		sps_die "$SPS_EX_BUILD" "xorriso failed (see $mkiso_xorriso_log)"
+fi
+
+printf '%s\n' "$mkiso_output"
+ls -lh "$mkiso_output" >&2
+exit 0

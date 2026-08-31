@@ -1,0 +1,7 @@
+name        nvidia
+title       NVIDIA drivers
+description NVIDIA open kernel modules and user-space driver. Requires a matching kernel.
+default     0
+package     nvidia-open
+package     nvidia-utils
+package     nvidia-settings

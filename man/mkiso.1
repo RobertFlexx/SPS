@@ -1,0 +1,79 @@
+.TH MKISO 1 "2026-08-31" "SPS 1.0" "SPS Commands"
+.SH NAME
+mkiso \- build an SPS live TTY ISO
+.SH SYNOPSIS
+.nf
+mkiso --output FILE.iso [options]
+mkiso --layout DIR [options]
+.fi
+.SH DESCRIPTION
+.B mkiso
+builds a hybrid ISO that boots to a text console with
+.BR setup (1)
+on PATH. Flash it to USB, boot, mount a destination filesystem on
+.IR /mnt ,
+and run
+.B setup .
+.PP
+The image does not partition disks and never runs
+.B grub-install
+on a hard disk.
+.B --layout
+writes the live root only, for tests and inspection.
+.PP
+Host compiler tools can be copied into the image so
+.B setup
+can build packages from the bundled recipes. Pass
+.B --no-seed
+to omit them.
+.SH OPTIONS
+.TP
+.BI --output " file"
+Write a bootable ISO.
+.TP
+.BI --layout " dir"
+Populate a live root and exit.
+.TP
+.BI --busybox " file"
+Static busybox used for the initramfs and live
+.BR /bin/busybox .
+.TP
+.BI --kernel " file"
+Live kernel. Defaults to
+.IR /boot/vmlinuz .
+.TP
+.BI --core " dir"
+.TP
+.BI --extra " dir"
+Copy recipe trees to
+.I /usr/src/sps/core
+and
+.IR /usr/src/sps/extra .
+.TP
+.B --with-rust
+.TP
+.B --with-go
+Copy those host toolchains into the live image.
+.TP
+.B --with-firmware
+Copy
+.I /lib/firmware
+into the squashfs. This tree is often more than a gigabyte, so published
+ISOs omit it. Wireless adapters that need blobs will need firmware copied
+onto the target after install, or a locally built image with this flag.
+.TP
+.B --no-modules
+Do not copy the full
+.I /lib/modules
+tree into the squashfs. The initramfs still gets squashfs/overlay/USB
+modules so the disc can boot.
+.TP
+.B --no-seed
+Do not copy gcc, Python, and related host tools.
+.SH FILES
+.I $SPS_LIBDIR/mkiso
+holds the live init scripts, motd, and seed binary list.
+.SH SEE ALSO
+.BR setup (1),
+.BR sget (1),
+.BR src (1)

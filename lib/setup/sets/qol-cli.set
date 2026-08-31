@@ -1,0 +1,5 @@
+name        qol-cli
+title       Quality-of-life CLI
+description Fast search, listings, git helpers, and system monitors.
+default     1
+package     qol-cli

@@ -1,0 +1,8 @@
+name        office
+title       Office and documents
+description Okular, Ark, and related document tools. LibreOffice is not packaged here.
+default     0
+package     okular
+package     ark
+package     gwenview
+package     spectacle

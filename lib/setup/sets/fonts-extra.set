@@ -1,0 +1,8 @@
+name        fonts-extra
+title       Extra fonts
+description Additional fonts beyond the DejaVu set used by Plasma.
+default     0
+package     liberation-fonts
+package     noto-fonts
+package     noto-fonts-cjk
+package     noto-fonts-emoji

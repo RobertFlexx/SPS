@@ -1,0 +1,72 @@
+neovim	Neovim
+vim	Vim
+nano	GNU nano
+emacs	GNU Emacs
+helix	Helix editor
+kakoune	Kakoune editor
+htop	htop
+btop	btop
+tmux	tmux
+sudo	sudo
+doas	OpenDoas
+zsh	Z shell
+fish	fish shell
+git	Git
+rsync	rsync
+openssh	OpenSSH
+gnupg	GnuPG
+firefox	Firefox
+falkon	Falkon
+flatpak	Flatpak
+pipewire	PipeWire
+wget	wget
+curl	curl
+jq	jq
+ripgrep	ripgrep
+fd	fd
+bat	bat
+eza	eza
+fzf	fzf
+lazygit	lazygit
+fastfetch	fastfetch
+python	Python
+lua	Lua
+go	Go
+rust	Rust
+nodejs	Node.js
+perl	Perl
+ruby	Ruby
+cmake	CMake
+meson	Meson
+ninja	Ninja
+gdb	GDB
+strace	strace
+lsof	lsof
+nmap	nmap
+iperf3	iperf3
+cups	CUPS printing
+sddm	SDDM
+mesa	Mesa
+nvidia-open	NVIDIA open kernel modules
+e2fsprogs	e2fsprogs
+dosfstools	dosfstools
+cryptsetup	cryptsetup
+iwd	iwd
+dhcpcd	dhcpcd
+micro	micro editor
+starship	starship prompt
+yq	yq
+networkmanager	NetworkManager
+parted	GNU parted
+gptfdisk	GPT fdisk
+ntfs-3g	NTFS driver
+exfatprogs	exFAT tools
+mdadm	Linux MD RAID
+smartmontools	S.M.A.R.T. tools
+bluez	BlueZ Bluetooth
+alsa-utils	ALSA utilities
+vulkan-tools	vulkaninfo
+ethtool	ethtool
+nftables	nftables
+wireguard-tools	WireGuard tools
+

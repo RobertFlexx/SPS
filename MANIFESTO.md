@@ -34,6 +34,8 @@ pkdel     low-level package removal
 pkstat    installed package queries
 pkcheck   installed-state verification
 pkmark    explicit/dependency package marking
+setup     dialog-based system installer
+mkiso     live TTY ISO builder
 ```
 
 Each tool has a boundary.
