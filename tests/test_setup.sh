@@ -35,6 +35,7 @@ contains "$sets" 'drivers'
 plan=$("$setup" --plan --target /mnt --profile minimal --disable qol-cli)
 contains "$plan" 'Profile:    minimal'
 contains "$plan" 'base-system'
+contains "$plan" 'splux-base'
 contains "$plan" 'Init:       none'
 
 plan=$("$setup" --plan --target /mnt --profile minimal --init systemd --disable qol-cli)

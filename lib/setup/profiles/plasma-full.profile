@@ -3,6 +3,7 @@ title       Plasma Full
 description Complete Plasma desktop plus KDE applications.
 package     base-system
 package     dialog
+package     splux-base
 package     plasma-full
 package     sddm
 package     dejavu-fonts

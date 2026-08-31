@@ -3,6 +3,7 @@ title       Plasma Desktop
 description KDE Plasma desktop session without the full application suite.
 package     base-system
 package     dialog
+package     splux-base
 package     plasma-desktop
 package     sddm
 package     dejavu-fonts
