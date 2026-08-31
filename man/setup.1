@@ -1,6 +1,6 @@
 .TH SETUP 1 "2026-08-31" "SPS 1.0" "SPS Commands"
 .SH NAME
-setup \- dialog-based SPS system installer
+setup \- dialog-based SPS Linux installer (Splux)
 .SH SYNOPSIS
 .nf
 setup [options]
@@ -10,7 +10,14 @@ setup --plan [options]
 .fi
 .SH DESCRIPTION
 .B setup
-installs an SPS system into a target root. Interactive use is a sequence of
+installs
+.B SPS Linux
+(informally Splux) into a target root. It is the distro installer, not a
+generic Linux From Scratch helper. SPS the package system can be used on
+other trees without running this program; partitioning, users, and boot
+layout on those trees are yours to decide.
+.PP
+Interactive use is a sequence of
 .BR dialog (1)
 screens in the same spirit as the Slackware and FreeBSD installers: profile,
 optional package sets, extra packages, locale, hostname, timezone, keymap,
@@ -24,14 +31,21 @@ or
 does not start
 .BR dialog (1).
 .PP
-The installer does not partition disks, format filesystems, or run
+The installer does not run
 .B grub-install
 unless
 .B --install-bootloader
-is given, and even then it refuses to guess a disk. Bootloader instructions
-are written to
-.I /root/sps-bootloader.txt
-in the target.
+is given with
+.B --disk .
+Guided partitioning waits until the last confirmation.
+.B --init systemd
+or
+.B --init openrc
+selects PID 1;
+.B sget
+will not install both.
+Live images prefer systemd. If the build host has no systemd binaries,
+busybox init runs instead and respawns gettys on tty1 and ttyS0.
 .SH PROFILES
 .TP
 .B minimal
@@ -119,6 +133,11 @@ First unprivileged account (uid 1000). The password is left locked; see
 .TP
 .B --flatpak yes|no
 Install the Flatpak set and attempt to add Flathub after packages land.
+.TP
+.B --init systemd|openrc
+PID 1 on the installed system. Scripts default to none so a fixture
+install does not pull systemd. The interactive screen defaults to
+systemd.
 .TP
 .B --nvidia yes|no
 Install NVIDIA open kernel modules and utilities. A matching kernel is

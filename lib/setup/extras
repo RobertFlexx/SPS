@@ -69,4 +69,22 @@ vulkan-tools	vulkaninfo
 ethtool	ethtool
 nftables	nftables
 wireguard-tools	WireGuard tools
+intel-ucode	Intel CPU microcode
+amd-ucode	AMD CPU microcode
+nouveau	Nouveau (NVIDIA open driver)
+linux-desktop	Linux kernel, daily desktop config
+linux	Linux kernel, upstream defconfig
+xorg-server	X.Org server
+mpv	mpv media player
+gimp	GNU Image Manipulation Program
+inkscape	Inkscape
+libreoffice	LibreOffice
+krita	Krita
+thunderbird	Thunderbird
+qemu	QEMU
+htop	htop
+btop	btop
+tmux	tmux
+screen	GNU Screen
+
 

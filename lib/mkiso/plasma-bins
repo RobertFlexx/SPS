@@ -1,0 +1,33 @@
+# Binaries copied into a --session plasma live image from the host.
+# mkiso does not compile Qt or Plasma; it only copies a stack that already
+# works on the machine building the ISO. Konsole is the supported way to
+# run setup(1) from the live session.
+/usr/bin/startplasma-wayland
+/usr/bin/startplasma-x11
+/usr/bin/kwin_wayland
+/usr/bin/kwin_x11
+/usr/bin/plasmashell
+/usr/bin/konsole
+/usr/bin/dolphin
+/usr/bin/kwrite
+/usr/bin/kate
+/usr/bin/kded6
+/usr/bin/kdeinit6
+/usr/bin/kglobalacceld
+/usr/bin/kcminit
+/usr/bin/ksmserver
+/usr/bin/krunner
+/usr/bin/systemsettings
+/usr/bin/dbus-daemon
+/usr/bin/dbus-launch
+/usr/bin/dbus-run-session
+/usr/bin/dbus-uuidgen
+/usr/bin/seatd
+/usr/bin/Xorg
+/usr/bin/xauth
+/usr/bin/xrdb
+/usr/bin/xset
+/usr/bin/setxkbmap
+/usr/bin/pipewire
+/usr/bin/pipewire-pulse
+/usr/bin/wireplumber

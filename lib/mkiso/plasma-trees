@@ -1,0 +1,39 @@
+# Directory trees copied into a --session plasma live image.
+# Keep this list to prefixes the live session actually needs. Copying all of
+# /usr is how you accidentally ship a 4G ISO.
+/usr/lib64/qt6
+/usr/lib/qt6
+/usr/share/qt6
+/usr/share/plasma
+/usr/share/kservicetypes6
+/usr/share/kservices6
+/usr/share/qlogging-categories6
+/usr/share/wayland-sessions
+/usr/share/xsessions
+/usr/share/konsole
+/usr/share/applications
+/usr/share/desktop-directories
+/usr/share/icons
+/usr/share/mime
+/usr/share/knotifications6
+/usr/share/kglobalaccel
+/usr/share/kded6
+/usr/share/dbus-1
+/usr/share/polkit-1
+/usr/share/wayland-protocols
+/usr/share/libdrm
+/usr/share/X11
+/usr/lib64/xorg
+/usr/lib/xorg
+/etc/X11
+/etc/xdg
+/usr/lib64/dri
+/usr/lib/dri
+/usr/lib64/gbm
+/usr/lib64/libkwin.so
+/lib/firmware/nvidia
+/lib/firmware/nouveau
+/usr/lib64/pipewire-0.3
+/usr/lib64/spa-0.2
+/usr/share/pipewire
+/usr/share/wireplumber

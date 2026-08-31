@@ -44,9 +44,12 @@ cp "$project_dir/examples/sps.conf" "$root/etc/sps/sps.conf"
 printf 'repo examples %s 100\n' "$project_dir/examples" >"$root/etc/sps/repos.conf"
 
 SPS_ROOT=$root
+SPS_CONFIG=$root/etc/sps/sps.conf
+SPS_REPOS_CONFIG=$root/etc/sps/repos.conf
 SPS_COMPRESSION=none
 PATH=$image/usr/bin:$PATH
-export SPS_ROOT SPS_COMPRESSION PATH
+export SPS_ROOT SPS_CONFIG SPS_REPOS_CONFIG SPS_COMPRESSION PATH
+unset SPS_LIBDIR SPS_DB SPS_CACHE SPS_BUILD SPS_REPO_ROOT
 
 "$image/usr/bin/src" update >/dev/null || fail 'installed src update failed'
 plan=$("$image/usr/bin/sget" install --plan hello-sps) ||

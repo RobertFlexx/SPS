@@ -1,0 +1,8 @@
+# SPS Linux Plasma live: Wayland session on tty1 instead of a getty.
+::sysinit:/etc/sps/live-rc
+tty1::respawn:/etc/sps/live-plasma
+tty2::respawn:/bin/busybox getty -n -l /bin/sh 38400 tty2
+ttyS0::respawn:/bin/busybox getty -n -l /bin/sh -L 115200 ttyS0
+::ctrlaltdel:/bin/busybox reboot
+::shutdown:/bin/busybox umount -a -r
+::restart:/sbin/init

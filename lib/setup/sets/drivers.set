@@ -1,0 +1,9 @@
+name        drivers
+title       Detected drivers
+description Mesa, nouveau, firmware, and related GPU/NIC helpers. Auto-detection also adds these.
+default     0
+package     mesa
+package     nouveau
+package     linux-firmware
+package     intel-ucode
+package     amd-ucode

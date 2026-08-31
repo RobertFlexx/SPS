@@ -1,0 +1,38 @@
+#!/bin/sh
+# Plasma live session. Respawned by busybox init on tty1. Open Konsole
+# and run setup(1). If Plasma is missing, a shell stays on this tty.
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+export HOME=/root
+export XDG_RUNTIME_DIR=/run/user/0
+export XDG_SESSION_TYPE=wayland
+export QT_QPA_PLATFORM=wayland
+export TERM=${TERM:-linux}
+
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+
+# Live NVIDIA is nouveau. Keep the proprietary stack unloaded.
+modprobe nouveau 2>/dev/null || :
+
+if command -v dbus-daemon >/dev/null 2>&1; then
+	if [ ! -S /run/dbus/system_bus_socket ]; then
+		mkdir -p /run/dbus
+		dbus-daemon --system --fork 2>/dev/null || :
+	fi
+fi
+if command -v seatd >/dev/null 2>&1; then
+	seatd -g video >/dev/null 2>&1 &
+	sleep 1
+fi
+
+if command -v startplasma-wayland >/dev/null 2>&1; then
+	# Give the user a console they can see if Wayland dies.
+	chvt 1 2>/dev/null || :
+	exec startplasma-wayland
+fi
+
+printf '%s\n' "Plasma is not on this image; dropping to a shell on tty1."
+printf '%s\n' "Run setup from here, or use tty2 / ttyS0."
+exec /bin/sh

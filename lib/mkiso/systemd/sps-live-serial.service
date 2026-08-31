@@ -1,0 +1,19 @@
+[Unit]
+Description=SPS Linux live serial getty
+After=sps-live-rc.service
+ConditionPathExists=/dev/ttyS0
+
+[Service]
+ExecStart=-/sbin/agetty -n -l /bin/sh -L 115200 ttyS0
+Type=idle
+Restart=always
+RestartSec=1
+TTYPath=/dev/ttyS0
+TTYReset=yes
+TTYVHangup=yes
+IgnoreSIGPIPE=no
+SendSIGHUP=yes
+
+[Install]
+WantedBy=multi-user.target
+WantedBy=graphical.target

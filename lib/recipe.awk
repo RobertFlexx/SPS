@@ -115,7 +115,8 @@ function recipe_process(line,    key, value, separator) {
     if (key == "name" || key == "version" || key == "release" ||
         key == "arch" || key == "description") {
         recipe_set_once(key, value)
-    } else if (key == "depend" || key == "builddep" || key == "optional") {
+    } else if (key == "depend" || key == "builddep" || key == "optional" ||
+               key == "conflict") {
         recipe_append_dependency(key, value)
     } else if (key == "source") {
         recipe_source_count++
@@ -181,6 +182,7 @@ END {
     recipe_value["depend"] = recipe_expand(recipe_value["depend"])
     recipe_value["builddep"] = recipe_expand(recipe_value["builddep"])
     recipe_value["optional"] = recipe_expand(recipe_value["optional"])
+    recipe_value["conflict"] = recipe_expand(recipe_value["conflict"])
 
     for (recipe_i = 1; recipe_i <= recipe_hash_count; recipe_i++) {
         recipe_hash_value = recipe_expand(recipe_hash[recipe_i])
@@ -213,6 +215,7 @@ END {
     recipe_valid_dependency_list("dependency", recipe_value["depend"])
     recipe_valid_dependency_list("build dependency", recipe_value["builddep"])
     recipe_valid_dependency_list("optional dependency", recipe_value["optional"])
+    recipe_valid_dependency_list("conflict", recipe_value["conflict"])
 
     if (recipe_repo !~ /^[[:alnum:]][[:alnum:].+_-]*$/)
         recipe_error("invalid repository name '" recipe_repo "'")
@@ -231,5 +234,6 @@ END {
           recipe_value["release"], recipe_value["arch"],
           recipe_value["depend"], recipe_value["builddep"],
           recipe_value["optional"], recipe_repo, recipe_priority,
-          recipe_path, recipe_value["description"], tolower(recipe_sha256)
+          recipe_path, recipe_value["description"], tolower(recipe_sha256),
+          recipe_value["conflict"]
 }

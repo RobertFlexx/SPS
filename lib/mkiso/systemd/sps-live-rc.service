@@ -1,0 +1,15 @@
+[Unit]
+Description=SPS Linux live sysinit
+DefaultDependencies=no
+After=systemd-udevd.service
+Before=getty.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/etc/sps/live-rc
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target
+WantedBy=graphical.target

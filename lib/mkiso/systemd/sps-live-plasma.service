@@ -1,0 +1,18 @@
+[Unit]
+Description=SPS Linux live Plasma (Wayland)
+After=sps-live-rc.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=tty
+ExecStart=/etc/sps/live-plasma
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical.target

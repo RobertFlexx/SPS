@@ -1,75 +1,101 @@
-#!/bin/sh
-# Live initramfs. Mount the ISO, squashfs, and overlay, then switch_root.
+#!/bin/busybox sh
+# Initramfs PID 1. Find the ISO, mount squashfs+overlay, switch_root.
+#
+# Do not call `busybox --install -s` here. That writes absolute applet
+# links, and those panic once the host paths are gone. mkiso already
+# planted relative links next to /bin/busybox.
+#
+# Invoke applets as `/bin/busybox NAME` so a missing symlink cannot
+# make PID 1 exit 127.
 
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export PATH
 
-/bin/busybox --install -s /bin 2>/dev/null || :
-# Applets may already be relative links from mkiso.
+bb=/bin/busybox
+[ -x "$bb" ] || bb=busybox
 
 mkdir -p /proc /sys /dev /tmp /mnt/iso /mnt/ro /mnt/rw /mnt/new
 
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev 2>/dev/null || mount -t tmpfs tmpfs /dev
+"$bb" mount -t proc proc /proc
+"$bb" mount -t sysfs sysfs /sys
+"$bb" mount -t devtmpfs devtmpfs /dev 2>/dev/null ||
+	"$bb" mount -t tmpfs tmpfs /dev
 mkdir -p /dev/pts
-mount -t devpts devpts /dev/pts 2>/dev/null || :
+"$bb" mount -t devpts devpts /dev/pts 2>/dev/null || :
 
-# Load filesystem modules when they are not built in.
+rescue()
+{
+	printf '%s\n' "$*"
+	printf '%s\n' "mkiso: dropping to a shell. PID 1 stays this shell."
+	# Do not exec a missing binary; keep this process alive.
+	while :
+	do
+		"$bb" setsid "$bb" sh -c 'exec '"$bb"' sh <>/dev/console >&0 2>&1' ||
+			"$bb" sh
+		"$bb" sleep 1
+	done
+}
+
 for mod in loop squashfs overlay isofs vfat nls_cp437 nls_iso8859-1 \
 	usb-storage xhci-pci ehci-pci uhci-hcd sr_mod sd_mod ahci nvme \
-	virtio_blk virtio_pci virtio_scsi virtio_net
+	virtio_blk virtio_pci virtio_scsi virtio_net virtio_console \
+	sdhci sdhci-pci mmc_block
 do
-	modprobe "$mod" 2>/dev/null || :
+	"$bb" modprobe "$mod" 2>/dev/null || :
 done
 
 sleep 1
 
 found=
-for i in 1 2 3 4 5 6 7 8 9 10; do
-	for dev in /dev/sr0 /dev/sr1 /dev/cdrom \
-		/dev/nvme0n1p1 /dev/nvme1n1p1 \
-		/dev/sda /dev/sda1 /dev/sdb /dev/sdb1 \
-		/dev/vda /dev/vda1 /dev/vdb /dev/vdb1
+i=0
+while [ "$i" -lt 15 ]
+do
+	i=$((i + 1))
+	for dev in /dev/sr0 /dev/sr1 /dev/sr2 /dev/cdrom \
+		/dev/nvme0n1 /dev/nvme0n1p1 /dev/nvme1n1p1 \
+		/dev/sda /dev/sda1 /dev/sdb /dev/sdb1 /dev/sdc /dev/sdc1 \
+		/dev/vda /dev/vda1 /dev/vdb /dev/vdb1 \
+		/dev/xvda /dev/xvda1
 	do
 		[ -b "$dev" ] || continue
-		if mount -t iso9660 -o ro "$dev" /mnt/iso 2>/dev/null ||
-		   mount -o ro "$dev" /mnt/iso 2>/dev/null; then
+		if "$bb" mount -t iso9660 -o ro "$dev" /mnt/iso 2>/dev/null ||
+		   "$bb" mount -o ro "$dev" /mnt/iso 2>/dev/null; then
 			if [ -f /mnt/iso/live/filesystem.squashfs ]; then
 				found=$dev
 				break
 			fi
-			umount /mnt/iso 2>/dev/null || :
+			"$bb" umount /mnt/iso 2>/dev/null || :
 		fi
 	done
 	[ -n "$found" ] && break
 	sleep 1
 done
 
-if [ -z "$found" ]; then
-	printf '%s\n' "mkiso: cannot find the SPS live filesystem on a CD/USB."
-	printf '%s\n' "Dropping to a shell."
-	exec setsid /bin/sh </dev/console >/dev/console 2>&1
+[ -n "$found" ] || rescue "mkiso: cannot find the SPS Linux live filesystem on a CD/USB."
+
+"$bb" mount -t squashfs -o ro /mnt/iso/live/filesystem.squashfs /mnt/ro ||
+	rescue "mkiso: squashfs mount failed"
+
+"$bb" mount -t tmpfs tmpfs /mnt/rw
+mkdir -p /mnt/rw/upper /mnt/rw/work
+"$bb" mount -t overlay overlay \
+	-o lowerdir=/mnt/ro,upperdir=/mnt/rw/upper,workdir=/mnt/rw/work \
+	/mnt/new ||
+	rescue "mkiso: overlay mount failed"
+
+mkdir -p /mnt/new/mnt/iso /mnt/new/proc /mnt/new/sys /mnt/new/dev \
+	/mnt/new/run /mnt/new/tmp
+"$bb" mount --move /mnt/iso /mnt/new/mnt/iso 2>/dev/null || :
+"$bb" mount --move /proc /mnt/new/proc 2>/dev/null || :
+"$bb" mount --move /sys /mnt/new/sys 2>/dev/null || :
+"$bb" mount --move /dev /mnt/new/dev 2>/dev/null || :
+
+if [ ! -e /mnt/new/sbin/init ] && [ ! -L /mnt/new/sbin/init ]; then
+	rescue "mkiso: /sbin/init missing on the live filesystem"
 fi
 
-mount -t squashfs -o ro /mnt/iso/live/filesystem.squashfs /mnt/ro || {
-	printf '%s\n' "mkiso: squashfs mount failed"
-	exec setsid /bin/sh </dev/console >/dev/console 2>&1
-}
-
-mount -t tmpfs tmpfs /mnt/rw
-mkdir -p /mnt/rw/upper /mnt/rw/work
-mount -t overlay overlay \
-	-o lowerdir=/mnt/ro,upperdir=/mnt/rw/upper,workdir=/mnt/rw/work \
-	/mnt/new || {
-	printf '%s\n' "mkiso: overlay mount failed"
-	exec setsid /bin/sh </dev/console >/dev/console 2>&1
-}
-
-mkdir -p /mnt/new/mnt/iso /mnt/new/proc /mnt/new/sys /mnt/new/dev /mnt/new/run /mnt/new/tmp
-mount --move /mnt/iso /mnt/new/mnt/iso 2>/dev/null || :
-mount --move /proc /mnt/new/proc 2>/dev/null || :
-mount --move /sys /mnt/new/sys 2>/dev/null || :
-mount --move /dev /mnt/new/dev 2>/dev/null || :
-
-exec switch_root /mnt/new /sbin/init
+# busybox switch_root replaces PID 1. If the new init cannot exec, we
+# would panic; the live /sbin/init is an ELF (busybox or systemd), not
+# a script that execs a console.
+exec "$bb" switch_root /mnt/new /sbin/init
+rescue "mkiso: switch_root failed"

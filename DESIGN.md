@@ -1,8 +1,10 @@
 # SPS 1.0 formats and behavior
 
 This file documents the interfaces that packages and distro tooling can depend
-on in SPS Package metadata,
-indexes, and installed records are meant to be inspectable and scriptable.
+on in SPS 1.0.
+
+Package metadata, indexes, and installed records are meant to be inspectable
+and scriptable.
 
 The current package format is `format 1`. If a later SPS release needs an
 incompatible package layout, it must use a new format number.
@@ -33,7 +35,14 @@ hash
 depend
 builddep
 optional
+conflict
 ```
+
+`conflict` names packages that must not be installed together. `sget install`
+refuses a transaction that contains both a package and one of its conflicts,
+and also refuses to install a package that conflicts with something already
+in the database. `src update` still validates the whole graph; two packages
+that conflict may both exist in the repository.
 
 `description` is a single-value field.
 
@@ -84,8 +93,11 @@ Indexes live under `$SPS_CACHE/indexes`. Each package record is tab-separated
 and contains:
 
 ```text
-name version release arch depends builddeps optional repo priority recipe_path description definition_sha256
+name version release arch depends builddeps optional repo priority recipe_path description definition_sha256 conflicts
 ```
+
+`conflicts` is empty when the recipe has no `conflict` records. Older 12-field
+index files are still accepted; missing conflicts are treated as none.
 
 Dependency lists are comma-separated. Field values may not contain tabs or
 newlines. The definition digest covers the recipe content and the relative

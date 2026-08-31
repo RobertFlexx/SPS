@@ -1,6 +1,6 @@
 .TH MKISO 1 "2026-08-31" "SPS 1.0" "SPS Commands"
 .SH NAME
-mkiso \- build an SPS live TTY ISO
+mkiso \- build an SPS Linux live ISO (Splux)
 .SH SYNOPSIS
 .nf
 mkiso --output FILE.iso [options]
@@ -8,16 +8,20 @@ mkiso --layout DIR [options]
 .fi
 .SH DESCRIPTION
 .B mkiso
-builds a hybrid ISO that boots to a text console with
+builds a hybrid ISO for
+.B SPS Linux
+(informally Splux). The image boots with a real init as PID 1 and
 .BR setup (1)
-on PATH. Flash it to USB, boot, mount a destination filesystem on
-.IR /mnt ,
-and run
-.B setup .
+on PATH. Default
+.B --init
+is systemd. If the build host has no systemd binaries, busybox init
+respawns gettys on tty1 and ttyS0 instead of exec-ing a shell as PID 1.
+SPS the package system does not require these images.
 .PP
-The image does not partition disks and never runs
-.B grub-install
-on a hard disk.
+Flash it to USB, boot, and run
+.B setup .
+.B --session plasma
+copies a host Plasma/Wayland stack; NVIDIA live graphics use nouveau.
 .B --layout
 writes the live root only, for tests and inspection.
 .PP
@@ -33,6 +37,17 @@ Write a bootable ISO.
 .TP
 .BI --layout " dir"
 Populate a live root and exit.
+.TP
+.BI --session " name"
+.B tty
+or
+.B plasma .
+.TP
+.BI --init " name"
+.B systemd
+or
+.B openrc .
+Default systemd.
 .TP
 .BI --busybox " file"
 Static busybox used for the initramfs and live

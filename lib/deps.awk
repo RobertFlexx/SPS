@@ -167,9 +167,9 @@ BEGIN {
 }
 
 {
-    if (NF != 12) {
+    if (NF != 12 && NF != 13) {
         deps_error(FILENAME ":" FNR \
-                   ": malformed index record (expected 12 fields)")
+                   ": malformed index record (expected 12 or 13 fields)")
         next
     }
     if ($1 !~ /^[A-Za-z0-9][A-Za-z0-9+_.-]*$/ ||
@@ -191,6 +191,7 @@ BEGIN {
         deps_build[$1] = $6
         deps_recipe[$1] = $10
         deps_recipe_sha256[$1] = $12
+        deps_conflict[$1] = (NF >= 13 ? $13 : "")
     } else if (($9 + 0) > deps_selected_priority[$1]) {
         deps_selected_priority[$1] = $9 + 0
         deps_version[$1] = $2
@@ -200,6 +201,7 @@ BEGIN {
         deps_build[$1] = $6
         deps_recipe[$1] = $10
         deps_recipe_sha256[$1] = $12
+        deps_conflict[$1] = (NF >= 13 ? $13 : "")
     }
 }
 
@@ -230,6 +232,42 @@ END {
             break
         }
         deps_visit(deps_roots[deps_i], "")
+        if (deps_failed)
+            break
+    }
+    if (deps_failed)
+        exit 5
+
+    # installed=name,name from sget: already-installed packages.
+    if (installed != "") {
+        deps_ninst = split(installed, deps_inst, ",")
+        for (deps_i = 1; deps_i <= deps_ninst; deps_i++) {
+            if (deps_inst[deps_i] != "")
+                deps_installed[deps_inst[deps_i]] = 1
+        }
+    }
+    for (deps_i = 1; deps_i <= deps_order_count; deps_i++)
+        deps_in_order[deps_order[deps_i]] = 1
+    for (deps_i = 1; deps_i <= deps_order_count; deps_i++) {
+        deps_package = deps_order[deps_i]
+        if (deps_conflict[deps_package] == "")
+            continue
+        deps_nc = split(deps_conflict[deps_package], deps_citems, ",")
+        for (deps_j = 1; deps_j <= deps_nc; deps_j++) {
+            deps_other = deps_citems[deps_j]
+            if (deps_other == "" || deps_other == deps_package)
+                continue
+            if (deps_in_order[deps_other]) {
+                deps_error("package '" deps_package "' conflicts with '" \
+                           deps_other "' (both in this transaction)")
+                break
+            }
+            if (deps_installed[deps_other]) {
+                deps_error("package '" deps_package "' conflicts with installed '" \
+                           deps_other "'")
+                break
+            }
+        }
         if (deps_failed)
             break
     }

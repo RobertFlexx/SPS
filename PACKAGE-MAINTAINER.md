@@ -4,6 +4,10 @@ An SPS package directory contains a line-oriented file named `recipe`. It may
 also contain `files/`, `patches/`, and `hooks/`. Recipes are data, not shell
 files: repository indexing parses them without executing build commands.
 
+The same recipe format works anywhere SPS runs, including Linux From Scratch
+and custom roots. `linux-desktop`, Plasma profiles, and `setup` defaults are
+**SPS Linux** (Splux) distro pieces; an LFS project can ignore them.
+
 ## Recipe records
 
 Each logical line is a key, whitespace, and a non-empty value. Blank lines and
@@ -24,14 +28,19 @@ The complete key set is:
 | `depend` | repeatable | Runtime dependency |
 | `builddep` | repeatable | Build dependency |
 | `optional` | repeatable | Informational optional dependency |
+| `conflict` | repeatable | Package names that cannot be co-installed |
 | `prepare` | repeatable | Source preparation command |
 | `configure` | repeatable | Configuration command |
 | `build` | repeatable | Build command |
 | `install` | one or more | Staged installation command |
 
 Unknown keys are errors. SPS 1.0 has no recipe keys for homepage, license,
-maintainer, conflicts, replacements, provides, or package options. Keep that
+maintainer, replacements, provides, or package options. Keep that
 information in repository documentation when needed; do not invent fields.
+
+`conflict` is supported: `sget` will not install a package next to a named
+conflict. Use it for init systems (`systemd` vs `openrc`) and for udev
+implementations (`systemd` vs `eudev`).
 
 `name`, `version`, `release`, and at least one `install` record are required.
 The install phase must produce a non-empty package. `name` must begin with an
@@ -71,7 +80,7 @@ not independently validate every tar link target before extraction.
 
 ## Dependencies
 
-Use the singular keys `depend`, `builddep`, and `optional`. A record may contain
+Use the singular keys `depend`, `builddep`, `optional`, and `conflict`. A record may contain
 one or more whitespace- or comma-separated specifications. Version constraints
 have no spaces around the operator:
 

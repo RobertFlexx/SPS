@@ -7,6 +7,12 @@ case $0 in
 esac
 test_dir=$(CDPATH= cd -- "$test_dir" 2>/dev/null && pwd)
 
+# A developer shell that has run src/sget exports SPS_* into the environment.
+# Drop those so `make check` does not read the host config by accident.
+unset SPS_ROOT SPS_CONFIG SPS_REPOS_CONFIG SPS_DB SPS_CACHE SPS_BUILD \
+	SPS_LIBDIR SPS_REPO_ROOT SPS_COMPRESSION SPS_ARCH SPS_PRESERVE \
+	SPS_MAKEJOBS 2>/dev/null || :
+
 status=0
 count=0
 for test_file in "$test_dir"/test_*.sh; do

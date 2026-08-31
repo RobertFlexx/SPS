@@ -90,7 +90,7 @@ EOF_VALID
 valid_record=$(parse_recipe "$tmp/valid/recipe") ||
     fail 'complete recipe was rejected by the index parser'
 printf '%s\n' "$valid_record" | awk -F '\t' '
-    NF == 12 && $1 == "contract-valid" && $2 == "1.0" &&
+    NF == 13 && $1 == "contract-valid" && $2 == "1.0" &&
     $3 == "1" && $4 == "any" { valid=1 }
     END { exit !valid }
 ' || fail 'complete recipe produced the wrong index identity'

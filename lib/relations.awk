@@ -56,7 +56,7 @@ function rel_find(cur, target,    i,d) {
 BEGIN { FS=OFS="\t" }
 /^$/ { next }
 {
-    if (NF != 12) { rel_err(FILENAME ":" FNR ": malformed index record"); next }
+    if (NF != 12 && NF != 13) { rel_err(FILENAME ":" FNR ": malformed index record"); next }
     name=$1; prio=$9+0
     if (!(name in selected) || prio > priority[name]) {
         selected[name]=1

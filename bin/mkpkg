@@ -274,7 +274,7 @@ function allowed(key) {
 	return key == "name" || key == "version" || key == "release" ||
 	       key == "arch" || key == "description" || key == "source" ||
 	       key == "hash" || key == "depend" || key == "builddep" ||
-	       key == "optional" || key == "prepare" || key == "configure" ||
+	       key == "optional" || key == "conflict" || key == "prepare" || key == "configure" ||
 	       key == "build" || key == "install"
 }
 function emit(text, n, key, value, at) {
@@ -797,7 +797,7 @@ $1 == "description" {
 	next
 }
 $1 == "source" || $1 == "hash" || $1 == "depend" ||
-$1 == "builddep" || $1 == "optional" {
+$1 == "builddep" || $1 == "optional" || $1 == "conflict" {
 	repeated[++count] = $0
 }
 END {

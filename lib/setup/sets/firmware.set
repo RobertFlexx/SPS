@@ -1,5 +1,5 @@
 name        firmware
 title       Firmware
 description linux-firmware blob collection. Needed for many NICs and GPUs.
-default     0
+default     1
 package     linux-firmware

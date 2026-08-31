@@ -90,7 +90,7 @@ contains "$update_output" 'updated 3 repositories, 4 package records'
 
 index=$tmp/cache/indexes/packages.index
 [ -r "$index" ] || fail 'aggregate index was not created'
-awk -F '\t' 'NF != 12 { bad = 1 }
+awk -F '\t' 'NF != 12 && NF != 13 { bad = 1 }
              END { exit bad || NR != 4 }' "$index" ||
     fail 'aggregate index does not contain four valid records'
 

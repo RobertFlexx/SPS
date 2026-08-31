@@ -125,3 +125,7 @@
 /usr/lib64/libstdc++.so.6
 /usr/lib64/libgomp.so.1
 /usr/lib64/libatomic.so.1
+/usr/bin/setsid
+/sbin/agetty
+/usr/bin/getty
+

@@ -10,7 +10,7 @@ PROGRAMS = src sget mkpkg pkin pkdel pkstat pkcheck pkmark setup mkiso
 AWK_LIBS = common.awk config.awk db.awk deps.awk index.awk package.awk recipe.awk repository.awk relations.awk version.awk
 
 .PHONY: all check lint check-version source-archive release-check \
-	install install-config clean
+	install install-config clean iso iso-slim iso-plasma
 
 all:
 	@printf '%s\n' "SPS is interpreted; run 'make check' or 'make install'."
@@ -24,6 +24,15 @@ lint:
 	done
 	@set -e; for library in lib/*.sh; do \
 		$(POSIX_SHELL) -n $$library; \
+	done
+	@set -e; for library in lib/setup/*.sh; do \
+		[ -f $$library ] || continue; \
+		$(POSIX_SHELL) -n $$library; \
+	done
+	@set -e; for script in lib/mkiso/initrd-init lib/mkiso/live-rc \
+		lib/mkiso/live-plasma lib/mkiso/live-init; do \
+		[ -f $$script ] || continue; \
+		$(POSIX_SHELL) -n $$script; \
 	done
 	@# Pure library modules can be parsed without an action or fixture.  The
 	@# executable AWK modules validate their input in END rules, so the test
@@ -163,11 +172,21 @@ install:
 	@set -e; for f in lib/mkiso/*; do \
 		[ -f "$$f" ] || continue; \
 		case $$f in \
-			*/live-init|*/initrd-init) \
+			*/live-init|*/initrd-init|*/live-rc|*/live-plasma) \
 				install -m 0755 $$f "$(DESTDIR)$(LIBDIR)/mkiso/" ;; \
 			*) \
 				install -m 0644 $$f "$(DESTDIR)$(LIBDIR)/mkiso/" ;; \
 		esac; \
+	done
+	install -d "$(DESTDIR)$(LIBDIR)/mkiso/systemd"
+	@set -e; for f in lib/mkiso/systemd/*; do \
+		[ -f "$$f" ] || continue; \
+		install -m 0644 $$f "$(DESTDIR)$(LIBDIR)/mkiso/systemd/"; \
+	done
+	install -d "$(DESTDIR)$(LIBDIR)/setup"
+	@set -e; for f in lib/setup/*.sh; do \
+		[ -f "$$f" ] || continue; \
+		install -m 0644 $$f "$(DESTDIR)$(LIBDIR)/setup/"; \
 	done
 
 # Configuration is separate so installation never overwrites administrator
@@ -178,6 +197,41 @@ install-config:
 		install -m 0644 examples/sps.conf "$(DESTDIR)$(SYSCONFDIR)/sps.conf"
 	@test -e "$(DESTDIR)$(SYSCONFDIR)/repos.conf" || \
 		install -m 0644 examples/repos.conf "$(DESTDIR)$(SYSCONFDIR)/repos.conf"
+
+# SPS Linux (Splux) live images. busybox must be a static binary; the host
+# copy is usually dynamically linked and will not survive in an initramfs.
+ISO_BUSYBOX ?= /tmp/sps-wave/busybox.static
+ISO_CORE ?= /usr/src/sps/core
+ISO_EXTRA ?= /usr/src/sps/extra
+ISO_DIR ?= dist
+
+iso:
+	@test -x "$(ISO_BUSYBOX)" || { \
+		printf '%s\n' "iso: static busybox not found: $(ISO_BUSYBOX)" >&2; \
+		exit 1; \
+	}
+	mkdir -p "$(ISO_DIR)"
+	bin/mkiso --output "$(ISO_DIR)/sps-live.iso" --init systemd \
+		--busybox "$(ISO_BUSYBOX)" --core "$(ISO_CORE)" --extra "$(ISO_EXTRA)"
+
+iso-slim:
+	@test -x "$(ISO_BUSYBOX)" || { \
+		printf '%s\n' "iso-slim: static busybox not found: $(ISO_BUSYBOX)" >&2; \
+		exit 1; \
+	}
+	mkdir -p "$(ISO_DIR)"
+	bin/mkiso --output "$(ISO_DIR)/sps-live-slim.iso" --init systemd \
+		--no-seed --no-modules --busybox "$(ISO_BUSYBOX)"
+
+iso-plasma:
+	@test -x "$(ISO_BUSYBOX)" || { \
+		printf '%s\n' "iso-plasma: static busybox not found: $(ISO_BUSYBOX)" >&2; \
+		exit 1; \
+	}
+	mkdir -p "$(ISO_DIR)"
+	bin/mkiso --output "$(ISO_DIR)/sps-live-plasma.iso" \
+		--session plasma --init systemd \
+		--busybox "$(ISO_BUSYBOX)" --core "$(ISO_CORE)" --extra "$(ISO_EXTRA)"
 
 clean:
 	@find . -type f \( -name '*.pkg.tar' -o -name '*.pkg.tar.gz' -o \

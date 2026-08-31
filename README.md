@@ -12,6 +12,26 @@ If you REALLY want the project rationale and the boundaries of the design, read
 [MANIFESTO.md](MANIFESTO.md). The exact 1.0 file formats and behavior are in
 [DESIGN.md](DESIGN.md).
 
+## SPS is not the distro
+
+SPS is the source package system. It is not locked to one operating system.
+You can run `src`, `sget`, `mkpkg`, `pkin`, and the rest on Linux From Scratch,
+on a custom chroot, or next to another distro's userland. Recipes are plain
+text; an LFS tree can consume sps-core and sps-extra the same way SPS Linux
+does.
+
+**SPS Linux** is a Linux distribution that *uses* SPS. Informally it is called
+**Splux**. Official installer flow, live ISOs, Plasma profiles, and the
+`linux-desktop` kernel are SPS Linux pieces. They live in this tree and in
+the core/extra collections because that is how Splux is built and installed.
+
+If you take SPS into an LFS (or any other) project, do not assume `setup`
+will do the right thing for you. The installer partitions disks, writes
+fstab, chooses systemd or OpenRC, copies a Splux hostname, and installs
+distro profiles. Your LFS book already has its own disk, boot, and
+configuration story. Use `sget` and `mkpkg` there; skip `setup` and `mkiso`
+unless you actually want SPS Linux on that machine.
+
 ## Tools
 
 SPS is a set of tools rather than one large front end:
@@ -24,8 +44,10 @@ SPS is a set of tools rather than one large front end:
 - `pkstat` reads the installed package database.
 - `pkcheck` checks installed files and database consistency.
 - `pkmark` changes whether an installed package is explicit or dependency-only.
-- `setup` is a dialog(1) system installer (Slackware/FreeBSD style).
-- `mkiso` builds a live TTY ISO you can flash and boot into `setup`.
+- `setup` is the SPS Linux (Splux) dialog(1) installer (Slackware/FreeBSD
+  style). Optional; other projects using SPS do not need it.
+- `mkiso` builds an SPS Linux live ISO (systemd by default; busybox init if
+  systemd is not on the build host) you can flash and boot into `setup`.
 
 The split matters. `pkin` does not search repositories. `pkdel` does not solve
 dependencies. `src` does not install anything. `sget` ties the lower-level tools
@@ -138,10 +160,10 @@ pkdel foo
 This is useful for recovery work, distro installers, package development, and
 cases where the administrator wants to bypass dependency policy on purpose.
 
-## Install a system
+## Install SPS Linux (Splux)
 
-`setup` is the distro installer. It uses `dialog` screens, or the same choices
-from flags for scripts:
+`setup` is the **SPS Linux** installer, not a generic SPS or LFS installer.
+It uses `dialog` screens, or the same choices from flags for scripts:
 
 ```sh
 setup
@@ -156,33 +178,46 @@ SSH, and more. `setup --list-sets` prints them. There is also an extra-package
 checklist (`--extra`) plus locale and login-shell screens.
 
 The installer writes hostname, timezone, keymap, and a first user into the
-target, then runs `src update` and `sget install`. It does not partition disks
-and does not run `grub-install` unless you pass `--install-bootloader`, which
-still refuses to guess a disk.
+target, then runs `src update` and `sget install`. Guided partitioning is
+optional and waits until the last confirmation. Choose systemd or OpenRC
+as PID 1 (`--init`); those packages conflict. `grub-install` still needs
+`--install-bootloader` and `--disk`.
 
-## Live TTY ISO
+## SPS Linux live ISO
 
-`mkiso` writes a hybrid ISO. Flash it to USB, boot to a console, mount a
-destination filesystem on `/mnt`, and run `setup`. Ready-made images:
+`mkiso` writes a hybrid ISO for SPS Linux (Splux). Flash it to USB, boot to a
+console, mount a destination filesystem on `/mnt`, and run `setup`. Ready-made
+images:
 
-https://github.com/RobertFlexx/SPS/releases/tag/live-2026-08-31
+https://github.com/RobertFlexx/SPS/releases/tag/live-2026-08-31-2
 
 ```sh
-mkiso --output dist/sps-live.iso \
+mkiso --output dist/sps-live.iso --init systemd \
   --busybox /path/to/busybox \
   --core /usr/src/sps/core \
   --extra /usr/src/sps/extra
+
+make iso
+make iso-slim
+make iso-plasma
 ```
+
+Live PID 1 is systemd when the build host has it, otherwise busybox init
+with gettys on tty1 and ttyS0. The earlier live TTY image exec'd a shell
+as PID 1 and panicked in QEMU (`Attempted to kill init`, exit 127) when
+that shell exited. `--session plasma` copies a host Plasma/Wayland stack;
+NVIDIA live graphics go through nouveau.
 
 `--layout DIR` writes the live root without making an ISO. `--no-seed` skips
 copying the host compiler. `--with-firmware` copies `/lib/firmware` (large;
 published images omit it). The live image never runs `grub-install` on a disk.
 
 Download a ready-made hybrid ISO from this repository's GitHub Releases, flash
-it to USB, boot the "SPS live TTY" entry, mount a destination filesystem on
-`/mnt`, and run `setup`. The image includes the installer, sps-core and
-sps-extra recipes, and a host seed compiler so `setup` can build packages.
-A full Plasma install compiles Qt and KDE from source and takes a long time.
+it to USB, boot the "SPS Linux live (Splux)" entry, mount a destination
+filesystem on `/mnt`, and run `setup`. The image includes the installer,
+sps-core and sps-extra recipes, and a host seed compiler so `setup` can build
+packages. A full Plasma install compiles Qt and KDE from source and takes a
+long time.
 
 ```sh
 # flash (example)

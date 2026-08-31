@@ -48,6 +48,8 @@ function index_print_show(name) {
                                   ? "-" : index_output_fields[6])
     print "optional dependencies: " (index_output_fields[7] == "" \
                                      ? "-" : index_output_fields[7])
+    print "conflicts: " (index_output_fields[13] == "" \
+                         ? "-" : index_output_fields[13])
     print "definition sha256: " index_output_fields[12]
 }
 
@@ -60,8 +62,8 @@ BEGIN {
 }
 
 {
-    if (NF != 12) {
-        index_error(FILENAME ":" FNR ": malformed index record (expected 12 fields)")
+    if (NF != 12 && NF != 13) {
+        index_error(FILENAME ":" FNR ": malformed index record (expected 12 or 13 fields)")
         next
     }
     if ($1 !~ /^[A-Za-z0-9][A-Za-z0-9+_.-]*$/ ||
@@ -145,7 +147,7 @@ END {
                   index_output_fields[12], index_output_fields[2],
                   index_output_fields[3], index_output_fields[4]
         } else {
-            if (field !~ /^[[:digit:]]+$/ || field < 1 || field > 12) {
+            if (field !~ /^[[:digit:]]+$/ || field < 1 || field > 13) {
                 index_stderr((program == "" ? "src" : program) \
                              ": invalid index field '" field "'")
                 exit 2

@@ -1,0 +1,12 @@
+# SPS Linux live busybox inittab.
+# PID 1 is busybox init (an ELF). Consoles are children, not exec targets.
+# The previous live TTY exec'd a shell as PID 1 and died in QEMU when
+# that shell exited 127 (missing setsid/getty/sh, or ttyS0 hangup).
+
+::sysinit:/etc/sps/live-rc
+tty1::respawn:/bin/busybox getty -n -l /bin/sh 38400 tty1
+tty2::respawn:/bin/busybox getty -n -l /bin/sh 38400 tty2
+ttyS0::respawn:/bin/busybox getty -n -l /bin/sh -L 115200 ttyS0
+::ctrlaltdel:/bin/busybox reboot
+::shutdown:/bin/busybox umount -a -r
+::restart:/sbin/init

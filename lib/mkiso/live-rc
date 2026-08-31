@@ -1,0 +1,90 @@
+#!/bin/sh
+# Sysinit for the live image. Child of busybox init, or a systemd oneshot.
+# Must not replace PID 1 and must not exec a console. The old live TTY did
+# that and the kernel reported "Attempted to kill init" (exit 127).
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+if [ -d /usr/lib64/go1.27.0/go/bin ]; then
+	PATH=/usr/lib64/go1.27.0/go/bin:$PATH
+fi
+export PATH
+export HOME=/root
+export TERM=${TERM:-linux}
+export CARGO_HOME=${CARGO_HOME:-/root/.cargo}
+
+mkdir -p /proc /sys /dev /run /tmp /root /mnt /etc/sps
+mount -t proc proc /proc 2>/dev/null || :
+mount -t sysfs sysfs /sys 2>/dev/null || :
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || :
+mkdir -p /dev/pts /dev/shm
+mount -t devpts devpts /dev/pts 2>/dev/null || :
+mount -t tmpfs tmpfs /run 2>/dev/null || :
+mount -t tmpfs tmpfs /tmp 2>/dev/null || :
+
+if command -v ldconfig >/dev/null 2>&1; then
+	ldconfig 2>/dev/null || :
+fi
+
+ln -sf /proc/self/fd /dev/fd 2>/dev/null || :
+ln -sf /proc/self/fd/0 /dev/stdin 2>/dev/null || :
+ln -sf /proc/self/fd/1 /dev/stdout 2>/dev/null || :
+ln -sf /proc/self/fd/2 /dev/stderr 2>/dev/null || :
+
+hostname splux-live 2>/dev/null || :
+[ -f /etc/hostname ] || printf '%s\n' splux-live >/etc/hostname
+
+# NVIDIA live path is nouveau. Do not load proprietary nvidia* next to KWin.
+mkdir -p /etc/modprobe.d
+if [ ! -f /etc/modprobe.d/sps-nouveau.conf ]; then
+	printf '%s\n' \
+		'blacklist nvidia' \
+		'blacklist nvidia_drm' \
+		'blacklist nvidia_modeset' \
+		'blacklist nvidia_uvm' \
+		'options nouveau modeset=1' \
+		>/etc/modprobe.d/sps-nouveau.conf
+fi
+
+if [ -d /lib/modules ] && command -v depmod >/dev/null 2>&1; then
+	depmod -a 2>/dev/null || :
+fi
+for mod in e1000 e1000e r8169 virtio_net usbnet hid-generic usbhid atkbd \
+	nouveau bochs drm_kms_helper
+do
+	modprobe "$mod" 2>/dev/null || :
+done
+
+if command -v ip >/dev/null 2>&1; then
+	ip link set lo up 2>/dev/null || :
+fi
+if command -v dhcpcd >/dev/null 2>&1; then
+	dhcpcd -b 2>/dev/null || :
+elif command -v dhclient >/dev/null 2>&1; then
+	dhclient -nw 2>/dev/null || :
+fi
+
+# udev if present (eudev or systemd-udevd).
+if command -v udevd >/dev/null 2>&1; then
+	udevd --daemon 2>/dev/null || :
+	udevadm trigger --action=add 2>/dev/null || :
+	udevadm settle --timeout=5 2>/dev/null || :
+elif [ -x /lib/systemd/systemd-udevd ]; then
+	/lib/systemd/systemd-udevd --daemon 2>/dev/null || :
+	udevadm trigger --action=add 2>/dev/null || :
+	udevadm settle --timeout=5 2>/dev/null || :
+fi
+
+cat /etc/issue 2>/dev/null || :
+cat /etc/motd 2>/dev/null || :
+
+cmdline=$(cat /proc/cmdline 2>/dev/null || :)
+case " $cmdline " in
+	*" sps=setup "*)
+		# Child, not PID 1. setup can fail without taking the box down.
+		if command -v setup >/dev/null 2>&1; then
+			setup || :
+		fi
+		;;
+esac
+
+exit 0

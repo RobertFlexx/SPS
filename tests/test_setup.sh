@@ -30,12 +30,20 @@ contains "$sets" 'storage'
 contains "$sets" 'wifi'
 contains "$sets" 'firmware'
 contains "$sets" 'bluetooth'
+contains "$sets" 'drivers'
 
 plan=$("$setup" --plan --target /mnt --profile minimal --disable qol-cli)
 contains "$plan" 'Profile:    minimal'
 contains "$plan" 'base-system'
-contains "$plan" 'dialog'
-contains "$plan" 'Locale:     C.UTF-8'
+contains "$plan" 'Init:       none'
+
+plan=$("$setup" --plan --target /mnt --profile minimal --init systemd --disable qol-cli)
+contains "$plan" 'Init:       systemd'
+contains "$plan" 'init-systemd'
+
+plan=$("$setup" --plan --target /mnt --profile minimal --init openrc --disable qol-cli)
+contains "$plan" 'Init:       openrc'
+contains "$plan" 'init-openrc'
 
 plan=$("$setup" --plan --target /mnt --profile plasma-desktop --user alex \
 	--hostname darkstar --timezone UTC --keymap us --nvidia yes \

@@ -191,6 +191,21 @@ sget_compare_selected()
     printf '%s\n' "$sget_cmp"
 }
 
+sget_installed_names()
+{
+    sget_list=
+    [ -d "$SPS_DB/installed" ] || {
+        printf ''
+        return 0
+    }
+    for sget_d in "$SPS_DB/installed"/*; do
+        [ -d "$sget_d" ] || continue
+        sget_n=${sget_d##*/}
+        [ -n "$sget_list" ] && sget_list=$sget_list,$sget_n || sget_list=$sget_n
+    done
+    printf '%s' "$sget_list"
+}
+
 sget_cleanup_install()
 {
     if [ -n "${sget_work:-}" ]; then
@@ -300,6 +315,7 @@ sget_install()
     else
         if ! awk -v action=plan -v roots="$sget_roots" \
             -v include_build=1 -v program=sget \
+            -v installed="$(sget_installed_names)" \
             -f "$SPS_LIBDIR/version.awk" -f "$SPS_LIBDIR/deps.awk" \
             "$sps_index" >"$sget_work/resolution"; then
             sps_die "$SPS_EX_DEPENDENCY" "cannot resolve requested packages"

@@ -1,0 +1,20 @@
+SPS Linux live Plasma (Splux)
+
+This disc boots a Plasma session on Wayland if the machine that built
+it already had a working Plasma stack. NVIDIA hardware uses nouveau;
+proprietary nvidia modules are blacklisted so they cannot load next
+to KWin.
+
+Open Konsole and run:
+
+    setup
+
+Guided partitioning is in setup. If Plasma does not start, switch to
+tty2 (Ctrl-Alt-F2) for a root shell.
+
+Optional: setup --plan --profile plasma-full --target /mnt
+
+Recipes for sps-core and sps-extra are in /usr/src/sps. Package builds
+run on this live system into the mounted target. A from-source Plasma
+install compiles Qt and KDE and takes a long time. This live session is
+the host stack copied at ISO build time.

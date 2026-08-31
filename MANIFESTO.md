@@ -4,7 +4,10 @@
 
 SPS is a source package system for Unix-like operating systems. It is meant for
 small independent distributions and for administrators who want to understand
-how packages get from a recipe into the filesystem.
+how packages get from a recipe into the filesystem. SPS is not itself a
+distribution. **SPS Linux** (informally Splux) is one distro that uses it;
+Linux From Scratch and other trees can use the same tools without the Splux
+installer or live ISOs.
 
 It is built from a few separate tools, plain text metadata, POSIX shell, POSIX
 AWK, and standard Unix utilities. There is no package daemon, SQL database,
@@ -34,8 +37,8 @@ pkdel     low-level package removal
 pkstat    installed package queries
 pkcheck   installed-state verification
 pkmark    explicit/dependency package marking
-setup     dialog-based system installer
-mkiso     live TTY ISO builder
+setup     SPS Linux (Splux) dialog installer; optional, distro-specific
+mkiso     SPS Linux live ISO builder; optional, distro-specific
 ```
 
 Each tool has a boundary.

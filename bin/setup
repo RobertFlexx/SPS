@@ -1,6 +1,8 @@
 #!/bin/sh
-# SPS system installer. Interactive screens use dialog(1); every choice is
-# also available as a command-line option for scripts and tests.
+# SPS Linux installer (informally Splux). Interactive screens use dialog(1);
+# every choice is also available as a flag for scripts and tests.
+# This is the distro installer, not a generic LFS helper. SPS the package
+# system still works on other trees without running setup.
 
 sps_prog=setup
 sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
@@ -22,8 +24,14 @@ setup_usage()
 	cat <<'EOF'
 usage: setup [options]
 
-Install an SPS system into a target root using dialog(1) screens, or the
-same choices from the command line.
+Install SPS Linux (Splux) into a target root using dialog(1) screens, or
+the same choices from the command line. This is the distro installer.
+SPS the package system can be used without it (for example on LFS).
+
+Disks: guided layouts erase the chosen disk after two confirmations.
+--plan and --non-interactive never touch a disk unless you pass --disk
+and --format yes together. grub-install still needs --install-bootloader
+and --disk; setup will not guess a target.
 
 options:
   --target DIR              installation root (SPS_ROOT)
@@ -41,9 +49,23 @@ options:
   --ssh yes|no              include the ssh set (OpenSSH)
   --printing yes|no         include the printing set (CUPS)
   --flatpak yes|no          add Flathub after install when flatpak is present
-  --nvidia yes|no           include the nvidia set
+  --nvidia yes|no           proprietary NVIDIA set (off by default; live uses nouveau)
+  --partition LAYOUT        none, existing, efi-root, efi-swap-root,
+                            efi-swap-root-home, bios-root, manage
+  --disk DEV                whole disk for guided layouts (e.g. /dev/sda)
+  --swap-size SIZE          sfdisk size for swap (default 8GiB)
+  --root-part DEV           root partition for --partition manage
+  --efi-part DEV            EFI partition for --partition manage
+  --swap-part DEV           swap partition for --partition manage
+  --home-part DEV           /home partition for --partition manage
+  --format yes|no           required yes for non-interactive guided layouts
+  --kernel NAME             none, linux, linux-desktop, or custom
+  --kernel-config FILE      .config for --kernel custom
+  --drivers auto|none       map lspci/cpu to packages (microcode, nouveau, iwd)
+  --init systemd|openrc     PID 1 on the installed system (default: none in
+                            scripts; systemd on the interactive screen)
   --bootloader none|grub    write bootloader notes; never runs grub-install
-  --install-bootloader      actually run grub-install (explicit, dangerous)
+  --install-bootloader      run grub-install on --disk (explicit, dangerous)
   --update|--no-update      run or skip src update before installing
   --non-interactive         do not start dialog; all choices from options
   --plan                    print the package list and exit
@@ -51,11 +73,20 @@ options:
   --read-answers FILE       load answers (options override file values)
   --list-profiles
   --list-sets
+  --list-hardware           print detected devices and suggested packages
   -h, --help
 EOF
 }
 
 setup_dir=${SPS_SETUP_DIR:-$SPS_LIBDIR/setup}
+if [ -f "$SPS_LIBDIR/setup/partition.sh" ]; then
+	# shellcheck disable=SC1091
+	. "$SPS_LIBDIR/setup/partition.sh"
+fi
+if [ -f "$SPS_LIBDIR/setup/hwdetect.sh" ]; then
+	# shellcheck disable=SC1091
+	. "$SPS_LIBDIR/setup/hwdetect.sh"
+fi
 setup_work=
 setup_interactive=1
 setup_plan=0
@@ -82,6 +113,20 @@ setup_answers_in=
 setup_answers_out=
 setup_enable=
 setup_disable=
+setup_partition=
+setup_disk=
+setup_swap_size=8GiB
+setup_format=
+setup_kernel=
+setup_kernel_config=
+setup_drivers=
+setup_init=
+setup_part_efi=
+setup_part_root=
+setup_part_swap=
+setup_part_home=
+setup_part_bios=
+setup_list_hardware=0
 
 setup_cleanup()
 {
@@ -208,6 +253,70 @@ while [ "$#" -gt 0 ]; do
 			setup_need_value "$@"
 			setup_nvidia=$2
 			shift 2
+			;;
+		--partition)
+			setup_need_value "$@"
+			setup_partition=$2
+			shift 2
+			;;
+		--disk)
+			setup_need_value "$@"
+			setup_disk=$2
+			shift 2
+			;;
+		--swap-size)
+			setup_need_value "$@"
+			setup_swap_size=$2
+			shift 2
+			;;
+		--root-part)
+			setup_need_value "$@"
+			setup_part_root=$2
+			shift 2
+			;;
+		--efi-part)
+			setup_need_value "$@"
+			setup_part_efi=$2
+			shift 2
+			;;
+		--swap-part)
+			setup_need_value "$@"
+			setup_part_swap=$2
+			shift 2
+			;;
+		--home-part)
+			setup_need_value "$@"
+			setup_part_home=$2
+			shift 2
+			;;
+		--format)
+			setup_need_value "$@"
+			setup_format=$2
+			shift 2
+			;;
+		--kernel)
+			setup_need_value "$@"
+			setup_kernel=$2
+			shift 2
+			;;
+		--kernel-config)
+			setup_need_value "$@"
+			setup_kernel_config=$2
+			shift 2
+			;;
+		--drivers)
+			setup_need_value "$@"
+			setup_drivers=$2
+			shift 2
+			;;
+		--init)
+			setup_need_value "$@"
+			setup_init=$2
+			shift 2
+			;;
+		--list-hardware)
+			setup_list_hardware=1
+			shift
 			;;
 		--bootloader)
 			setup_need_value "$@"
@@ -345,8 +454,9 @@ setup_default_sets_for_profile()
 				setup_ds="$setup_ds $setup_sn"
 				;;
 			*)
-				# Power defaults on for desktops only.
+				# Power and firmware default on for desktops only.
 				[ "$setup_sn" = power ] && continue
+				[ "$setup_sn" = firmware ] && continue
 				[ "$setup_sn" = qol-cli ] &&
 					setup_ds="$setup_ds $setup_sn"
 				;;
@@ -377,6 +487,17 @@ if [ "$setup_list_sets" -eq 1 ]; then
 	exit 0
 fi
 
+if [ "$setup_list_hardware" -eq 1 ]; then
+	if command -v setup_hw_summary >/dev/null 2>&1; then
+		setup_hw_summary
+		printf '\nSuggested packages:\n'
+		setup_hw_packages | sort -u
+	else
+		setup_fail "$SPS_EX_NOTFOUND" "hardware detection is not available"
+	fi
+	exit 0
+fi
+
 setup_load_answers()
 {
 	setup_af=$1
@@ -404,6 +525,18 @@ setup_load_answers()
 			printing) [ -n "$setup_printing" ] || setup_printing=$setup_av ;;
 			flatpak) [ -n "$setup_flatpak" ] || setup_flatpak=$setup_av ;;
 			nvidia) [ -n "$setup_nvidia" ] || setup_nvidia=$setup_av ;;
+			partition) [ -n "$setup_partition" ] || setup_partition=$setup_av ;;
+			disk) [ -n "$setup_disk" ] || setup_disk=$setup_av ;;
+			swap-size) [ "$setup_swap_size" = 8GiB ] && [ -n "$setup_av" ] && setup_swap_size=$setup_av ;;
+			root-part) [ -n "$setup_part_root" ] || setup_part_root=$setup_av ;;
+			efi-part) [ -n "$setup_part_efi" ] || setup_part_efi=$setup_av ;;
+			swap-part) [ -n "$setup_part_swap" ] || setup_part_swap=$setup_av ;;
+			home-part) [ -n "$setup_part_home" ] || setup_part_home=$setup_av ;;
+			format) [ -n "$setup_format" ] || setup_format=$setup_av ;;
+			kernel) [ -n "$setup_kernel" ] || setup_kernel=$setup_av ;;
+			kernel-config) [ -n "$setup_kernel_config" ] || setup_kernel_config=$setup_av ;;
+			drivers) [ -n "$setup_drivers" ] || setup_drivers=$setup_av ;;
+			init) [ -n "$setup_init" ] || setup_init=$setup_av ;;
 			bootloader) [ "$setup_bootloader" = none ] && [ -n "$setup_av" ] && setup_bootloader=$setup_av ;;
 			enable) setup_append_csv setup_enable "$setup_av" "$setup_enable" ;;
 			disable) setup_append_csv setup_disable "$setup_av" "$setup_disable" ;;
@@ -431,13 +564,13 @@ setup_dialog()
 	command -v dialog >/dev/null 2>&1 ||
 		setup_fail "$SPS_EX_PACKAGE" \
 			"dialog is not on PATH; install it or use --non-interactive"
-	dialog --backtitle "SPS Linux installer" --output-fd 1 "$@"
+	dialog --backtitle "SPS Linux installer (Splux)" --output-fd 1 "$@"
 }
 
 setup_msg()
 {
 	if [ "$setup_interactive" -eq 1 ]; then
-		dialog --backtitle "SPS Linux installer" --msgbox "$1" 12 64 || :
+		dialog --backtitle "SPS Linux installer (Splux)" --msgbox "$1" 12 64 || :
 	else
 		printf '%s\n' "$1"
 	fi
@@ -446,11 +579,183 @@ setup_msg()
 setup_confirm()
 {
 	if [ "$setup_interactive" -eq 1 ]; then
-		dialog --backtitle "SPS Linux installer" --yesno "$1" 14 64
+		dialog --backtitle "SPS Linux installer (Splux)" --yesno "$1" 14 64
 	else
 		return 0
 	fi
 }
+
+setup_pick_disk()
+{
+	setup_dargs=
+	setup_dline=
+	setup_dname=
+	setup_drest=
+	if ! command -v setup_disk_menu_lines >/dev/null 2>&1; then
+		setup_fail "$SPS_EX_PACKAGE" "partition helpers are missing"
+	fi
+	while IFS= read -r setup_dline || [ -n "$setup_dline" ]; do
+		[ -n "$setup_dline" ] || continue
+		setup_dname=${setup_dline%% *}
+		setup_drest=$setup_dline
+		# dialog tags cannot contain spaces; NAME is the tag.
+		setup_dargs="$setup_dargs $setup_dname '$setup_drest'"
+	done <<EOF
+$(setup_disk_menu_lines)
+EOF
+	[ -n "$setup_dargs" ] ||
+		setup_fail "$SPS_EX_NOTFOUND" "no disks found (is lsblk on PATH?)"
+	eval "setup_dialog --title 'Select disk' \
+		--menu 'Guided layouts erase this whole disk. Manage existing opens cfdisk first.' \
+		18 72 10 $setup_dargs" ||
+		setup_fail "$SPS_EX_USAGE" "cancelled"
+}
+
+setup_pick_partition()
+{
+	# $1 title, $2 allow none
+	setup_title=$1
+	setup_allow_none=$2
+	setup_pargs=
+	[ "$setup_allow_none" = 1 ] && setup_pargs="none 'No partition'"
+	setup_pline=
+	setup_pname=
+	while IFS= read -r setup_pline || [ -n "$setup_pline" ]; do
+		[ -n "$setup_pline" ] || continue
+		setup_pname=${setup_pline%% *}
+		setup_pargs="$setup_pargs $setup_pname '$setup_pline'"
+	done <<EOF
+$(setup_lsblk -n -p -o NAME,SIZE,TYPE,FSTYPE "$setup_disk" 2>/dev/null | awk '$3 == "part" { print }')
+EOF
+	eval "setup_dialog --title '$setup_title' \
+		--menu 'Partition on $setup_disk' 18 72 10 $setup_pargs" ||
+		setup_fail "$SPS_EX_USAGE" "cancelled"
+}
+
+setup_ask_partition()
+{
+	if [ -n "$setup_partition" ]; then
+		return 0
+	fi
+	setup_partition=$(setup_dialog --title "Disks" \
+		--menu "Partitioning. Guided layouts wait until the final install confirmation before they write anything. Existing mounts are left alone." \
+		18 72 8 \
+		existing "Use mounts already on the target path" \
+		manage "cfdisk, then pick root / EFI / swap / home" \
+		efi-root "Guided: GPT, EFI + root" \
+		efi-swap-root "Guided: GPT, EFI + swap + root" \
+		efi-swap-root-home "Guided: GPT, EFI + swap + root + home" \
+		bios-root "Guided: GPT, BIOS boot + root" \
+		none "Do not touch disks") ||
+		setup_fail "$SPS_EX_USAGE" "cancelled"
+
+	case $setup_partition in
+		none|existing)
+			return 0
+			;;
+		manage|efi-root|efi-swap-root|efi-swap-root-home|bios-root)
+			if [ -z "$setup_disk" ]; then
+				setup_disk=$(setup_pick_disk) ||
+					setup_fail "$SPS_EX_USAGE" "cancelled"
+			fi
+			;;
+	esac
+
+	if [ "$setup_partition" = manage ]; then
+		if command -v cfdisk >/dev/null 2>&1 ||
+		   [ -x /sbin/cfdisk ]; then
+			setup_cfdisk=$(command -v cfdisk 2>/dev/null || printf /sbin/cfdisk)
+			setup_msg "cfdisk will open on $setup_disk. Write the table, then quit. setup will ask which partitions to use."
+			"$setup_cfdisk" "$setup_disk" || :
+		else
+			setup_msg "cfdisk is not on PATH. Using the partition table that is already on $setup_disk."
+		fi
+		setup_part_root=$(setup_pick_partition "Root partition" 0)
+		[ "$setup_part_root" != none ] ||
+			setup_fail "$SPS_EX_USAGE" "root partition is required"
+		setup_part_efi=$(setup_pick_partition "EFI partition" 1)
+		[ "$setup_part_efi" != none ] || setup_part_efi=
+		setup_part_swap=$(setup_pick_partition "Swap partition" 1)
+		[ "$setup_part_swap" != none ] || setup_part_swap=
+		setup_part_home=$(setup_pick_partition "Home partition" 1)
+		[ "$setup_part_home" != none ] || setup_part_home=
+		if setup_dialog --title "Format" --yesno \
+			"Format the selected partitions (ext4 / vfat / swap) before mounting them on the target?
+
+This erases data on those partitions only, not necessarily the whole disk." 12 64
+		then
+			setup_format=yes
+		else
+			setup_format=no
+		fi
+	fi
+}
+
+setup_ask_kernel()
+{
+	if [ -n "$setup_kernel" ]; then
+		return 0
+	fi
+	setup_kdef=none
+	case $setup_profile in
+		plasma-desktop|plasma-full) setup_kdef=linux-desktop ;;
+	esac
+	setup_kernel=$(setup_dialog --title "SPS Linux kernel" --default-item "$setup_kdef" \
+		--menu "none leaves the host kernel story alone (current live ISO). linux is upstream defconfig. linux-desktop is the SPS Linux (Splux) daily-driver config: DRM (nouveau/i915/amdgpu), NVMe, audio, extra filesystems. custom copies a .config you already have." \
+		18 72 6 \
+		none "Do not build a kernel package" \
+		linux-desktop "SPS Linux desktop config (Splux; Plasma default)" \
+		linux "Upstream defconfig" \
+		custom "Use a .config from this machine") ||
+		setup_fail "$SPS_EX_USAGE" "cancelled"
+	if [ "$setup_kernel" = custom ] && [ -z "$setup_kernel_config" ]; then
+		setup_kernel_config=$(setup_dialog --title "Kernel config" \
+			--inputbox "Absolute path to a Linux .config. It is copied to the target as /etc/sps/kernel.config before the kernel package builds." \
+			10 72 "${setup_kernel_config:-/etc/sps/kernel.config}") ||
+			setup_fail "$SPS_EX_USAGE" "cancelled"
+	fi
+	# If the user just hit enter on the default-looking first item, keep the
+	# profile default when they picked none on a Plasma install? No: none is
+	# an explicit choice. Profile default only applies when the flag is omitted
+	# in non-interactive mode.
+	:
+}
+
+setup_ask_init()
+{
+	if [ -n "$setup_init" ]; then
+		return 0
+	fi
+	setup_init=$(setup_dialog --title "Init system" --default-item systemd \
+		--menu "PID 1 on the installed system. Live images prefer systemd when the ISO was built with it; busybox init is the live fallback so the disc cannot panic if systemd is missing. These packages conflict; sget will refuse both." \
+		16 72 4 \
+		systemd "systemd (udev, logind, the default)" \
+		openrc "OpenRC plus eudev and elogind") ||
+		setup_fail "$SPS_EX_USAGE" "cancelled"
+}
+
+setup_ask_drivers()
+{
+	if [ -n "$setup_drivers" ]; then
+		return 0
+	fi
+	setup_hwtxt="Could not probe PCI."
+	if command -v setup_hw_summary >/dev/null 2>&1; then
+		setup_hwtxt=$(setup_hw_summary)
+	fi
+	if setup_dialog --title "Drivers and microcode" --yesno \
+		"Detect hardware and install matching packages from the repos?
+
+$setup_hwtxt
+
+This pulls CPU microcode, Mesa/nouveau, firmware, and wireless helpers. Proprietary NVIDIA modules stay off unless you enable them on the next screen." 18 72
+	then
+		setup_drivers=auto
+	else
+		setup_drivers=none
+	fi
+}
+
 
 # Interactive defaults when flags were omitted.
 if [ "$setup_interactive" -eq 1 ] && [ ! -t 0 ]; then
@@ -470,21 +775,23 @@ trap setup_cleanup 0 HUP INT TERM
 if [ "$setup_interactive" -eq 1 ]; then
 	if [ -f /etc/sps/live ]; then
 		setup_msg \
-			"This is the SPS live TTY. Mount the destination filesystem on /mnt first.
+			"This is the SPS Linux live image (Splux). You can partition a disk here, or mount something on /mnt first and choose Use existing mounts.
 
-Then continue. The installer never partitions disks. Bootloader install is a separate, explicit step."
+Guided layouts wait until the last confirmation before they erase a disk. Bootloader install is a separate, explicit step (needs --install-bootloader and --disk)."
 	else
 		setup_msg \
-			"This installer configures an SPS root the way Slackware and FreeBSD setup do: a sequence of dialog screens, then a visible package install.
+			"This installer configures SPS Linux (Splux) the way Slackware and FreeBSD setup do: disks, profile, kernel, drivers, then a visible package install.
 
-It never partitions disks. Point it at a mounted filesystem. Installing the bootloader is a separate, explicit step."
+Guided partition layouts erase the chosen disk only after you confirm at the end. grub-install is never implied. An LFS tree using SPS does not have to go through this installer."
 	fi
+
+	setup_ask_partition
 
 	if [ -z "$setup_target" ]; then
 		setup_target=$(setup_dialog --title "Installation target" \
 			--inputbox "Absolute path of the target root.
 
-Use /mnt after mounting the destination filesystem. / is the live system." \
+Use /mnt after mounting the destination filesystem, or after a guided layout (setup mounts it for you at the end). / is the live system." \
 			10 64 "${setup_target:-/mnt}") ||
 			setup_fail "$SPS_EX_USAGE" "cancelled"
 	fi
@@ -502,9 +809,12 @@ Use /mnt after mounting the destination filesystem. / is the live system." \
 			setup_fail "$SPS_EX_USAGE" "cancelled"
 	fi
 
+	setup_ask_kernel
+	setup_ask_init
+
 	if [ -z "$setup_hostname" ]; then
 		setup_hostname=$(setup_dialog --title "Hostname" \
-			--inputbox "System hostname." 8 50 "${setup_hostname:-sps}") ||
+			--inputbox "System hostname." 8 50 "${setup_hostname:-splux}") ||
 			setup_fail "$SPS_EX_USAGE" "cancelled"
 	fi
 
@@ -556,6 +866,8 @@ Use /mnt after mounting the destination filesystem. / is the live system." \
 					plasma-desktop|plasma-full) setup_on=on ;;
 					*)
 						[ "$setup_sn" = qol-cli ] && setup_on=on
+						[ "$setup_sn" = power ] && setup_on=off
+						[ "$setup_sn" = firmware ] && setup_on=off
 						;;
 				esac
 			fi
@@ -605,11 +917,13 @@ Use /mnt after mounting the destination filesystem. / is the live system." \
 		fi
 	fi
 
+	setup_ask_drivers
+
 	if [ -z "$setup_nvidia" ]; then
-		if setup_dialog --title "NVIDIA" --yesno \
+		if setup_dialog --title "NVIDIA proprietary" --yesno \
 			"Include NVIDIA open kernel modules and user-space utilities?
 
-This requires a matching kernel on the target and is off by default." 10 64
+The live image and auto drivers use nouveau. This extra set is the proprietary/open-rm stack and needs a matching kernel on the target. Off by default." 12 64
 		then
 			setup_nvidia=yes
 		else
@@ -660,13 +974,8 @@ This requires a matching kernel on the target and is off by default." 10 64
 
 After the first boot, put an interface file in /etc/network or use the NetworkManager applet on Plasma. Notes are written to /root/sps-network.txt." 12 64 || :
 
-	setup_dialog --title "Disks" --msgbox \
-		"This installer does not partition, format, or write /etc/fstab.
-
-Mount the destination filesystem on the target path before running setup. Swap and fstab remain administrator work. Notes are written to /root/sps-fstab.txt." 12 64 || :
-
 	setup_bl=$(setup_dialog --title "Bootloader" \
-		--menu "SPS never runs grub-install unless you pass --install-bootloader. The usual choice is to write notes only." \
+		--menu "SPS never runs grub-install unless you pass --install-bootloader with --disk. The usual choice is to write notes only." \
 		14 64 3 \
 		none "Write /root/sps-bootloader.txt only" \
 		grub "Write GRUB notes (still does not install)") ||
@@ -677,7 +986,7 @@ fi
 # Non-interactive defaults
 [ -n "$setup_target" ] || setup_target=/mnt
 [ -n "$setup_profile" ] || setup_profile=minimal
-[ -n "$setup_hostname" ] || setup_hostname=sps
+[ -n "$setup_hostname" ] || setup_hostname=splux
 [ -n "$setup_timezone" ] || setup_timezone=UTC
 [ -n "$setup_keymap" ] || setup_keymap=us
 [ -n "$setup_locale" ] || setup_locale=C.UTF-8
@@ -686,6 +995,58 @@ setup_flatpak=$(setup_yesno_norm "${setup_flatpak:-no}")
 setup_nvidia=$(setup_yesno_norm "${setup_nvidia:-no}")
 setup_ssh=$(setup_yesno_norm "${setup_ssh:-no}")
 setup_printing=$(setup_yesno_norm "${setup_printing:-no}")
+[ -n "$setup_partition" ] || setup_partition=none
+[ -n "$setup_drivers" ] || setup_drivers=none
+[ -n "$setup_init" ] || setup_init=none
+[ -n "$setup_format" ] || setup_format=no
+setup_format=$(setup_yesno_norm "$setup_format")
+if [ -z "$setup_kernel" ]; then
+	setup_kernel=none
+fi
+case $setup_kernel in
+	none|linux|linux-desktop|custom) ;;
+	*) setup_fail "$SPS_EX_USAGE" "kernel must be none, linux, linux-desktop, or custom" ;;
+esac
+case $setup_drivers in
+	auto|none) ;;
+	*) setup_fail "$SPS_EX_USAGE" "drivers must be auto or none" ;;
+esac
+case $setup_init in
+	none|systemd|openrc) ;;
+	*) setup_fail "$SPS_EX_USAGE" "init must be systemd, openrc, or none" ;;
+esac
+case $setup_partition in
+	none|existing|efi-root|efi-swap-root|efi-swap-root-home|bios-root|manage) ;;
+	*) setup_fail "$SPS_EX_USAGE" "unknown partition layout: $setup_partition" ;;
+esac
+case $setup_partition in
+	efi-root|efi-swap-root|efi-swap-root-home|bios-root)
+		[ -n "$setup_disk" ] ||
+			setup_fail "$SPS_EX_USAGE" "guided --partition needs --disk"
+		case $setup_disk in
+			/dev/*) ;;
+			*) setup_fail "$SPS_EX_USAGE" "disk must be a /dev path" ;;
+		esac
+		if [ "$setup_plan" -eq 0 ] && [ "$setup_format" != yes ]; then
+			setup_fail "$SPS_EX_USAGE" \
+				"guided partitioning requires --format yes (refusing to erase $setup_disk)"
+		fi
+		;;
+	manage)
+		[ -n "$setup_part_root" ] ||
+			setup_fail "$SPS_EX_USAGE" "--partition manage needs --root-part"
+		;;
+esac
+if [ "$setup_kernel" = custom ]; then
+	[ -n "$setup_kernel_config" ] ||
+		setup_fail "$SPS_EX_USAGE" "--kernel custom requires --kernel-config FILE"
+	case $setup_kernel_config in
+		/*) ;;
+		*) setup_fail "$SPS_EX_USAGE" "kernel config must be an absolute path" ;;
+	esac
+	[ -f "$setup_kernel_config" ] ||
+		setup_fail "$SPS_EX_NOTFOUND" "kernel config not found: $setup_kernel_config"
+fi
 case $setup_bootloader in
 	none|grub) ;;
 	*) setup_fail "$SPS_EX_USAGE" "bootloader must be none or grub" ;;
@@ -790,6 +1151,27 @@ for setup_item in $setup_extra; do
 	setup_add_pkg "$setup_item"
 done
 
+case $setup_kernel in
+	linux) setup_add_pkg linux ;;
+	linux-desktop) setup_add_pkg linux-desktop ;;
+	custom) setup_add_pkg linux-custom ;;
+esac
+
+case $setup_init in
+	systemd) setup_add_pkg init-systemd ;;
+	openrc) setup_add_pkg init-openrc ;;
+esac
+
+if [ "$setup_drivers" = auto ]; then
+	if command -v setup_hw_packages >/dev/null 2>&1; then
+		setup_hw_packages | sort -u |
+			while IFS= read -r setup_pkg; do
+				[ -n "$setup_pkg" ] || continue
+				setup_add_pkg "$setup_pkg"
+			done
+	fi
+fi
+
 setup_write_answers_file()
 {
 	setup_out=$1
@@ -808,6 +1190,18 @@ setup_write_answers_file()
 		printf 'ssh %s\n' "$setup_ssh"
 		printf 'printing %s\n' "$setup_printing"
 		printf 'bootloader %s\n' "$setup_bootloader"
+		printf 'partition %s\n' "$setup_partition"
+		[ -n "$setup_disk" ] && printf 'disk %s\n' "$setup_disk"
+		printf 'swap-size %s\n' "$setup_swap_size"
+		[ -n "$setup_part_root" ] && printf 'root-part %s\n' "$setup_part_root"
+		[ -n "$setup_part_efi" ] && printf 'efi-part %s\n' "$setup_part_efi"
+		[ -n "$setup_part_swap" ] && printf 'swap-part %s\n' "$setup_part_swap"
+		[ -n "$setup_part_home" ] && printf 'home-part %s\n' "$setup_part_home"
+		printf 'format %s\n' "$setup_format"
+		printf 'kernel %s\n' "$setup_kernel"
+		[ -n "$setup_kernel_config" ] && printf 'kernel-config %s\n' "$setup_kernel_config"
+		printf 'drivers %s\n' "$setup_drivers"
+		printf 'init %s\n' "$setup_init"
 		printf 'update %s\n' "$([ "$setup_do_update" -eq 1 ] && printf yes || printf no)"
 		for setup_item in $setup_enable; do
 			printf 'enable %s\n' "$setup_item"
@@ -835,6 +1229,11 @@ setup_summary()
 	printf 'SSH:        %s\n' "$setup_ssh"
 	printf 'Printing:   %s\n' "$setup_printing"
 	printf 'Bootloader: %s\n' "$setup_bootloader"
+	printf 'Partition:  %s\n' "$setup_partition"
+	printf 'Disk:       %s\n' "${setup_disk:-<none>}"
+	printf 'Kernel:     %s\n' "$setup_kernel"
+	printf 'Init:       %s\n' "$setup_init"
+	printf 'Drivers:    %s\n' "$setup_drivers"
 	printf '\nPackages:\n'
 	sort -u "$setup_pkg_file"
 }
@@ -849,13 +1248,42 @@ if [ "$setup_plan" -eq 1 ]; then
 fi
 
 if [ "$setup_interactive" -eq 1 ]; then
+	setup_warn=
+	case $setup_partition in
+		efi-root|efi-swap-root|efi-swap-root-home|bios-root)
+			setup_warn="
+THIS ERASES $setup_disk. Partition table, filesystems, all of it."
+			;;
+		manage)
+			if [ "$setup_format" = yes ]; then
+				setup_warn="
+Selected partitions will be formatted: $setup_part_root $setup_part_efi $setup_part_swap $setup_part_home"
+			fi
+			;;
+	esac
 	setup_confirm "Install with this configuration?
 
 $(setup_summary)
+$setup_warn
 
 Package builds run on this terminal. Source packages may take a long time." ||
 		setup_fail "$SPS_EX_USAGE" "cancelled"
 fi
+
+# Guided layouts run here, after the last chance to cancel.
+case $setup_partition in
+	none|existing) ;;
+	*)
+		if [ "$setup_plan" -eq 0 ]; then
+			printf '%s: applying partition layout %s on %s\n' \
+				"$sps_prog" "$setup_partition" "${setup_disk:-partitions}" >&2
+			PATH=/sbin:/usr/sbin:$PATH
+			export PATH
+			setup_apply_partition "$setup_target" ||
+				setup_fail "$SPS_EX_PERMISSION" "partitioning failed"
+		fi
+		;;
+esac
 
 setup_apply_config()
 {
@@ -869,6 +1297,7 @@ setup_apply_config()
 	printf 'KEYMAP=%s\n' "$setup_keymap" >"$setup_etc/vconsole.conf"
 	printf 'keymap %s\n' "$setup_keymap" >"$setup_etc/sps/keymap"
 	printf 'LANG=%s\n' "$setup_locale" >"$setup_etc/locale.conf"
+	printf '%s\n' "${setup_init:-none}" >"$setup_etc/sps/init"
 
 	if [ -f /usr/share/zoneinfo/"$setup_timezone" ]; then
 		cp /usr/share/zoneinfo/"$setup_timezone" "$setup_etc/localtime" 2>/dev/null || :
@@ -930,6 +1359,21 @@ Or for BIOS:
 Replace DISK with the actual disk. This is an administrator action.
 EOF
 
+	cat >"$setup_root/root/sps-init.txt" <<EOF
+Init choice: ${setup_init:-none}
+
+systemd and OpenRC conflict; sget will not install both. After the
+packages land:
+
+  systemd  PID 1 is /usr/lib/systemd/systemd. Enable getty@tty1
+           and, for Plasma, a display manager. /etc/machine-id is
+           created on first boot if missing.
+  openrc   PID 1 is OpenRC. Add services with rc-update. eudev and
+           elogind are in the init-openrc set.
+  none     no init package was requested. Busybox can still provide
+           an init applet if you copy it to /sbin/init yourself.
+EOF
+
 	cat >"$setup_root/root/sps-network.txt" <<EOF
 SPS setup does not write DHCP or static network configuration.
 
@@ -941,12 +1385,21 @@ OpenSSH is installed when the server profile or the ssh set is selected.
 EOF
 
 	cat >"$setup_root/root/sps-fstab.txt" <<EOF
-SPS setup does not partition disks or write /etc/fstab.
+If setup partitioned the disk, /etc/fstab was written from blkid UUIDs.
+Read it before the first boot. Add extra mounts yourself.
 
-Mount the target filesystem on the path you passed to --target (or the
-target screen) before running the installer. Add swap and extra mounts
-yourself after inspecting lsblk and writing /etc/fstab.
+Partition layout: $setup_partition
+Disk: ${setup_disk:-<none>}
+Root: ${setup_part_root:-<none>}
+EFI:  ${setup_part_efi:-<none>}
+Swap: ${setup_part_swap:-<none>}
+Home: ${setup_part_home:-<none>}
 EOF
+
+	if command -v setup_write_fstab >/dev/null 2>&1 &&
+	   [ -n "$setup_part_root" ]; then
+		setup_write_fstab "$setup_root" || :
+	fi
 }
 
 # Packages first, then hostname/user so filesystem's passwd is already present.
@@ -955,6 +1408,12 @@ mkdir -p "$setup_root" ||
 	setup_fail "$SPS_EX_PERMISSION" "cannot create target: $setup_root"
 
 export SPS_ROOT=$setup_root
+
+if [ "$setup_kernel" = custom ] && [ -n "$setup_kernel_config" ]; then
+	mkdir -p "$setup_root/etc/sps"
+	cp "$setup_kernel_config" "$setup_root/etc/sps/kernel.config" ||
+		setup_fail "$SPS_EX_PERMISSION" "cannot copy kernel config"
+fi
 
 if [ "$setup_do_update" -eq 1 ]; then
 	printf '%s: updating source repositories\n' "$sps_prog" >&2
@@ -998,8 +1457,20 @@ fi
 if [ "$setup_install_bootloader" -eq 1 ]; then
 	command -v grub-install >/dev/null 2>&1 ||
 		setup_fail "$SPS_EX_PACKAGE" "grub-install is not available"
-	setup_fail "$SPS_EX_USAGE" \
-		"--install-bootloader requires a disk argument; refusing to guess. See /root/sps-bootloader.txt"
+	[ -n "$setup_disk" ] ||
+		setup_fail "$SPS_EX_USAGE" \
+			"--install-bootloader requires --disk; refusing to guess. See /root/sps-bootloader.txt"
+	printf '%s: grub-install %s (explicit)\n' "$sps_prog" "$setup_disk" >&2
+	if [ -d "$setup_root/boot/efi" ]; then
+		grub-install --target=x86_64-efi --efi-directory="$setup_root/boot/efi" \
+			--bootloader-id=SPS --boot-directory="$setup_root/boot" \
+			"$setup_disk" ||
+			setup_fail "$SPS_EX_BUILD" "grub-install (EFI) failed"
+	else
+		grub-install --target=i386-pc --boot-directory="$setup_root/boot" \
+			"$setup_disk" ||
+			setup_fail "$SPS_EX_BUILD" "grub-install (BIOS) failed"
+	fi
 fi
 
 setup_msg "Installation finished.

@@ -1,7 +1,33 @@
 #!/bin/sh
-# Build a bootable SPS live TTY ISO. Users flash it, boot to a console, mount
-# a destination filesystem, and run setup(1). It never runs grub-install on a
-# disk.
+# mkiso builds SPS Linux live ISOs (informally Splux). Maintainer tool;
+# not a desktop installer front-end. SPS the package system does not
+# require these images; they exist so Splux can be installed from USB.
+#
+# Default image: hybrid ISO, setup(1) on PATH, gettys on tty1 and ttyS0.
+# Flash it, boot it, run setup. Guided partitioning is in setup, not here.
+#
+# --session plasma copies Plasma/Wayland from this host. Qt is not compiled
+# during the ISO build. If startplasma-wayland is missing, the disc still
+# boots to a TTY. NVIDIA on the live image is nouveau; proprietary nvidia*
+# modules are blacklisted so they cannot load next to KWin. From Plasma,
+# open Konsole and run setup.
+#
+# --with-firmware copies all of /lib/firmware (often over a gigabyte).
+# Plasma sessions also copy nvidia/nouveau firmware without that flag;
+# TU-class cards need those blobs for nouveau.
+#
+# BusyBox --install -s writes host-absolute applet links. Those break
+# inside the initramfs. mkiso uses relative `ln -sf busybox applet`.
+#
+# grub-install is never run against a disk. The GRUB payload is El Torito
+# plus an ESP for this ISO only. grub-mkrescue wants unicode.pf2, which
+# this host does not ship, so the image is built with grub-mkimage and
+# xorriso.
+#
+# Seed toolchain (--no-seed to skip): gcc, headers, cmake, ninja, python.
+# Pass --core/--extra so the live image can build packages without cloning
+# the recipe repos. --with-go copies the official Go tree; gccgo on PATH
+# is too old for the Go recipes in extra.
 
 sps_prog=mkiso
 sps_bin_dir=$(CDPATH= cd -P "$(dirname "$0")" 2>/dev/null && pwd) || exit 1
@@ -23,12 +49,20 @@ mkiso_usage()
 usage: mkiso --output FILE.iso [options]
        mkiso --layout DIR [options]
 
-Build a live TTY ISO (or a layout directory) that boots to a console with
-setup(1) on PATH.
+Build a live ISO (or a layout directory) for SPS Linux, informally Splux.
+Flash it, boot it, run setup(1) on a spare disk.
+
+Sessions:
+  tty      root shell on tty1 and ttyS0 (default; always works)
+  plasma   copy host Plasma/Wayland into the squashfs; Konsole -> setup
+           NVIDIA live path is nouveau. Falls back to a TTY if Plasma
+           is missing on the build host.
 
 options:
   --output FILE         write a hybrid ISO
   --layout DIR          populate a live root and stop (tests, inspection)
+  --session NAME        tty or plasma (default: tty)
+  --init NAME           systemd or openrc (default: systemd)
   --work DIR            working directory (default: a temp dir)
   --kernel FILE         vmlinuz (default: /boot/vmlinuz)
   --modules DIR         kernel modules (default: /lib/modules/RELEASE)
@@ -36,11 +70,13 @@ options:
   --core DIR            sps-core recipes (copied to /usr/src/sps/core)
   --extra DIR           sps-extra recipes (copied to /usr/src/sps/extra)
   --with-rust           copy rustc and cargo from the host
-  --with-go             copy the host Go toolchain
-  --with-firmware       copy /lib/firmware (large; omit from published ISOs)
+  --with-go             copy the host Go toolchain (not gccgo)
+  --with-firmware       copy all of /lib/firmware (large)
   --no-modules          do not copy /lib/modules (smaller, less hardware)
   --no-seed             do not copy host compiler tools (layout/tests)
   -h, --help
+
+Makefile wrappers: make iso, make iso-slim, make iso-plasma.
 EOF
 }
 
@@ -58,6 +94,8 @@ mkiso_with_go=0
 mkiso_with_firmware=0
 mkiso_copy_modules=1
 mkiso_copy_seed=1
+mkiso_session=tty
+mkiso_init=systemd
 mkiso_libdir=$SPS_LIBDIR/mkiso
 
 mkiso_need_value()
@@ -117,6 +155,16 @@ while [ "$#" -gt 0 ]; do
 		--with-firmware) mkiso_with_firmware=1; shift ;;
 		--no-modules) mkiso_copy_modules=0; shift ;;
 		--no-seed) mkiso_copy_seed=0; shift ;;
+		--session)
+			mkiso_need_value "$@"
+			mkiso_session=$2
+			shift 2
+			;;
+		--init)
+			mkiso_need_value "$@"
+			mkiso_init=$2
+			shift 2
+			;;
 		-*)
 			sps_die "$SPS_EX_USAGE" "unknown option: $1"
 			;;
@@ -129,6 +177,14 @@ done
 if [ -z "$mkiso_output" ] && [ -z "$mkiso_layout" ]; then
 	sps_die "$SPS_EX_USAGE" "pass --output FILE.iso or --layout DIR"
 fi
+case $mkiso_session in
+	tty|plasma) ;;
+	*) sps_die "$SPS_EX_USAGE" "session must be tty or plasma" ;;
+esac
+case $mkiso_init in
+	systemd|openrc) ;;
+	*) sps_die "$SPS_EX_USAGE" "init must be systemd or openrc" ;;
+esac
 
 mkiso_cleanup()
 {
@@ -228,6 +284,148 @@ mkiso_busybox_links()
 	ln -sf busybox "$mkiso_bbdir/sh"
 }
 
+# Copy a host Plasma/Wayland stack. mkiso does not compile Qt.
+mkiso_copy_plasma()
+{
+	printf '%s: copying host Plasma/Wayland into the live root\n' \
+		"$sps_prog" >&2
+	if [ -f "$mkiso_libdir/plasma-bins" ]; then
+		while IFS= read -r mkiso_bin || [ -n "$mkiso_bin" ]; do
+			case $mkiso_bin in ''|\#*) continue ;; esac
+			[ -e "$mkiso_bin" ] || continue
+			mkiso_copy_path "$mkiso_bin"
+			mkiso_copy_libs "$mkiso_bin"
+		done <"$mkiso_libdir/plasma-bins"
+	fi
+	if [ -f "$mkiso_libdir/plasma-trees" ]; then
+		while IFS= read -r mkiso_tree || [ -n "$mkiso_tree" ]; do
+			case $mkiso_tree in ''|\#*) continue ;; esac
+			[ -e "$mkiso_tree" ] || continue
+			mkiso_copy_path "$mkiso_tree"
+		done <"$mkiso_libdir/plasma-trees"
+	fi
+	# Shared objects the session links by soname, not by a binary's ldd.
+	for mkiso_pat in /usr/lib64/libQt6*.so* /usr/lib64/libKF6*.so* \
+		/usr/lib64/libplasma*.so* /usr/lib64/libkwin*.so* \
+		/usr/lib64/libwayland*.so* /usr/lib64/libGLESv2.so* \
+		/usr/lib64/libEGL.so* /usr/lib64/libGL.so*
+	do
+		for mkiso_so in $mkiso_pat; do
+			[ -e "$mkiso_so" ] || continue
+			mkiso_copy_path "$mkiso_so"
+		done
+	done
+}
+
+# PID 1 must be an ELF. A shell script that execs getty/setsid is what
+# panicked the previous live TTY (init exited 127).
+mkiso_install_pid1()
+{
+	mkdir -p "$mkiso_live/sbin" "$mkiso_live/etc/sps" \
+		"$mkiso_live/etc/systemd/system" \
+		"$mkiso_live/etc/runlevels/default" \
+		"$mkiso_live/etc/runlevels/sysinit" \
+		"$mkiso_live/etc/modprobe.d"
+	install -m 0755 "$mkiso_libdir/live-rc" "$mkiso_live/etc/sps/live-rc"
+	install -m 0755 "$mkiso_libdir/live-plasma" "$mkiso_live/etc/sps/live-plasma"
+	printf '%s\n' "$mkiso_init" >"$mkiso_live/etc/sps/init"
+	printf '%s\n' "$mkiso_session" >"$mkiso_live/etc/sps/live-session"
+
+	mkiso_systemd=
+	for mkiso_p in /usr/lib/systemd/systemd /lib/systemd/systemd \
+		/usr/lib64/systemd/systemd "$mkiso_live/usr/lib/systemd/systemd"
+	do
+		if [ -x "$mkiso_p" ]; then
+			mkiso_systemd=$mkiso_p
+			break
+		fi
+	done
+
+	mkiso_openrc=
+	for mkiso_p in /sbin/openrc-init /usr/sbin/openrc-init \
+		"$mkiso_live/sbin/openrc-init"
+	do
+		if [ -x "$mkiso_p" ]; then
+			mkiso_openrc=$mkiso_p
+			break
+		fi
+	done
+
+	# Always plant busybox init + inittab so the disc boots even when
+	# the preferred init is not on the build host.
+	if [ -n "$mkiso_busybox" ] && [ -x "$mkiso_busybox" ]; then
+		cp -a "$mkiso_busybox" "$mkiso_live/bin/busybox"
+		chmod 755 "$mkiso_live/bin/busybox"
+		mkiso_busybox_links "$mkiso_live/bin"
+		if [ -x "$mkiso_live/bin/bash" ]; then
+			ln -sf bash "$mkiso_live/bin/sh"
+		fi
+		cp -a "$mkiso_live/bin/busybox" "$mkiso_live/sbin/init"
+		chmod 755 "$mkiso_live/sbin/init"
+	fi
+	if [ "$mkiso_session" = plasma ]; then
+		install -m 0644 "$mkiso_libdir/inittab-plasma" \
+			"$mkiso_live/etc/inittab"
+	else
+		install -m 0644 "$mkiso_libdir/inittab" "$mkiso_live/etc/inittab"
+	fi
+
+	if [ "$mkiso_init" = systemd ] && [ -n "$mkiso_systemd" ]; then
+		printf '%s: live PID 1 is systemd (%s)\n' \
+			"$sps_prog" "$mkiso_systemd" >&2
+		mkiso_copy_path "$mkiso_systemd"
+		mkiso_copy_libs "$mkiso_systemd"
+		mkiso_copy_path /usr/bin/systemctl
+		mkiso_copy_libs /usr/bin/systemctl
+		mkiso_copy_path /usr/lib/systemd
+		mkiso_copy_path /lib/systemd
+		mkdir -p "$mkiso_live/etc/systemd/system/multi-user.target.wants" \
+			"$mkiso_live/etc/systemd/system/graphical.target.wants" \
+			"$mkiso_live/etc/systemd/system/getty.target.wants"
+		install -m 0644 "$mkiso_libdir/systemd/sps-live-rc.service" \
+			"$mkiso_live/etc/systemd/system/"
+		install -m 0644 "$mkiso_libdir/systemd/sps-live-serial.service" \
+			"$mkiso_live/etc/systemd/system/"
+		ln -sf /etc/systemd/system/sps-live-rc.service \
+			"$mkiso_live/etc/systemd/system/multi-user.target.wants/"
+		ln -sf /etc/systemd/system/sps-live-serial.service \
+			"$mkiso_live/etc/systemd/system/multi-user.target.wants/"
+		if [ "$mkiso_session" = plasma ]; then
+			install -m 0644 "$mkiso_libdir/systemd/sps-live-plasma.service" \
+				"$mkiso_live/etc/systemd/system/"
+			ln -sf /etc/systemd/system/sps-live-plasma.service \
+				"$mkiso_live/etc/systemd/system/graphical.target.wants/"
+			ln -sf /usr/lib/systemd/system/graphical.target \
+				"$mkiso_live/etc/systemd/system/default.target"
+		else
+			ln -sf /usr/lib/systemd/system/multi-user.target \
+				"$mkiso_live/etc/systemd/system/default.target"
+			ln -sf /usr/lib/systemd/system/getty@.service \
+				"$mkiso_live/etc/systemd/system/getty.target.wants/getty@tty1.service"
+		fi
+		# systemd as PID 1: kernel execs this ELF, not a shell.
+		mkiso_sys_dest=$mkiso_live$mkiso_systemd
+		if [ -x "$mkiso_sys_dest" ]; then
+			ln -sf "$mkiso_systemd" "$mkiso_live/sbin/init"
+		fi
+	elif [ "$mkiso_init" = openrc ] && [ -n "$mkiso_openrc" ]; then
+		printf '%s: live PID 1 is OpenRC (%s)\n' \
+			"$sps_prog" "$mkiso_openrc" >&2
+		mkiso_copy_path "$mkiso_openrc"
+		mkiso_copy_libs "$mkiso_openrc"
+		ln -sf "$mkiso_openrc" "$mkiso_live/sbin/init"
+	else
+		printf '%s: live PID 1 is busybox init (host has no %s binaries)\n' \
+			"$sps_prog" "$mkiso_init" >&2
+	fi
+
+	if [ ! -x "$mkiso_live/sbin/init" ]; then
+		install -m 0755 "$mkiso_libdir/live-init" "$mkiso_live/sbin/init"
+	fi
+	[ -x "$mkiso_live/sbin/init" ] ||
+		sps_die "$SPS_EX_PACKAGE" "failed to install /sbin/init"
+}
+
 # --- live root contents -------------------------------------------------
 
 printf '%s\n' "mkiso: installing SPS tools into the live root" >&2
@@ -267,11 +465,10 @@ if [ -n "$mkiso_busybox" ] && [ -x "$mkiso_busybox" ]; then
 	ln -sf ../bin/busybox "$mkiso_live/sbin/busybox" 2>/dev/null || :
 fi
 
-install -m 0755 "$mkiso_libdir/live-init" "$mkiso_live/sbin/init"
 install -m 0644 "$mkiso_libdir/motd" "$mkiso_live/etc/motd"
 install -m 0644 "$mkiso_libdir/issue" "$mkiso_live/etc/issue"
 printf '%s\n' live >"$mkiso_live/etc/sps/live"
-printf '%s\n' sps-live >"$mkiso_live/etc/hostname"
+printf '%s\n' splux-live >"$mkiso_live/etc/hostname"
 printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' >"$mkiso_live/etc/passwd"
 printf '%s\n' 'root:x:0:' >"$mkiso_live/etc/group"
 # Empty password on the live console only.
@@ -353,6 +550,13 @@ if [ "$mkiso_copy_seed" -eq 1 ] && [ -f "$mkiso_libdir/seed-bins" ]; then
 	fi
 fi
 
+if [ "$mkiso_session" = plasma ]; then
+	mkiso_copy_plasma
+	if [ -f "$mkiso_libdir/plasma-motd" ]; then
+		install -m 0644 "$mkiso_libdir/plasma-motd" "$mkiso_live/etc/motd"
+	fi
+fi
+
 # Initramfs modules are required to mount the ISO even when the live
 # squashfs does not ship the full /lib/modules tree.
 if [ -z "$mkiso_modules" ]; then
@@ -366,8 +570,8 @@ if [ "$mkiso_copy_modules" -eq 1 ] && [ -d "$mkiso_modules" ]; then
 	cp -a "$mkiso_modules" "$mkiso_live/lib/modules/"
 fi
 
-# Busybox getty/init must win over a dangling seed copy of /sbin/init.
-install -m 0755 "$mkiso_libdir/live-init" "$mkiso_live/sbin/init"
+# PID 1 last, after seed, so a copied /sbin/init cannot stick around.
+mkiso_install_pid1
 
 if [ -n "$mkiso_layout" ] && [ -z "$mkiso_output" ]; then
 	printf '%s\n' "$mkiso_live"
@@ -477,20 +681,22 @@ printf '%s: packing initramfs\n' "$sps_prog" >&2
 ) | gzip -n -9 >"$mkiso_iso/live/initrd.img" ||
 	sps_die "$SPS_EX_BUILD" "initramfs cpio failed"
 
-cat >"$mkiso_iso/boot/grub/grub.cfg" <<'EOF'
+mkiso_title="SPS Linux live (Splux)"
+[ "$mkiso_session" = plasma ] && mkiso_title="SPS Linux live Plasma (Splux)"
+cat >"$mkiso_iso/boot/grub/grub.cfg" <<EOF
 set timeout=8
 set default=0
 serial --unit=0 --speed=115200
 terminal_input serial console
 terminal_output serial console
 
-menuentry "SPS live TTY" {
-	linux /live/vmlinuz boot=live console=tty0 console=ttyS0,115200n8
+menuentry "$mkiso_title" {
+	linux /live/vmlinuz boot=live sps.init=$mkiso_init console=tty0 console=ttyS0,115200n8
 	initrd /live/initrd.img
 }
 
-menuentry "SPS live TTY (run setup)" {
-	linux /live/vmlinuz boot=live sps=setup console=tty0 console=ttyS0,115200n8
+menuentry "$mkiso_title (run setup)" {
+	linux /live/vmlinuz boot=live sps.init=$mkiso_init sps=setup console=tty0 console=ttyS0,115200n8
 	initrd /live/initrd.img
 }
 EOF
@@ -524,7 +730,7 @@ if [ -n "$mkiso_efi" ]; then
 		sps_die "$SPS_EX_BUILD" "grub-mkimage (x86_64-efi) failed"
 	truncate -s 8M "$mkiso_iso/boot/grub/efi.img"
 	if command -v mformat >/dev/null 2>&1 && command -v mcopy >/dev/null 2>&1; then
-		mformat -v SPS_EFI -i "$mkiso_iso/boot/grub/efi.img" ::
+		mformat -v SPLUX_EFI -i "$mkiso_iso/boot/grub/efi.img" ::
 		mmd -i "$mkiso_iso/boot/grub/efi.img" ::EFI ::EFI/BOOT
 		mcopy -i "$mkiso_iso/boot/grub/efi.img" \
 			"$mkiso_iso/EFI/BOOT/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI
@@ -545,7 +751,7 @@ esac
 mkdir -p "$(dirname "$mkiso_output")"
 mkiso_xorriso_log=$mkiso_work/xorriso.log
 if [ -f "$mkiso_iso/boot/grub/efi.img" ]; then
-	xorriso -as mkisofs -r -J -V SPS_LIVE \
+	xorriso -as mkisofs -r -J -V SPLUX_LIVE \
 		-o "$mkiso_output" \
 		-b boot/grub/bios.img -no-emul-boot -boot-load-size 4 \
 		-boot-info-table --grub2-boot-info \
@@ -555,7 +761,7 @@ if [ -f "$mkiso_iso/boot/grub/efi.img" ]; then
 		"$mkiso_iso" >"$mkiso_xorriso_log" 2>&1 ||
 		sps_die "$SPS_EX_BUILD" "xorriso failed (see $mkiso_xorriso_log)"
 else
-	xorriso -as mkisofs -r -J -V SPS_LIVE \
+	xorriso -as mkisofs -r -J -V SPLUX_LIVE \
 		-o "$mkiso_output" \
 		-b boot/grub/bios.img -no-emul-boot -boot-load-size 4 \
 		-boot-info-table --grub2-boot-info \

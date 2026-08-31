@@ -152,7 +152,8 @@ END {
                 repository_index_fields_count = split(repository_index_line,
                                                       repository_index_fields,
                                                       "\t")
-                if (repository_index_fields_count == 12)
+                if (repository_index_fields_count == 12 ||
+                    repository_index_fields_count == 13)
                     repository_package_count[repository_index_fields[8]]++
             }
             if (repository_getline == 0)
