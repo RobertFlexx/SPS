@@ -95,6 +95,8 @@ grep -q C.UTF-8 "$layout/etc/sps/live-plasma" ||
 grep -q -- '-comp zstd' "$mkiso" || fail 'mkiso must write a zstd squashfs'
 grep -q -- '-Xcompression-level 3' "$mkiso" ||
 	fail 'mkiso squashfs compression should stay fast to build'
+grep -q 'Qt/KF shared libraries' "$mkiso" ||
+	fail 'plasma ISO must copy Qt/KF libraries without per-file ldd'
 grep -q 'found live image' "$project_dir/lib/mkiso/initrd-init" ||
 	fail 'initrd must say when the ISO is found'
 grep -q 'mounting live filesystem' "$project_dir/lib/mkiso/initrd-init" ||

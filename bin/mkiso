@@ -479,7 +479,11 @@ mkiso_copy_plasma()
 			mkiso_copy_path "$mkiso_tree"
 		done <"$mkiso_libdir/plasma-trees"
 	fi
-	# Shared objects the session links by soname, not by a binary's ldd.
+	# Shared objects the session links by soname. Copy the files; do not
+	# ldd each one (this host has hundreds of Qt/KF libraries, and that
+	# is what made plasma ISO creation look hung after the tree copies).
+	# plasma-bins and close_libs still pull DT_NEEDED closures.
+	printf '%s: copying Qt/KF shared libraries\n' "$sps_prog" >&2
 	for mkiso_pat in /usr/lib64/libQt6*.so* /usr/lib64/libKF6*.so* \
 		/usr/lib64/libplasma*.so* /usr/lib64/libkwin*.so* \
 		/usr/lib64/libwayland*.so* /usr/lib64/libGLESv2.so* \
@@ -488,7 +492,6 @@ mkiso_copy_plasma()
 		for mkiso_so in $mkiso_pat; do
 			[ -e "$mkiso_so" ] || continue
 			mkiso_copy_path "$mkiso_so"
-			mkiso_copy_libs "$mkiso_so"
 		done
 	done
 }
