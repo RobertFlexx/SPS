@@ -24,6 +24,7 @@ sps_tab=${sps_tab%X}
 src_usage()
 {
     printf '%s\n' 'usage: src update'
+    printf '%s\n' '       src check RECIPE... [--deps]'
     printf '%s\n' '       src search PATTERN [--raw]'
     printf '%s\n' '       src show PACKAGE [--raw]'
     printf '%s\n' '       src which PACKAGE'
@@ -407,10 +408,130 @@ src_query()
         -v program=src -f "$SPS_LIBDIR/index.awk" "$sps_index"
 }
 
+# src_check validates one or more recipes with the same parser that src update
+# uses, without downloading sources or running any build phase. It accepts a
+# recipe file or a directory containing a 'recipe' file. A failed recipe is
+# reported and the command exits nonzero, so it is safe to gate automation on.
+src_check()
+{
+    src_check_deps=0
+    src_check_recipes=
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            --deps)
+                src_check_deps=1
+                ;;
+            --help|-h)
+                printf '%s\n' 'usage: src check RECIPE... [--deps]'
+                exit 0
+                ;;
+            -*)
+                src_usage >&2
+                exit "$SPS_EX_USAGE"
+                ;;
+            *)
+                if [ -d "$1" ] && [ ! -L "$1" ]; then
+                    src_check_resolve="$1/recipe"
+                else
+                    src_check_resolve=$1
+                fi
+                if [ ! -f "$src_check_resolve" ] ||
+                   [ -L "$src_check_resolve" ] ||
+                   [ ! -r "$src_check_resolve" ]; then
+                    sps_die "$SPS_EX_NOTFOUND" \
+                        "no readable recipe file at '$1'"
+                fi
+                src_check_recipes="$src_check_recipes $src_check_resolve"
+                ;;
+        esac
+        shift
+    done
+    [ -n "$src_check_recipes" ] || {
+        printf '%s\n' 'usage: src check RECIPE... [--deps]' >&2
+        exit "$SPS_EX_USAGE"
+    }
+
+    if [ "$src_check_deps" -eq 1 ]; then
+        src_check_work=$(sps_mktemp_dir "$SPS_BUILD/.check") || exit $?
+        src_check_index=$src_check_work/packages.index
+    else
+        src_check_index=/dev/null
+    fi
+    src_check_failed=0
+    src_check_count=0
+    src_check_arch=${SPS_ARCH:-$(uname -m 2>/dev/null || printf unknown)}
+    for src_check_recipe in $src_check_recipes; do
+        [ -n "$src_check_recipe" ] || continue
+        src_check_count=$((src_check_count + 1))
+        src_check_digest=$(sps_definition_sha256 "$src_check_recipe") || {
+            printf 'check: FAILED %s (definition digest)\n' \
+                "$src_check_recipe" >&2
+            src_check_failed=1
+            continue
+        }
+        src_check_name=$(awk -v recipe_path="$src_check_recipe" '
+            /^[ \t]*name[ \t]+/ {
+                line = $0
+                sub(/^[ \t]*name[ \t]+/, "", line)
+                sub(/[ \t\r]+$/, "", line)
+                print line
+                exit
+            }
+        ' "$src_check_recipe")
+        if [ "$src_check_deps" -eq 1 ]; then
+            src_check_target=$src_check_index
+        else
+            src_check_target=/dev/null
+        fi
+        if awk -v recipe_repo=check -v recipe_priority=100 \
+                -v recipe_path="$src_check_recipe" \
+                -v recipe_sha256="$src_check_digest" \
+                -v recipe_default_arch="$src_check_arch" \
+                -f "$SPS_LIBDIR/recipe.awk" "$src_check_recipe" \
+                >> "$src_check_target" 2>/dev/null; then
+            printf 'check: ok   %s (%s)\n' "$src_check_recipe" \
+                "$src_check_name"
+        else
+            printf 'check: FAILED %s (%s)\n' "$src_check_recipe" \
+                "$src_check_name" >&2
+            src_check_failed=1
+        fi
+    done
+
+    if [ "$src_check_failed" -ne 0 ]; then
+        rm -f "$src_check_index" 2>/dev/null || :
+        rmdir "$src_check_work" 2>/dev/null || :
+        sps_die "$SPS_EX_PACKAGE" \
+            "$src_check_count recipe(s) checked: at least one failed"
+    fi
+
+    if [ "$src_check_deps" -eq 1 ]; then
+        if ! awk -v action=validate -v program=src \
+                -f "$SPS_LIBDIR/index.awk" "$src_check_index"; then
+            rmdir "$src_check_work" 2>/dev/null || :
+            sps_die "$SPS_EX_PACKAGE" "generated check index is malformed"
+        fi
+        if ! awk -v action=validate -v program=src \
+                -f "$SPS_LIBDIR/version.awk" -f "$SPS_LIBDIR/deps.awk" \
+                "$src_check_index"; then
+            rmdir "$src_check_work" 2>/dev/null || :
+            sps_die "$SPS_EX_DEPENDENCY" "checked dependency graph is invalid"
+        fi
+        rm -f "$src_check_index" 2>/dev/null || :
+        rmdir "$src_check_work" 2>/dev/null || :
+    fi
+
+    printf 'checked %d recipe(s)\n' "$src_check_count"
+}
+
 case ${1-} in
     update)
         shift
         src_update "$@"
+        ;;
+    check)
+        shift
+        src_check "$@"
         ;;
     search|show|which)
         src_command=$1

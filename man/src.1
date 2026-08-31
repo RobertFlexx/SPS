@@ -4,6 +4,7 @@ src \- update and query SPS source repository indexes
 .SH SYNOPSIS
 .nf
 src update
+src check RECIPE... [--deps]
 src search PATTERN [--raw]
 src show PACKAGE [--raw]
 src which PACKAGE
@@ -22,6 +23,18 @@ Clone absent Git repositories, fetch existing clean Git repositories,
 fast-forward safe tracking branches, scan configured trees, validate recipes
 and the selected dependency graph, and atomically replace the local package
 index. Invalid input leaves the previous index in place.
+.TP
+.BI check " recipe ..."
+Validate each recipe with the same parser used by
+.B update
+without downloading sources or running any build phase. Each argument is a
+recipe file or a directory containing a
+.B recipe
+file. Failed recipes are reported and the command exits nonzero, so it is safe
+to gate automation on it. With
+.B --deps
+a temporary index of the checked recipes is also validated as a dependency
+graph.
 .TP
 .BI search " pattern"
 Search indexed names and descriptions.
