@@ -50,6 +50,9 @@
 /sbin/depmod
 /sbin/insmod
 /usr/bin/lsblk
+/bin/lsblk
+/sbin/lsblk
+/usr/sbin/lsblk
 /usr/bin/blkid
 /usr/sbin/blkid
 /usr/sbin/fdisk

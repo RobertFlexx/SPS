@@ -285,6 +285,22 @@ mkiso_copy_libs()
 	done
 }
 
+# Copy a host command by name. live-bins lists common paths, but util-linux
+# puts lsblk in /bin on this builder and /usr/bin on others. Silent skips
+# of a missing path are why live setup printed "no disks found".
+mkiso_copy_host_cmd()
+{
+	mkiso_cmd=$1
+	mkiso_old_path=$PATH
+	PATH=/sbin:/usr/sbin:/bin:/usr/bin:$PATH
+	mkiso_found=$(command -v "$mkiso_cmd" 2>/dev/null) || mkiso_found=
+	PATH=$mkiso_old_path
+	[ -n "$mkiso_found" ] && [ -e "$mkiso_found" ] || return 1
+	mkiso_copy_path "$mkiso_found"
+	mkiso_copy_libs "$mkiso_found"
+	return 0
+}
+
 # glibc, libtinfo, and the loader. Seed and Plasma both need these; a
 # missing libtinfo.so.6 (the real file behind the soname symlink) is what
 # made getty respawn `/bin/sh` forever on the Plasma ISO.
@@ -699,6 +715,12 @@ if [ -f "$mkiso_libdir/live-bins" ]; then
 		mkiso_copy_libs "$mkiso_bin"
 	done <"$mkiso_libdir/live-bins"
 fi
+printf '%s: copying disk tools for setup\n' "$sps_prog" >&2
+for mkiso_cmd in lsblk blkid sfdisk cfdisk fdisk wipefs mkfs.ext4 mke2fs \
+	mkfs.vfat mkswap partprobe udevadm udevd
+do
+	mkiso_copy_host_cmd "$mkiso_cmd" || :
+done
 mkiso_copy_runtime_libs
 mkiso_force_busybox_sh
 

@@ -110,6 +110,15 @@ grep -q 'mounting live filesystem' "$project_dir/lib/mkiso/initrd-init" ||
 if [ -x /usr/bin/dialog ]; then
 	[ -e "$layout/usr/bin/dialog" ] || fail 'dialog missing from slim layout'
 fi
+if command -v lsblk >/dev/null 2>&1; then
+	if [ ! -e "$layout/bin/lsblk" ] && [ ! -e "$layout/usr/bin/lsblk" ] &&
+	   [ ! -e "$layout/sbin/lsblk" ] && [ ! -e "$layout/usr/sbin/lsblk" ]
+	then
+		fail 'lsblk missing from live layout (setup disk menu needs it)'
+	fi
+fi
+grep -q 'copying disk tools for setup' "$mkiso" ||
+	fail 'mkiso must copy partition tools by command name'
 if [ -e "$layout/lib64/libtinfo.so.6" ] || [ -e "$layout/usr/lib64/libtinfo.so.6" ]
 then
 	for tinfo in "$layout/lib64/libtinfo.so.6" "$layout/usr/lib64/libtinfo.so.6"

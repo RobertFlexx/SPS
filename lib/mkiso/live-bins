@@ -1,6 +1,32 @@
 # Copied into every live image, including --no-seed. Busybox covers most
 # applets; these are the host tools setup(1) still needs on a slim disc.
+# lsblk lives in /bin on this builder; /usr/bin/lsblk is often absent, so
+# mkiso also copies partition tools by command name (see mkiso_copy_host_cmd).
 /usr/bin/dialog
 /sbin/ldconfig
 /usr/sbin/ldconfig
 /usr/bin/ldd
+/bin/lsblk
+/usr/bin/lsblk
+/sbin/lsblk
+/usr/sbin/lsblk
+/bin/blkid
+/sbin/blkid
+/usr/sbin/blkid
+/sbin/sfdisk
+/usr/sbin/sfdisk
+/sbin/cfdisk
+/usr/sbin/cfdisk
+/sbin/fdisk
+/usr/sbin/fdisk
+/sbin/wipefs
+/usr/sbin/wipefs
+/sbin/mkfs.ext4
+/usr/sbin/mkfs.ext4
+/sbin/mke2fs
+/sbin/mkfs.vfat
+/usr/sbin/mkfs.vfat
+/sbin/mkswap
+/usr/sbin/mkswap
+/sbin/partprobe
+/usr/sbin/partprobe

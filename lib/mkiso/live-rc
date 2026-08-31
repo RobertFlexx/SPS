@@ -61,7 +61,8 @@ fi
 if [ -d /lib/modules ] && command -v depmod >/dev/null 2>&1; then
 	depmod -a 2>/dev/null || :
 fi
-for mod in e1000 e1000e r8169 virtio_net usbnet hid-generic usbhid atkbd \
+for mod in e1000 e1000e r8169 virtio_net virtio_blk virtio_pci virtio_scsi \
+	usbnet hid-generic usbhid atkbd \
 	nouveau bochs drm_kms_helper
 do
 	modprobe "$mod" 2>/dev/null || :

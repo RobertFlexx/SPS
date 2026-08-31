@@ -30,8 +30,8 @@ setup_partname()
 
 setup_lsblk()
 {
-	setup_part_path lsblk >/dev/null || return 1
-	lsblk "$@"
+	setup_lsblk_bin=$(setup_part_path lsblk) || return 1
+	"$setup_lsblk_bin" "$@"
 }
 
 setup_disk_menu_lines()
