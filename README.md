@@ -163,8 +163,9 @@ still refuses to guess a disk.
 ## Live TTY ISO
 
 `mkiso` writes a hybrid ISO. Flash it to USB, boot to a console, mount a
-destination filesystem on `/mnt`, and run `setup`. A GitHub release attached
-to this repository is the downloadable image:
+destination filesystem on `/mnt`, and run `setup`. Ready-made images:
+
+https://github.com/RobertFlexx/SPS/releases/tag/live-2026-08-31
 
 ```sh
 mkiso --output dist/sps-live.iso \
