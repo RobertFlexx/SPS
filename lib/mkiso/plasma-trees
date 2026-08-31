@@ -31,6 +31,9 @@
 /usr/lib/dri
 /usr/lib64/gbm
 /usr/lib64/libkwin.so
+/usr/libexec/kf6
+/usr/libexec/kde
+/usr/libexec/polkit-1
 /lib/firmware/nvidia
 /lib/firmware/nouveau
 /usr/lib64/pipewire-0.3

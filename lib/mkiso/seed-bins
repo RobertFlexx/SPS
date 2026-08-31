@@ -1,4 +1,6 @@
-/bin/sh
+# Do not copy /bin/sh. Host /bin/sh is bash, and getty runs /bin/sh.
+# Live /bin/sh stays a busybox symlink. /bin/bash is copied for users
+# who want it, only after its library closure is on the image.
 /bin/bash
 /bin/busybox
 /usr/bin/dialog

@@ -69,3 +69,40 @@ if [ -x "$layout/bin/busybox" ] && [ -L "$layout/bin/mkdir" ]; then
 		*) fail "busybox applet mkdir should be a relative link, got $target" ;;
 	esac
 fi
+
+[ -f "$layout/etc/os-release" ] || fail 'os-release missing'
+grep -qx 'ID=splux' "$layout/etc/os-release" || fail 'os-release is not Splux'
+grep -qx 'NAME="Splux"' "$layout/etc/os-release" || fail 'os-release NAME is not Splux'
+
+# Host /bin/sh is bash. Getty runs /bin/sh. A bash symlink without libtinfo
+# is the Plasma ISO boot loop.
+if [ -L "$layout/bin/sh" ]; then
+	sh_target=$(readlink "$layout/bin/sh")
+	case $sh_target in
+		busybox|./busybox|/bin/busybox) ;;
+		*) fail "live /bin/sh must be busybox, got $sh_target" ;;
+	esac
+else
+	fail 'live /bin/sh is not a symlink to busybox'
+fi
+if grep -q 'ln -sf bash .*/bin/sh' "$mkiso"; then
+	fail 'mkiso must not point /bin/sh at bash'
+fi
+if [ -x /usr/bin/dialog ]; then
+	[ -e "$layout/usr/bin/dialog" ] || fail 'dialog missing from slim layout'
+fi
+if [ -e "$layout/lib64/libtinfo.so.6" ] || [ -e "$layout/usr/lib64/libtinfo.so.6" ]
+then
+	for tinfo in "$layout/lib64/libtinfo.so.6" "$layout/usr/lib64/libtinfo.so.6"
+	do
+		[ -e "$tinfo" ] || continue
+		if [ -L "$tinfo" ]; then
+			tinfo_real=$(readlink -f "$tinfo")
+			[ -f "$tinfo_real" ] || fail "libtinfo.so.6 is a dangling symlink"
+			case $tinfo_real in
+				"$layout"/*) ;;
+				*) fail "libtinfo real file is outside the live root" ;;
+			esac
+		fi
+	done
+fi

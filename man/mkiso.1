@@ -22,6 +22,13 @@ Flash it to USB, boot, and run
 .B setup .
 .B --session plasma
 copies a host Plasma/Wayland stack; NVIDIA live graphics use nouveau.
+Live
+.B /bin/sh
+is always busybox. Host bash is copied as
+.B /bin/bash
+only with its library closure, including the real
+.B libtinfo
+file behind the soname symlink.
 .B --layout
 writes the live root only, for tests and inspection.
 .PP

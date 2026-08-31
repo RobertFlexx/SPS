@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/busybox sh
 # Plasma live session. Respawned by busybox init on tty1. Open Konsole
 # and run setup(1). If Plasma is missing, a shell stays on this tty.
 

@@ -1,0 +1,6 @@
+# Copied into every live image, including --no-seed. Busybox covers most
+# applets; these are the host tools setup(1) still needs on a slim disc.
+/usr/bin/dialog
+/sbin/ldconfig
+/usr/sbin/ldconfig
+/usr/bin/ldd

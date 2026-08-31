@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/busybox sh
 # Sysinit for the live image. Child of busybox init, or a systemd oneshot.
 # Must not replace PID 1 and must not exec a console. The old live TTY did
 # that and the kernel reported "Attempted to kill init" (exit 127).

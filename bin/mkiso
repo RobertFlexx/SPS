@@ -222,31 +222,45 @@ mkdir -p "$mkiso_live" ||
 
 # --- copy helpers -------------------------------------------------------
 
+# Copy a host path into the live root. Directories are merged (src/. into
+# dest/) so a second copy of /usr/lib64/qt6 cannot nest as qt6/qt6.
+# Symlinks are copied as links, then the chain is followed so sonames like
+# libtinfo.so.6 are not left dangling.
 mkiso_copy_path()
 {
 	mkiso_src=$1
+	mkiso_depth=${2:-0}
+	[ "$mkiso_depth" -lt 16 ] || return 0
 	[ -e "$mkiso_src" ] || [ -L "$mkiso_src" ] || return 0
 	mkiso_dest=$mkiso_live$mkiso_src
-	mkdir -p "$(dirname "$mkiso_dest")" || return 1
+	mkdir -p "$(dirname "$mkiso_dest")" || return 0
 	if [ -d "$mkiso_src" ] && [ ! -L "$mkiso_src" ]; then
 		mkdir -p "$mkiso_dest"
-		cp -a "$mkiso_src" "$mkiso_dest" 2>/dev/null ||
-			cp -R "$mkiso_src" "$mkiso_dest" 2>/dev/null || :
+		cp -a "$mkiso_src"/. "$mkiso_dest"/ 2>/dev/null ||
+			cp -R "$mkiso_src"/. "$mkiso_dest"/ 2>/dev/null || :
 	else
 		cp -a "$mkiso_src" "$mkiso_dest" 2>/dev/null ||
 			cp "$mkiso_src" "$mkiso_dest" 2>/dev/null || :
+		if [ -L "$mkiso_src" ]; then
+			mkiso_link=$(readlink "$mkiso_src") || return 0
+			case $mkiso_link in
+				/*) mkiso_next=$mkiso_link ;;
+				*) mkiso_next=$(dirname "$mkiso_src")/$mkiso_link ;;
+			esac
+			mkiso_copy_path "$mkiso_next" $((mkiso_depth + 1))
+		fi
 	fi
 }
 
 mkiso_copy_libs()
 {
 	mkiso_bin=$1
-	[ -f "$mkiso_bin" ] || return 0
+	[ -f "$mkiso_bin" ] || [ -L "$mkiso_bin" ] || return 0
 	command -v ldd >/dev/null 2>&1 || return 0
 	ldd "$mkiso_bin" 2>/dev/null | while IFS= read -r mkiso_line; do
 		mkiso_lib=
 		case $mkiso_line in
-			*linux-vdso*) continue ;;
+			*linux-vdso*|*'not a dynamic'*) continue ;;
 		esac
 		# "libx.so => /lib64/libx.so (0x...)"
 		mkiso_lib=${mkiso_line#*=> }
@@ -267,6 +281,160 @@ mkiso_copy_libs()
 				;;
 		esac
 	done
+}
+
+# glibc, libtinfo, and the loader. Seed and Plasma both need these; a
+# missing libtinfo.so.6 (the real file behind the soname symlink) is what
+# made getty respawn `/bin/sh` forever on the Plasma ISO.
+mkiso_copy_runtime_libs()
+{
+	for mkiso_lib in \
+		/lib64/ld-linux-x86-64.so.2 \
+		/lib/ld-linux-x86-64.so.2 \
+		/lib64/libc.so.6 \
+		/lib64/libm.so.6 \
+		/lib64/libdl.so.2 \
+		/lib64/libpthread.so.0 \
+		/lib64/librt.so.1 \
+		/lib64/libutil.so.1 \
+		/lib64/libresolv.so.2 \
+		/lib64/libnss_files.so.2 \
+		/lib64/libnss_dns.so.2 \
+		/lib64/libtinfo.so.6 \
+		/lib64/libncursesw.so.6 \
+		/lib64/libncurses.so.6 \
+		/lib64/libreadline.so.8 \
+		/lib64/libgcc_s.so.1 \
+		/usr/lib64/libgcc_s.so.1 \
+		/usr/lib64/libstdc++.so.6
+	do
+		[ -e "$mkiso_lib" ] || [ -L "$mkiso_lib" ] || continue
+		mkiso_copy_path "$mkiso_lib"
+	done
+	for mkiso_lib in /lib64/libtinfo.so.* /usr/lib64/libtinfo.so.* \
+		/lib64/libncursesw.so.* /lib64/libc.so.* \
+		/lib64/ld-linux-x86-64.so.*
+	do
+		[ -e "$mkiso_lib" ] || [ -L "$mkiso_lib" ] || continue
+		mkiso_copy_path "$mkiso_lib"
+	done
+	mkiso_copy_path /etc/ld.so.conf
+	mkiso_copy_path /etc/ld.so.conf.d
+	if [ ! -f "$mkiso_live/etc/ld.so.conf" ]; then
+		mkdir -p "$mkiso_live/etc"
+		printf '%s\n' '/lib64' '/usr/lib64' '/lib' '/usr/lib' \
+			>"$mkiso_live/etc/ld.so.conf"
+	fi
+	mkiso_copy_path /usr/share/terminfo
+	mkiso_copy_path /etc/terminfo
+	mkiso_copy_path /lib/terminfo
+}
+
+# ldd every ELF already in the live root so dlopened plugins (Qt, KWin)
+# pull their DT_NEEDED closure too.
+mkiso_close_libs()
+{
+	command -v ldd >/dev/null 2>&1 || return 0
+	mkiso_find=
+	for mkiso_d in bin sbin usr/bin usr/sbin lib64 usr/lib64 lib usr/lib
+	do
+		[ -d "$mkiso_live/$mkiso_d" ] || continue
+		mkiso_find="$mkiso_find $mkiso_live/$mkiso_d"
+	done
+	[ -n "$mkiso_find" ] || return 0
+	# shellcheck disable=SC2086
+	find $mkiso_find \
+		\( -path "$mkiso_live/usr/lib64/gcc" -o \
+		   -path "$mkiso_live/usr/libexec/gcc" -o \
+		   -path "$mkiso_live/usr/lib64/python3.12" -o \
+		   -path "$mkiso_live/usr/lib64/rustlib" -o \
+		   -path "$mkiso_live/usr/lib64/go1.27.0" \) -prune -o \
+		-type f -print 2>/dev/null |
+	while IFS= read -r mkiso_elf || [ -n "$mkiso_elf" ]; do
+		[ -n "$mkiso_elf" ] || continue
+		mkiso_copy_libs "$mkiso_elf"
+	done
+}
+
+mkiso_ldconfig_live()
+{
+	command -v ldconfig >/dev/null 2>&1 || return 0
+	ldconfig -r "$mkiso_live" 2>/dev/null || :
+}
+
+# Getty and live-rc exec /bin/sh. That must be static busybox, never bash.
+mkiso_force_busybox_sh()
+{
+	[ -x "$mkiso_live/bin/busybox" ] || return 0
+	ln -sf busybox "$mkiso_live/bin/sh"
+}
+
+mkiso_stamp_os_release()
+{
+	mkdir -p "$mkiso_live/etc"
+	printf '%s\n' \
+		'NAME="Splux"' \
+		'PRETTY_NAME="Splux Linux"' \
+		'ID=splux' \
+		'VERSION_ID="1.0"' \
+		'LOGO=splux' \
+		'HOME_URL="https://github.com/RobertFlexx/SPS"' \
+		>"$mkiso_live/etc/os-release"
+}
+
+# Fail the ISO build rather than ship a disc that respawns getty with
+# "error while loading shared libraries: libtinfo.so.6".
+mkiso_verify_live()
+{
+	[ -x "$mkiso_live/bin/busybox" ] || return 0
+	if [ -L "$mkiso_live/bin/sh" ]; then
+		mkiso_sh=$(readlink "$mkiso_live/bin/sh")
+		case $mkiso_sh in
+			busybox|./busybox|/bin/busybox) ;;
+			*)
+				sps_die "$SPS_EX_BUILD" \
+					"live /bin/sh must be busybox (got $mkiso_sh)"
+				;;
+		esac
+	else
+		sps_die "$SPS_EX_BUILD" "live /bin/sh is not a busybox symlink"
+	fi
+
+	mkiso_interp=
+	for mkiso_p in "$mkiso_live/lib64/ld-linux-x86-64.so.2" \
+		"$mkiso_live/lib/ld-linux-x86-64.so.2" \
+		"$mkiso_live/usr/lib64/ld-linux-x86-64.so.2"
+	do
+		if [ -e "$mkiso_p" ]; then
+			mkiso_interp=$mkiso_p
+			break
+		fi
+	done
+	mkiso_lp=$mkiso_live/lib64:$mkiso_live/usr/lib64:$mkiso_live/lib:$mkiso_live/usr/lib
+
+	if [ -x "$mkiso_live/bin/bash" ] && [ ! -L "$mkiso_live/bin/bash" ]; then
+		if [ ! -e "$mkiso_live/lib64/libtinfo.so.6" ] &&
+			[ ! -e "$mkiso_live/usr/lib64/libtinfo.so.6" ]; then
+			sps_die "$SPS_EX_BUILD" \
+				"live bash is present but libtinfo.so.6 is not"
+		fi
+		if [ -n "$mkiso_interp" ]; then
+			if ! "$mkiso_interp" --library-path "$mkiso_lp" \
+				"$mkiso_live/bin/bash" -c ':' >/dev/null 2>&1; then
+				sps_die "$SPS_EX_BUILD" \
+					"live /bin/bash cannot execute (missing libraries)"
+			fi
+		fi
+	fi
+
+	# chroot needs privileges; skip it in unprivileged tests.
+	if [ "$(id -u 2>/dev/null)" = 0 ]; then
+		if ! "$mkiso_live/bin/busybox" chroot "$mkiso_live" /bin/sh -c ':' \
+			>/dev/null 2>&1; then
+			sps_die "$SPS_EX_BUILD" \
+				"live /bin/sh cannot execute inside the image"
+		fi
+	fi
 }
 
 # BusyBox --install -s writes absolute symlinks to the host path. Relative
@@ -313,6 +481,7 @@ mkiso_copy_plasma()
 		for mkiso_so in $mkiso_pat; do
 			[ -e "$mkiso_so" ] || continue
 			mkiso_copy_path "$mkiso_so"
+			mkiso_copy_libs "$mkiso_so"
 		done
 	done
 }
@@ -357,9 +526,7 @@ mkiso_install_pid1()
 		cp -a "$mkiso_busybox" "$mkiso_live/bin/busybox"
 		chmod 755 "$mkiso_live/bin/busybox"
 		mkiso_busybox_links "$mkiso_live/bin"
-		if [ -x "$mkiso_live/bin/bash" ]; then
-			ln -sf bash "$mkiso_live/bin/sh"
-		fi
+		mkiso_force_busybox_sh
 		cp -a "$mkiso_live/bin/busybox" "$mkiso_live/sbin/init"
 		chmod 755 "$mkiso_live/sbin/init"
 	fi
@@ -462,6 +629,7 @@ if [ -n "$mkiso_busybox" ] && [ -x "$mkiso_busybox" ]; then
 	cp -a "$mkiso_busybox" "$mkiso_live/bin/busybox"
 	chmod 755 "$mkiso_live/bin/busybox"
 	mkiso_busybox_links "$mkiso_live/bin"
+	mkiso_force_busybox_sh
 	ln -sf ../bin/busybox "$mkiso_live/sbin/busybox" 2>/dev/null || :
 fi
 
@@ -469,6 +637,7 @@ install -m 0644 "$mkiso_libdir/motd" "$mkiso_live/etc/motd"
 install -m 0644 "$mkiso_libdir/issue" "$mkiso_live/etc/issue"
 printf '%s\n' live >"$mkiso_live/etc/sps/live"
 printf '%s\n' splux-live >"$mkiso_live/etc/hostname"
+mkiso_stamp_os_release
 printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' >"$mkiso_live/etc/passwd"
 printf '%s\n' 'root:x:0:' >"$mkiso_live/etc/group"
 # Empty password on the live console only.
@@ -510,6 +679,18 @@ git core https://github.com/RobertFlexx/sps-core.git 100
 git extra https://github.com/RobertFlexx/sps-extra.git 80
 EOF
 fi
+
+# dialog and glibc/libtinfo on every image, including --no-seed.
+if [ -f "$mkiso_libdir/live-bins" ]; then
+	while IFS= read -r mkiso_bin || [ -n "$mkiso_bin" ]; do
+		case $mkiso_bin in ''|\#*) continue ;; esac
+		[ -e "$mkiso_bin" ] || continue
+		mkiso_copy_path "$mkiso_bin"
+		mkiso_copy_libs "$mkiso_bin"
+	done <"$mkiso_libdir/live-bins"
+fi
+mkiso_copy_runtime_libs
+mkiso_force_busybox_sh
 
 if [ "$mkiso_copy_seed" -eq 1 ] && [ -f "$mkiso_libdir/seed-bins" ]; then
 	printf '%s: copying host seed tools\n' "$sps_prog" >&2
@@ -572,6 +753,11 @@ fi
 
 # PID 1 last, after seed, so a copied /sbin/init cannot stick around.
 mkiso_install_pid1
+mkiso_copy_runtime_libs
+mkiso_close_libs
+mkiso_force_busybox_sh
+mkiso_ldconfig_live
+mkiso_verify_live
 
 if [ -n "$mkiso_layout" ] && [ -z "$mkiso_output" ]; then
 	printf '%s\n' "$mkiso_live"

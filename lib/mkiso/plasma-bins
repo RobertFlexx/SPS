@@ -31,3 +31,9 @@
 /usr/bin/pipewire
 /usr/bin/pipewire-pulse
 /usr/bin/wireplumber
+/usr/bin/kpackagetool6
+/usr/bin/qdbus
+/usr/bin/qdbus6
+/usr/libexec/kf6/kconf_update
+/usr/libexec/kf6/kio_http_cache_cleaner
+
