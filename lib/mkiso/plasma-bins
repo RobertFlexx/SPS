@@ -5,7 +5,10 @@
 /usr/bin/startplasma-wayland
 /usr/bin/startplasma-x11
 /usr/bin/kwin_wayland
+/usr/bin/kwin_wayland_wrapper
 /usr/bin/kwin_x11
+/usr/libexec/kwin_dialog_helper
+/usr/libexec/kwin_killer_helper
 /usr/bin/plasmashell
 /usr/bin/plasma_session
 /usr/bin/plasma_waitforname
@@ -42,6 +45,7 @@
 /usr/bin/kpackagetool6
 /usr/bin/qdbus
 /usr/bin/qdbus6
+/usr/lib64/qt6/bin/qdbus
 /usr/libexec/kf6/kconf_update
 /usr/libexec/kf6/kio_http_cache_cleaner
 /usr/libexec/kf6/kiod6
@@ -51,4 +55,5 @@
 /usr/libexec/plasma-startup-sound
 /usr/libexec/xdg-desktop-portal
 /usr/libexec/xdg-desktop-portal-kde
+/usr/libexec/xdg-permission-store
 

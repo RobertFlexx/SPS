@@ -118,8 +118,12 @@ grep -q libgallium "$mkiso" ||
 	fail 'plasma ISO must copy Mesa libgallium'
 grep -q 'video:x:18:root' "$layout/etc/group" ||
 	fail 'live group must include video for seatd/DRM'
-grep -q ksplashqml "$project_dir/lib/mkiso/plasma-bins" ||
-	fail 'plasma-bins must include ksplashqml'
+grep -q kwin_wayland_wrapper "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include kwin_wayland_wrapper'
+grep -q xdg-permission-store "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include xdg-permission-store'
+grep -q libxcb-cursor "$mkiso" ||
+	fail 'plasma ISO must copy libxcb-cursor for the xcb QPA plugin'
 grep -q plasma_waitforname "$project_dir/lib/mkiso/plasma-bins" ||
 	fail 'org.kde.KSplash.service Exec is plasma_waitforname'
 grep -q -- '-comp zstd' "$mkiso" || fail 'mkiso must write a zstd squashfs'

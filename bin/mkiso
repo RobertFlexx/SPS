@@ -506,7 +506,8 @@ mkiso_copy_plasma()
 		/usr/lib64/libEGL.so* /usr/lib64/libGL.so* \
 		/usr/lib64/libEGL_mesa.so* /usr/lib64/libGLX_mesa.so* \
 		/usr/lib64/libgallium*.so* /usr/lib64/dri/libdril_dri.so \
-		/usr/lib64/libLLVM.so /usr/lib64/libLLVM.so.[0-9]*
+		/usr/lib64/libLLVM.so /usr/lib64/libLLVM.so.[0-9]* \
+		/usr/lib64/libOpenGL.so* /usr/lib64/libxcb-cursor.so*
 	do
 		for mkiso_so in $mkiso_pat; do
 			[ -e "$mkiso_so" ] || continue
@@ -542,6 +543,12 @@ EOF
 		mkiso_copy_host_cmd "$mkiso_cmd" || :
 	done
 	mkiso_copy_path /usr/libexec/dbus-daemon-launch-helper
+	# startplasmacompositor looks up `qdbus` on PATH. This host ships qdbus6.
+	if [ -e "$mkiso_live/usr/bin/qdbus6" ] &&
+		[ ! -e "$mkiso_live/usr/bin/qdbus" ]
+	then
+		ln -sf qdbus6 "$mkiso_live/usr/bin/qdbus"
+	fi
 	mkdir -p "$mkiso_live/etc/systemd/system"
 	ln -sf /dev/null "$mkiso_live/etc/systemd/system/dbus.service"
 	ln -sf /dev/null "$mkiso_live/etc/systemd/system/dbus.socket"
