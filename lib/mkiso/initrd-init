@@ -45,11 +45,25 @@ for mod in loop squashfs overlay isofs vfat nls_cp437 nls_iso8859-1 \
 	usb-storage xhci-pci ehci-pci uhci-hcd sr_mod sd_mod ahci nvme \
 	virtio_blk virtio_pci virtio_scsi virtio_net virtio_console \
 	sdhci sdhci-pci mmc_block \
-	drm drm_kms_helper drm_ttm_helper ttm virtio_dma_buf virtio_gpu \
-	bochs simpledrm
+	drm drm_kms_helper drm_shmem_helper drm_ttm_helper ttm virtio_dma_buf \
+	virtio_gpu bochs qxl vmwgfx
 do
 	"$bb" modprobe "$mod" 2>/dev/null || :
 done
+# simpledrm on a firmware framebuffer next to virtio_gpu is a black KWin
+# with an instant cursor. Only load it when no real KMS node appeared.
+n=0
+while [ "$n" -lt 5 ]
+do
+	if [ -e /dev/dri/card0 ] || [ -e /dev/dri/card1 ]; then
+		break
+	fi
+	n=$((n + 1))
+	"$bb" sleep 1
+done
+if [ ! -e /dev/dri/card0 ] && [ ! -e /dev/dri/card1 ]; then
+	"$bb" modprobe simpledrm 2>/dev/null || :
+fi
 
 found=
 i=0

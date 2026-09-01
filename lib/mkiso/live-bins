@@ -32,3 +32,5 @@
 /usr/sbin/partprobe
 /sbin/dhcpcd
 /usr/sbin/dhcpcd
+/usr/bin/openssl
+/bin/openssl

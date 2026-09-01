@@ -53,6 +53,10 @@ options:
   --shell PATH              login shell for the first user
   --user NAME               first unprivileged user (uid 1000)
   --user-gecos TEXT
+  --user-password-file FILE hash the first line as the user password
+  --root-password-file FILE hash the first line as the root password
+  --user-password-hash HASH already-hashed user shadow field
+  --root-password-hash HASH already-hashed root shadow field
   --extra PKG[,PKG...]      individual packages in addition to sets
   --ssh yes|no              include the ssh set (OpenSSH)
   --printing yes|no         include the printing set (CUPS)
@@ -165,6 +169,8 @@ setup_locale=
 setup_shell=
 setup_user=
 setup_user_gecos=
+setup_user_password_hash=
+setup_root_password_hash=
 setup_extra=
 setup_ssh=
 setup_printing=
@@ -229,6 +235,109 @@ setup_append_csv()
 		esac
 	done
 	eval "$setup_dest=\"\$(printf '%s' \"\$setup_old\" | sed 's/^ //')\""
+}
+
+setup_hash_password_stdin()
+{
+	if command -v openssl >/dev/null 2>&1; then
+		openssl passwd -6 -stdin
+		return $?
+	fi
+	if command -v python3 >/dev/null 2>&1; then
+		python3 -c 'import crypt,sys
+p=sys.stdin.read().rstrip("\n")
+print(crypt.crypt(p, crypt.mksalt(crypt.METHOD_SHA512)))'
+		return $?
+	fi
+	if command -v busybox >/dev/null 2>&1; then
+		busybox cryptpw -m sha512 "$(cat)"
+		return $?
+	fi
+	return 1
+}
+
+setup_hash_password_file()
+{
+	setup_pwf=$1
+	[ -f "$setup_pwf" ] && [ -r "$setup_pwf" ] ||
+		setup_fail "$SPS_EX_NOTFOUND" "cannot read password file: $setup_pwf"
+	setup_pw=$(sed -n '1p' "$setup_pwf")
+	[ -n "$setup_pw" ] ||
+		setup_fail "$SPS_EX_USAGE" "password file is empty: $setup_pwf"
+	printf '%s\n' "$setup_pw" | setup_hash_password_stdin
+}
+
+setup_shadow_set_hash()
+{
+	setup_sh_file=$1
+	setup_sh_user=$2
+	setup_sh_hash=$3
+	[ -f "$setup_sh_file" ] || return 0
+	[ -n "$setup_sh_hash" ] || return 0
+	setup_sh_tmp=$setup_sh_file.tmp
+	setup_u=$setup_sh_user setup_h=$setup_sh_hash awk -F: '
+		BEGIN { OFS = ":" }
+		$1 == ENVIRON["setup_u"] { $2 = ENVIRON["setup_h"] }
+		{ print }
+	' "$setup_sh_file" >"$setup_sh_tmp" || return 1
+	mv "$setup_sh_tmp" "$setup_sh_file"
+	chmod 0640 "$setup_sh_file" 2>/dev/null || chmod 0600 "$setup_sh_file" || :
+}
+
+setup_group_ensure()
+{
+	setup_gf=$1
+	setup_gn=$2
+	setup_gid=$3
+	[ -f "$setup_gf" ] || return 0
+	grep -q "^$setup_gn:" "$setup_gf" && return 0
+	printf '%s:x:%s:\n' "$setup_gn" "$setup_gid" >>"$setup_gf"
+}
+
+setup_group_add_user()
+{
+	setup_gf=$1
+	setup_gn=$2
+	setup_gu=$3
+	[ -f "$setup_gf" ] || return 0
+	grep -q "^$setup_gn:" "$setup_gf" || return 0
+	setup_g_tmp=$setup_gf.tmp
+	setup_g=$setup_gn setup_u=$setup_gu awk -F: '
+		BEGIN { OFS = ":" }
+		$1 == ENVIRON["setup_g"] {
+			if ($4 == "") $4 = ENVIRON["setup_u"]
+			else {
+				n = split($4, a, ",")
+				found = 0
+				for (i = 1; i <= n; i++) if (a[i] == ENVIRON["setup_u"]) found = 1
+				if (!found) $4 = $4 "," ENVIRON["setup_u"]
+			}
+		}
+		{ print }
+	' "$setup_gf" >"$setup_g_tmp" || return 1
+	mv "$setup_g_tmp" "$setup_gf"
+}
+
+setup_ask_password_pair()
+{
+	setup_pw_title=$1
+	setup_pw_prompt=$2
+	setup_p1=$(setup_dialog --title "$setup_pw_title" \
+		--passwordbox "$setup_pw_prompt" 9 50) ||
+		setup_fail "$SPS_EX_USAGE" "cancelled"
+	setup_p2=$(setup_dialog --title "$setup_pw_title" \
+		--passwordbox "Repeat the password." 9 50) ||
+		setup_fail "$SPS_EX_USAGE" "cancelled"
+	if [ "$setup_p1" != "$setup_p2" ]; then
+		setup_fail "$SPS_EX_USAGE" "passwords do not match"
+	fi
+	if [ -z "$setup_p1" ]; then
+		printf '%s\n' ''
+		return 0
+	fi
+	printf '%s\n' "$setup_p1" | setup_hash_password_stdin ||
+		setup_fail "$SPS_EX_PACKAGE" \
+			"cannot hash passwords (need openssl passwd, python3, or busybox cryptpw)"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -305,6 +414,32 @@ while [ "$#" -gt 0 ]; do
 		--user-gecos)
 			setup_need_value "$@"
 			setup_user_gecos=$2
+			shift 2
+			;;
+		--user-password-file)
+			setup_need_value "$@"
+			setup_user_password_hash=$(setup_hash_password_file "$2") ||
+				setup_fail "$SPS_EX_PACKAGE" "cannot hash $2"
+			[ -n "$setup_user_password_hash" ] ||
+				setup_fail "$SPS_EX_USAGE" "user password hash was empty"
+			shift 2
+			;;
+		--root-password-file)
+			setup_need_value "$@"
+			setup_root_password_hash=$(setup_hash_password_file "$2") ||
+				setup_fail "$SPS_EX_PACKAGE" "cannot hash $2"
+			[ -n "$setup_root_password_hash" ] ||
+				setup_fail "$SPS_EX_USAGE" "root password hash was empty"
+			shift 2
+			;;
+		--user-password-hash)
+			setup_need_value "$@"
+			setup_user_password_hash=$2
+			shift 2
+			;;
+		--root-password-hash)
+			setup_need_value "$@"
+			setup_root_password_hash=$2
 			shift 2
 			;;
 		--flatpak)
@@ -588,6 +723,14 @@ setup_load_answers()
 			shell) [ -n "$setup_shell" ] || setup_shell=$setup_av ;;
 			user) [ -n "$setup_user" ] || setup_user=$setup_av ;;
 			user-gecos) [ -n "$setup_user_gecos" ] || setup_user_gecos=$setup_av ;;
+			user-password-hash)
+				[ -n "$setup_user_password_hash" ] ||
+					setup_user_password_hash=$setup_av
+				;;
+			root-password-hash)
+				[ -n "$setup_root_password_hash" ] ||
+					setup_root_password_hash=$setup_av
+				;;
 			extra) setup_append_csv setup_extra "$setup_av" "$setup_extra" ;;
 			ssh) [ -n "$setup_ssh" ] || setup_ssh=$setup_av ;;
 			printing) [ -n "$setup_printing" ] || setup_printing=$setup_av ;;
@@ -1060,6 +1203,15 @@ The live image and auto drivers use nouveau. This extra set is the proprietary/o
 			setup_fail "$SPS_EX_USAGE" "cancelled"
 	fi
 
+	if [ -n "$setup_user" ] && [ -z "$setup_user_password_hash" ]; then
+		setup_user_password_hash=$(setup_ask_password_pair "User password" \
+			"Password for $setup_user. Leave empty to lock the account until you run passwd after boot.")
+	fi
+	if [ -z "$setup_root_password_hash" ]; then
+		setup_root_password_hash=$(setup_ask_password_pair "Root password" \
+			"Password for root. Leave empty to keep root locked.")
+	fi
+
 	if [ -z "$setup_shell" ]; then
 		setup_sh_args=
 		if [ -f "$setup_dir/shells" ]; then
@@ -1425,6 +1577,16 @@ setup_summary()
 	printf 'Locale:     %s\n' "$setup_locale"
 	printf 'Shell:      %s\n' "$setup_shell"
 	printf 'User:       %s\n' "${setup_user:-<none>}"
+	if [ -n "$setup_user_password_hash" ]; then
+		printf 'User pw:    set\n'
+	elif [ -n "$setup_user" ]; then
+		printf 'User pw:    locked\n'
+	fi
+	if [ -n "$setup_root_password_hash" ]; then
+		printf 'Root pw:    set\n'
+	else
+		printf 'Root pw:    locked\n'
+	fi
 	printf 'Sets:       %s\n' "${setup_enable:-<none>}"
 	printf 'Extra:      %s\n' "${setup_extra:-<none>}"
 	printf 'Flatpak:    %s\n' "$setup_flatpak"
@@ -1528,21 +1690,33 @@ setup_apply_config()
 	# prefixes so it could index the copied trees before first boot.
 	setup_write_repos_conf ""
 
+	if [ ! -f "$setup_etc/passwd" ]; then
+		printf '%s\n' \
+			'root:x:0:0:root:/root:/bin/sh' \
+			'nobody:x:65534:65534:Unprivileged User:/:/usr/bin/nologin' \
+			>"$setup_etc/passwd"
+		printf '%s\n' 'root:x:0:' 'wheel:x:10:' 'audio:x:17:' \
+			'video:x:18:' 'nogroup:x:65534:' \
+			>"$setup_etc/group"
+		printf '%s\n' \
+			'root:!:0:0:99999:7:::' \
+			'nobody:!:0:0:99999:7:::' \
+			>"$setup_etc/shadow"
+	fi
+	setup_group_ensure "$setup_etc/group" wheel 10
+	setup_group_ensure "$setup_etc/group" audio 17
+	setup_group_ensure "$setup_etc/group" video 18
+	setup_group_ensure "$setup_etc/group" input 97
+	setup_group_ensure "$setup_etc/group" kvm 36
+	setup_group_ensure "$setup_etc/group" users 100
+	if [ -f "$setup_etc/shadow" ] && ! grep -q '^root:' "$setup_etc/shadow"
+	then
+		printf '%s\n' 'root:!:0:0:99999:7:::' >>"$setup_etc/shadow"
+	fi
+
 	if [ -n "$setup_user" ]; then
 		setup_home=/home/$setup_user
 		mkdir -p "$setup_root$setup_home"
-		if [ ! -f "$setup_etc/passwd" ]; then
-			printf '%s\n' \
-				'root:x:0:0:root:/root:/bin/sh' \
-				'nobody:x:65534:65534:Unprivileged User:/:/usr/bin/nologin' \
-				>"$setup_etc/passwd"
-			printf '%s\n' 'root:x:0:' 'nogroup:x:65534:' \
-				>"$setup_etc/group"
-			printf '%s\n' \
-				'root:!:0:0:99999:7:::' \
-				'nobody:!:0:0:99999:7:::' \
-				>"$setup_etc/shadow"
-		fi
 		if ! grep -q "^$setup_user:" "$setup_etc/passwd"; then
 			printf '%s:x:1000:1000:%s:%s:%s\n' \
 				"$setup_user" \
@@ -1558,12 +1732,43 @@ setup_apply_config()
 		   ! grep -q "^$setup_user:" "$setup_etc/shadow"; then
 			printf '%s:!:0:0:99999:7:::\n' "$setup_user" >>"$setup_etc/shadow"
 		fi
-		cat >"$setup_root/root/sps-user.txt" <<EOF
+		for setup_g in wheel audio video input kvm users
+		do
+			setup_group_add_user "$setup_etc/group" "$setup_g" "$setup_user"
+		done
+		chown -R 1000:1000 "$setup_root$setup_home" 2>/dev/null || :
+		chmod 0750 "$setup_root$setup_home" 2>/dev/null || :
+		setup_shadow_set_hash "$setup_etc/shadow" "$setup_user" \
+			"$setup_user_password_hash"
+		if [ -n "$setup_user_password_hash" ]; then
+			cat >"$setup_root/root/sps-user.txt" <<EOF
+The account '$setup_user' (uid 1000) was recorded in /etc/passwd.
+The password was set during setup. The account is in wheel, audio, video,
+input, kvm, and users when those groups exist.
+EOF
+		else
+			cat >"$setup_root/root/sps-user.txt" <<EOF
 The account '$setup_user' (uid 1000) was recorded in /etc/passwd.
 The password is locked. From a live root run:
 
     passwd $setup_user
 EOF
+		fi
+	fi
+	setup_shadow_set_hash "$setup_etc/shadow" root "$setup_root_password_hash"
+	if [ -n "$setup_root_password_hash" ]; then
+		mkdir -p "$setup_root/root"
+		if [ -f "$setup_root/root/sps-user.txt" ]; then
+			printf '%s\n' 'The root password was set during setup.' \
+				>>"$setup_root/root/sps-user.txt"
+		else
+			printf '%s\n' 'The root password was set during setup.' \
+				>"$setup_root/root/sps-user.txt"
+		fi
+	elif [ ! -f "$setup_root/root/sps-user.txt" ]; then
+		mkdir -p "$setup_root/root"
+		printf '%s\n' 'The root password is locked. Run passwd after boot.' \
+			>"$setup_root/root/sps-user.txt"
 	fi
 
 	cat >"$setup_root/root/sps-bootloader.txt" <<EOF
@@ -1807,7 +2012,7 @@ if [ "$setup_services" = yes ] &&
 then
 	case $setup_init in
 		systemd|openrc)
-			printf '%s: enabling services for init %s\n' \
+			printf '%s: enabling services after user configuration, init %s\n' \
 				"$sps_prog" "$setup_init" >&2
 			setup_svc_list=$(setup_service_enable_present \
 				"$setup_root" "$setup_init") || setup_svc_list=

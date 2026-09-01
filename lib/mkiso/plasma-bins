@@ -11,6 +11,7 @@
 /usr/libexec/kwin_killer_helper
 /usr/bin/plasmashell
 /usr/bin/plasma_session
+/usr/bin/plasma-welcome
 /usr/bin/plasma_waitforname
 /usr/bin/plasma-shutdown
 /usr/bin/ksplashqml

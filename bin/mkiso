@@ -540,9 +540,8 @@ mkiso_stamp_os_release()
 		>"$mkiso_live/etc/os-release"
 }
 
-# Overlay extra's Distro PNG and about-distro files after host Plasma trees
-# so KInfoCenter and plasma-welcome on the live disc match an installed
-# splux-base, not the builder's /etc/xdg.
+# Overlay extra's Distro PNG and a hardcoded plasma-welcome intro so the
+# live disc does not read /etc/os-release for the first Welcome paragraph.
 mkiso_stamp_distro_branding()
 {
 	mkiso_brand=
@@ -551,29 +550,34 @@ mkiso_stamp_distro_branding()
 	then
 		mkiso_brand=$mkiso_extra/base/splux-base/files
 	fi
-	[ -n "$mkiso_brand" ] || return 0
 
 	mkdir -p "$mkiso_live/usr/share/pixmaps" \
 		"$mkiso_live/usr/share/icons/hicolor/512x512/apps" \
 		"$mkiso_live/etc/xdg" \
 		"$mkiso_live/usr/share/plasma/plasma-welcome"
-	if [ -f "$mkiso_brand/sps.png" ]; then
+	if [ -n "$mkiso_brand" ] && [ -f "$mkiso_brand/sps.png" ]; then
 		cp "$mkiso_brand/sps.png" "$mkiso_live/usr/share/pixmaps/splux.png"
 		cp "$mkiso_brand/sps.png" "$mkiso_live/usr/share/pixmaps/sps.png"
 		cp "$mkiso_brand/sps.png" \
 			"$mkiso_live/usr/share/icons/hicolor/512x512/apps/splux.png"
 	fi
-	if [ -f "$mkiso_brand/kcm-about-distrorc" ]; then
+	if [ -n "$mkiso_brand" ] && [ -f "$mkiso_brand/kcm-about-distrorc" ]; then
 		cp "$mkiso_brand/kcm-about-distrorc" \
 			"$mkiso_live/etc/xdg/kcm-about-distrorc"
 	fi
-	if [ -f "$mkiso_brand/intro-customization.desktop" ]; then
-		cp "$mkiso_brand/intro-customization.desktop" \
-			"$mkiso_live/usr/share/plasma/plasma-welcome/intro-customization.desktop"
-	fi
-	if [ -f "$mkiso_brand/os-release" ]; then
+	if [ -n "$mkiso_brand" ] && [ -f "$mkiso_brand/os-release" ]; then
 		cp "$mkiso_brand/os-release" "$mkiso_live/etc/os-release"
 	fi
+	# Hardcoded. plasma-welcome prepends this Name; it must not fall
+	# back to PRETTY_NAME from os-release.
+	cat >"$mkiso_live/usr/share/plasma/plasma-welcome/intro-customization.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Welcome to the SPS Linux operating system running KDE Plasma
+Comment=SPS Linux
+Icon=file:/usr/share/pixmaps/sps.png
+URL=https://splux.robertflexx.dev
+EOF
 }
 
 # Fail the ISO build rather than ship a disc that respawns getty with
@@ -915,6 +919,11 @@ LockOnResume=false
 LockOnStart=false
 Timeout=0
 EOF
+	mkdir -p "$mkiso_live/root/.config"
+	cat >"$mkiso_live/root/.config/startkderc" <<'EOF'
+[General]
+systemdBoot=false
+EOF
 	# Host /etc/dbus-1 may already contain system-local.conf. live-plasma
 	# used to skip the root-user override when that file existed, which
 	# left dbus-daemon --system looking for a messagebus account the live
@@ -957,6 +966,10 @@ mkiso_install_pid1()
 		"$mkiso_live/etc/modprobe.d"
 	install -m 0755 "$mkiso_libdir/live-rc" "$mkiso_live/etc/sps/live-rc"
 	install -m 0755 "$mkiso_libdir/live-plasma" "$mkiso_live/etc/sps/live-plasma"
+	if [ -f "$mkiso_libdir/live-plasma-session" ]; then
+		install -m 0755 "$mkiso_libdir/live-plasma-session" \
+			"$mkiso_live/etc/sps/live-plasma-session"
+	fi
 	printf '%s\n' "$mkiso_init" >"$mkiso_live/etc/sps/init"
 	printf '%s\n' "$mkiso_session" >"$mkiso_live/etc/sps/live-session"
 

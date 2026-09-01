@@ -1,0 +1,49 @@
+#!/bin/busybox sh
+# Session started by kwin_wayland --exit-with-session. When this script
+# (or plasmashell) exits, KWin exits and busybox init respawns live-plasma.
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PATH=/usr/lib64/qt6/bin:/usr/lib/qt6/bin:$PATH
+export PATH
+export HOME=${HOME:-/root}
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/0}
+export XDG_SESSION_TYPE=wayland
+export XDG_SESSION_CLASS=user
+export XDG_SESSION_DESKTOP=KDE
+export XDG_CURRENT_DESKTOP=KDE
+export DESKTOP_SESSION=plasma
+
+if command -v kded6 >/dev/null 2>&1; then
+	kded6 >/run/kded6.log 2>&1 &
+fi
+if command -v kglobalacceld >/dev/null 2>&1; then
+	kglobalacceld >/run/kglobalaccel.log 2>&1 &
+elif [ -x /usr/libexec/kglobalacceld ]; then
+	/usr/libexec/kglobalacceld >/run/kglobalaccel.log 2>&1 &
+fi
+if [ -x /usr/libexec/kactivitymanagerd ]; then
+	/usr/libexec/kactivitymanagerd >/run/kactivity.log 2>&1 &
+fi
+
+if command -v plasma-welcome >/dev/null 2>&1; then
+	(
+		n=0
+		while [ "$n" -lt 20 ]; do
+			if [ -n "${WAYLAND_DISPLAY:-}" ] ||
+			   [ -S "$XDG_RUNTIME_DIR/wayland-0" ]
+			then
+				break
+			fi
+			n=$((n + 1))
+			sleep 1
+		done
+		sleep 3
+		plasma-welcome
+	) >/run/plasma-welcome.log 2>&1 &
+fi
+
+if command -v plasmashell >/dev/null 2>&1; then
+	exec plasmashell
+fi
+printf '%s\n' "SPS: plasmashell is not on this image."
+exec /bin/sh

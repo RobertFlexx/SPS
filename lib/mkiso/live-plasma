@@ -63,9 +63,16 @@ if [ ! -s /root/.config/baloofilerc ]; then
 	printf '%s\n' '[Basic Settings]' 'Indexing-Enabled=false' \
 		>/root/.config/baloofilerc
 fi
+# startplasma-wayland prefers systemd --user. The live disc is busybox
+# PID 1, so force the classic plasma_session path if we fall back to it.
+if [ ! -s /root/.config/startkderc ]; then
+	printf '%s\n' '[General]' 'systemdBoot=false' >/root/.config/startkderc
+fi
 if command -v fc-cache >/dev/null 2>&1; then
 	fc-cache >/dev/null 2>&1 || :
 fi
+export LIBSEAT_BACKEND=seatd
+export SEATD_SOCK=/run/seatd.sock
 
 # Live NVIDIA is nouveau. Keep the proprietary stack unloaded.
 modprobe nouveau 2>/dev/null || :
@@ -151,6 +158,33 @@ if [ ! -e /dev/dri/card0 ] && [ ! -e /dev/dri/card1 ]; then
 	printf '%s\n' "SPS: use tty2 (Ctrl-Alt-F2) for a shell."
 	ls /dev/dri 2>/dev/null || :
 fi
+# Prefer a real KMS device. simpledrm plus virtio_gpu leaves KWin on the
+# firmware framebuffer: black screen with a cursor that appears immediately.
+sps_drm=
+for sps_card in /sys/class/drm/card[0-9] /sys/class/drm/card[1-9][0-9]
+do
+	[ -e "$sps_card" ] || continue
+	sps_node=/dev/dri/${sps_card##*/}
+	[ -e "$sps_node" ] || continue
+	sps_drv=
+	if [ -L "$sps_card/device/driver" ]; then
+		sps_drv=$(readlink "$sps_card/device/driver")
+		sps_drv=${sps_drv##*/}
+	fi
+	case $sps_drv in
+		simple-framebuffer|simpledrm) continue ;;
+	esac
+	sps_drm=$sps_node
+	break
+done
+if [ -n "$sps_drm" ]; then
+	export KWIN_DRM_DEVICES=$sps_drm
+fi
+for sps_vt in /sys/class/vtconsole/vtcon*
+do
+	[ -w "$sps_vt/bind" ] || continue
+	printf '%s\n' 0 >"$sps_vt/bind" 2>/dev/null || :
+done
 if [ ! -e /usr/lib64/gbm/dri_gbm.so ] && [ ! -e /usr/lib/gbm/dri_gbm.so ]
 then
 	printf '%s\n' "SPS: Mesa GBM backend dri_gbm.so is missing; KWin cannot use DRM."
@@ -160,9 +194,25 @@ then
 	printf '%s\n' "SPS: libSPIRV-Tools.so is missing; Mesa GBM will fail to open DRI."
 fi
 
+# Give the user a console they can see if Wayland dies.
+chvt 1 2>/dev/null || :
+# startplasma-wayland starts kwin, then waits on kded/ksmserver before
+# plasmashell. That hang is a black compositor with an instant cursor.
+# Drive KWin ourselves and exec plasmashell as the session.
+if command -v kwin_wayland >/dev/null 2>&1 &&
+   [ -x /etc/sps/live-plasma-session ]
+then
+	if command -v dbus-run-session >/dev/null 2>&1; then
+		exec dbus-run-session -- kwin_wayland --drm --xwayland \
+			--no-lockscreen \
+			--exit-with-session /etc/sps/live-plasma-session \
+			>>/run/plasma.log 2>&1
+	fi
+	exec kwin_wayland --drm --xwayland --no-lockscreen \
+		--exit-with-session /etc/sps/live-plasma-session \
+		>>/run/plasma.log 2>&1
+fi
 if command -v startplasma-wayland >/dev/null 2>&1; then
-	# Give the user a console they can see if Wayland dies.
-	chvt 1 2>/dev/null || :
 	# startplasma needs a *session* bus. The system bus above is not that.
 	if command -v dbus-run-session >/dev/null 2>&1; then
 		exec dbus-run-session -- startplasma-wayland \

@@ -158,7 +158,31 @@ Enable the OpenSSH set.
 Enable CUPS and related printing packages.
 .TP
 .BI --user " name"
-First unprivileged account (uid 1000). The password is left locked; see
+First unprivileged account (uid 1000). Interactive setup asks for a
+user password and a root password (empty keeps the account locked).
+Scripts should pass a file or an already-hashed shadow field; plaintext
+passwords are not accepted on the command line.
+.TP
+.BI --user-password-file " file"
+.TP
+.BI --root-password-file " file"
+Hash the first line of
+.I file
+with
+.B openssl passwd -6
+(or python3 crypt / busybox cryptpw) and store it in shadow.
+.TP
+.BI --user-password-hash " hash"
+.TP
+.BI --root-password-hash " hash"
+Already-hashed shadow field. Answers files may use
+.B user-password-hash
+and
+.B root-password-hash
+the same way. Those hashes are not written back to
+.I /etc/sps/setup-answers .
+Without a password flag, non-interactive setup leaves the account locked;
+see
 .I /root/sps-user.txt .
 .TP
 .B --flatpak yes|no

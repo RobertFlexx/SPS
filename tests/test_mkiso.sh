@@ -102,6 +102,24 @@ grep -q 'Engine=none' "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must disable KSplash so plasma_waitforname cannot hang'
 grep -q LockOnStart "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must disable kscreenlocker LockOnStart'
+grep -q 'kwin_wayland --drm' "$layout/etc/sps/live-plasma" ||
+	fail 'live-plasma must drive kwin_wayland --drm'
+[ -x "$layout/etc/sps/live-plasma-session" ] ||
+	fail 'live-plasma-session missing from layout'
+grep -q LIBSEAT_BACKEND=seatd "$layout/etc/sps/live-plasma" ||
+	fail 'live-plasma must set LIBSEAT_BACKEND=seatd'
+welcome=$layout/usr/share/plasma/plasma-welcome/intro-customization.desktop
+[ -f "$welcome" ] || fail 'plasma-welcome intro-customization missing'
+grep -qx 'Name=Welcome to the SPS Linux operating system running KDE Plasma' \
+	"$welcome" || fail 'plasma-welcome Name must be the SPS Linux sentence'
+name_line=$(grep '^Name=' "$welcome")
+case $name_line in
+	*[Ss]plux*) fail 'plasma-welcome Name must not fall back to os-release Splux' ;;
+esac
+grep -q plasma-welcome "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include plasma-welcome'
+grep -q openssl "$project_dir/lib/mkiso/live-bins" ||
+	fail 'live-bins must include openssl for setup password hashes'
 grep -q virtio_gpu "$project_dir/lib/mkiso/initrd-init" ||
 	fail 'initrd must load virtio_gpu so Plasma has DRM before switch_root'
 if grep -q 'export QT_QPA_PLATFORM=wayland' "$layout/etc/sps/live-plasma"
@@ -114,6 +132,13 @@ grep -q virtio_gpu "$layout/etc/sps/live-rc" ||
 	fail 'live-rc must load virtio_gpu for QEMU/virt-manager'
 grep -q cirrus_qemu "$layout/etc/sps/live-rc" ||
 	fail 'live-rc must load cirrus_qemu for QEMU stdvga fallbacks'
+# simpledrm only after a wait; loading it beside virtio_gpu blacks KWin.
+live_rc=$layout/etc/sps/live-rc
+wait_line=$(grep -n 'sleep 1' "$live_rc" | head -1 | cut -d: -f1)
+sdrm_line=$(grep -n 'modprobe simpledrm' "$live_rc" | head -1 | cut -d: -f1)
+[ -n "$wait_line" ] && [ -n "$sdrm_line" ] &&
+	[ "$wait_line" -lt "$sdrm_line" ] ||
+	fail 'live-rc must wait for a DRM node before simpledrm'
 grep -q /dev/dri/card0 "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must wait for a DRM node'
 grep -q /usr/share/kwin "$project_dir/lib/mkiso/plasma-trees" ||
@@ -252,6 +277,8 @@ grep -q 'using .* for headers, libraries, and pkg-config' "$project_dir/bin/mkpk
 	fail 'mkpkg must compile against SPS_ROOT so setup can link target libs'
 grep -q write_cc_wrapper "$project_dir/bin/mkpkg" ||
 	fail 'mkpkg must wrap gcc so autoconf finds libraries in SPS_ROOT'
+grep -q CONFIG_SITE "$project_dir/bin/mkpkg" ||
+	fail 'mkpkg must export CONFIG_SITE so autoconf sees SPS_ROOT LDFLAGS'
 grep -q 'sps_say "unpacking' "$project_dir/bin/pkin" ||
 	fail 'pkin must log unpacking'
 grep -q sps_verbose_say "$project_dir/bin/pkin" ||

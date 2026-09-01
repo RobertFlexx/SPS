@@ -69,11 +69,23 @@ fi
 # or cirrus. KWin needs a DRM node; nouveau/bochs alone is not enough.
 for mod in e1000 e1000e r8169 virtio_net virtio_blk virtio_pci virtio_scsi \
 	usbnet hid-generic usbhid atkbd \
-	drm drm_kms_helper drm_ttm_helper ttm virtio_dma_buf virtio_gpu \
-	nouveau bochs cirrus_qemu qxl vmwgfx i915 amdgpu
+	drm drm_kms_helper drm_shmem_helper drm_ttm_helper ttm virtio_dma_buf \
+	virtio_gpu nouveau bochs cirrus_qemu qxl vmwgfx i915 amdgpu
 do
 	modprobe "$mod" 2>/dev/null || :
 done
+n=0
+while [ "$n" -lt 5 ]
+do
+	if [ -e /dev/dri/card0 ] || [ -e /dev/dri/card1 ]; then
+		break
+	fi
+	n=$((n + 1))
+	sleep 1
+done
+if [ ! -e /dev/dri/card0 ] && [ ! -e /dev/dri/card1 ]; then
+	modprobe simpledrm 2>/dev/null || :
+fi
 
 # udev first so virtio_net and friends have device nodes before DHCP.
 if command -v udevd >/dev/null 2>&1; then

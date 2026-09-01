@@ -145,6 +145,13 @@ src update >/dev/null
 [ "$(cat "$root/etc/locale.conf")" = 'LANG=C.UTF-8' ] || fail 'locale not written'
 grep -q '^tester:x:1000:1000:Test User:/home/tester:/bin/sh$' \
 	"$root/etc/passwd" || fail 'user not recorded'
+awk -F: '$1=="tester" && $2=="!" { found=1 } END { exit !found }' \
+	"$root/etc/shadow" || fail 'user without password flags must stay locked'
+awk -F: '$1=="root" && $2=="!" { found=1 } END { exit !found }' \
+	"$root/etc/shadow" || fail 'root without password flags must stay locked'
+if grep -q 'password-hash' "$root/etc/sps/setup-answers"; then
+	fail 'setup-answers must not store password hashes'
+fi
 [ -f "$root/etc/sps/setup-answers" ] || fail 'setup-answers missing'
 [ -f "$root/root/sps-bootloader.txt" ] || fail 'bootloader notes missing'
 [ -f "$root/root/sps-network.txt" ] || fail 'network notes missing'
@@ -154,6 +161,28 @@ grep -q 'Init is none' "$root/root/sps-services.txt" ||
 	fail 'fixture with init none should not pretend to enable services'
 grep -q 'grub-install' "$root/root/sps-bootloader.txt" ||
 	fail 'bootloader notes omitted grub-install warning'
+
+printf '%s\n' 'test-user-pw' >"$tmp/user.pw"
+printf '%s\n' 'test-root-pw' >"$tmp/root.pw"
+chmod 600 "$tmp/user.pw" "$tmp/root.pw"
+root_pw=$tmp/root-pw
+mkdir -p "$root_pw"
+"$setup" --non-interactive --no-update --target "$root_pw" --profile tiny \
+	--hostname pwtest --timezone UTC --keymap us --user tester \
+	--enable extra --user-gecos 'PW User' \
+	--user-password-file "$tmp/user.pw" \
+	--root-password-file "$tmp/root.pw" >/dev/null
+awk -F: '$1=="tester" && $2!="" && $2!="!" && $2!="*" { found=1 }
+	END { exit !found }' "$root_pw/etc/shadow" ||
+	fail 'user password file did not update shadow'
+awk -F: '$1=="root" && $2!="" && $2!="!" && $2!="*" { found=1 }
+	END { exit !found }' "$root_pw/etc/shadow" ||
+	fail 'root password file did not update shadow'
+if grep -q 'password-hash' "$root_pw/etc/sps/setup-answers"; then
+	fail 'setup-answers must not store password hashes'
+fi
+grep -q 'wheel:.*tester' "$root_pw/etc/group" ||
+	fail 'first user should be in wheel when that group exists'
 
 printf '%s\n' 'setup fixture tests passed'
 

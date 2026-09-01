@@ -15,3 +15,5 @@ bluetooth	bluetooth.service	multi-user.target	bluetooth	default
 sshd	sshd.service	multi-user.target	sshd	default
 cupsd	cups.service	multi-user.target	cupsd	default
 NetworkManager	NetworkManager.service	multi-user.target	NetworkManager	default
+pipewire	pipewire.service	default.target	pipewire	default
+wireplumber	wireplumber.service	default.target	wireplumber	default
