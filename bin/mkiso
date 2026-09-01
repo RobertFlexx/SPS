@@ -495,14 +495,62 @@ mkiso_force_busybox_sh()
 mkiso_stamp_os_release()
 {
 	mkdir -p "$mkiso_live/etc"
+	if [ -n "$mkiso_extra" ] &&
+		[ -f "$mkiso_extra/base/splux-base/files/os-release" ]
+	then
+		cp "$mkiso_extra/base/splux-base/files/os-release" \
+			"$mkiso_live/etc/os-release"
+		return 0
+	fi
 	printf '%s\n' \
 		'NAME="Splux"' \
 		'PRETTY_NAME="Splux Linux"' \
 		'ID=splux' \
+		'VERSION="1.0"' \
 		'VERSION_ID="1.0"' \
 		'LOGO=splux' \
-		'HOME_URL="https://github.com/RobertFlexx/SPS"' \
+		'ANSI_COLOR="1;33"' \
+		'HOME_URL="https://splux.robertflexx.dev"' \
+		'DOCUMENTATION_URL="https://splux.robertflexx.dev/docs/"' \
+		'SUPPORT_URL="https://github.com/RobertFlexx/SPS"' \
+		'BUG_REPORT_URL="https://github.com/RobertFlexx/SPS/issues"' \
 		>"$mkiso_live/etc/os-release"
+}
+
+# Overlay extra's Distro PNG and about-distro files after host Plasma trees
+# so KInfoCenter and plasma-welcome on the live disc match an installed
+# splux-base, not the builder's /etc/xdg.
+mkiso_stamp_distro_branding()
+{
+	mkiso_brand=
+	if [ -n "$mkiso_extra" ] &&
+		[ -d "$mkiso_extra/base/splux-base/files" ]
+	then
+		mkiso_brand=$mkiso_extra/base/splux-base/files
+	fi
+	[ -n "$mkiso_brand" ] || return 0
+
+	mkdir -p "$mkiso_live/usr/share/pixmaps" \
+		"$mkiso_live/usr/share/icons/hicolor/512x512/apps" \
+		"$mkiso_live/etc/xdg" \
+		"$mkiso_live/usr/share/plasma/plasma-welcome"
+	if [ -f "$mkiso_brand/sps.png" ]; then
+		cp "$mkiso_brand/sps.png" "$mkiso_live/usr/share/pixmaps/splux.png"
+		cp "$mkiso_brand/sps.png" "$mkiso_live/usr/share/pixmaps/sps.png"
+		cp "$mkiso_brand/sps.png" \
+			"$mkiso_live/usr/share/icons/hicolor/512x512/apps/splux.png"
+	fi
+	if [ -f "$mkiso_brand/kcm-about-distrorc" ]; then
+		cp "$mkiso_brand/kcm-about-distrorc" \
+			"$mkiso_live/etc/xdg/kcm-about-distrorc"
+	fi
+	if [ -f "$mkiso_brand/intro-customization.desktop" ]; then
+		cp "$mkiso_brand/intro-customization.desktop" \
+			"$mkiso_live/usr/share/plasma/plasma-welcome/intro-customization.desktop"
+	fi
+	if [ -f "$mkiso_brand/os-release" ]; then
+		cp "$mkiso_brand/os-release" "$mkiso_live/etc/os-release"
+	fi
 }
 
 # Fail the ISO build rather than ship a disc that respawns getty with
@@ -1085,6 +1133,8 @@ if [ "$mkiso_session" = plasma ]; then
 		install -m 0644 "$mkiso_libdir/plasma-motd" "$mkiso_live/etc/motd"
 	fi
 fi
+
+mkiso_stamp_distro_branding
 
 # Initramfs modules are required to mount the ISO even when the live
 # squashfs does not ship the full /lib/modules tree.

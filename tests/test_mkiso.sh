@@ -73,6 +73,10 @@ fi
 [ -f "$layout/etc/os-release" ] || fail 'os-release missing'
 grep -qx 'ID=splux' "$layout/etc/os-release" || fail 'os-release is not Splux'
 grep -qx 'NAME="Splux"' "$layout/etc/os-release" || fail 'os-release NAME is not Splux'
+grep -qx 'HOME_URL="https://splux.robertflexx.dev"' "$layout/etc/os-release" ||
+	fail 'os-release HOME_URL is not the Splux site'
+grep -q mkiso_stamp_distro_branding "$mkiso" ||
+	fail 'mkiso must overlay Distro PNG branding from extra'
 
 # Host /bin/sh is bash. Getty runs /bin/sh. A bash symlink without libtinfo
 # is the Plasma ISO boot loop.
