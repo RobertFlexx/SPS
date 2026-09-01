@@ -1,0 +1,21 @@
+name: notify-site
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request Splux site rebuild
+        env:
+          GH_TOKEN: ${{ secrets.SPLUX_SITE_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            printf '%s\n' "SPLUX_SITE_TOKEN unset; splux-site cron will pick this up"
+            exit 0
+          fi
+          gh api --method POST repos/RobertFlexx/splux-site/dispatches \
+            -f event_type=rebuild
