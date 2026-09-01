@@ -1,5 +1,8 @@
 # SPS Source Package System
 
+## SPS is currently under active testing and development, usage is not recommended if you arent a tester.
+----------------------------------------
+
 SPS is a source package system for small, administrator-run Unix-like systems.
 It is made from separate command-line tools, plain text state, POSIX shell,
 POSIX AWK, and normal tar archives.
@@ -20,7 +23,7 @@ on a custom chroot, or next to another distro's userland. Recipes are plain
 text; an LFS tree can consume sps-core and sps-extra the same way SPS Linux
 does.
 
-**SPS Linux** is a Linux distribution that *uses* SPS. Informally it is called
+**SPS Linux** is a rolling release Linux distribution that *uses* SPS (natively). Informally it is called
 **Splux**. Official installer flow, live ISOs, Plasma profiles, and the
 `linux-desktop` kernel are SPS Linux pieces. They live in this tree and in
 the core/extra collections because that is how Splux is built and installed.
