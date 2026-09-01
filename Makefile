@@ -30,7 +30,7 @@ lint:
 		$(POSIX_SHELL) -n $$library; \
 	done
 	@set -e; for script in lib/mkiso/initrd-init lib/mkiso/live-rc \
-		lib/mkiso/live-plasma lib/mkiso/live-init; do \
+		lib/mkiso/live-plasma lib/mkiso/live-init lib/mkiso/udhcpc-script; do \
 		[ -f $$script ] || continue; \
 		$(POSIX_SHELL) -n $$script; \
 	done
@@ -173,7 +173,7 @@ install:
 	@set -e; for f in lib/mkiso/*; do \
 		[ -f "$$f" ] || continue; \
 		case $$f in \
-			*/live-init|*/initrd-init|*/live-rc|*/live-plasma) \
+			*/live-init|*/initrd-init|*/live-rc|*/live-plasma|*/udhcpc-script) \
 				install -m 0755 $$f "$(DESTDIR)$(LIBDIR)/mkiso/" ;; \
 			*) \
 				install -m 0644 $$f "$(DESTDIR)$(LIBDIR)/mkiso/" ;; \

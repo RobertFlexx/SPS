@@ -1,0 +1,46 @@
+#!/bin/busybox sh
+# Busybox udhcpc hook for the live image. dhcpcd is preferred; this is
+# the slim-disc fallback so a lease still writes nameservers.
+
+resolv=/etc/resolv.conf
+
+case $1 in
+	deconfig)
+		if command -v ip >/dev/null 2>&1; then
+			ip addr flush dev "$interface" 2>/dev/null || :
+			ip link set "$interface" up 2>/dev/null || :
+		fi
+		;;
+	bound|renew)
+		if command -v ip >/dev/null 2>&1; then
+			ip link set "$interface" up 2>/dev/null || :
+			ip addr flush dev "$interface" 2>/dev/null || :
+			if [ -n "$ip" ]; then
+				if [ -n "$mask" ]; then
+					ip addr add "$ip/$mask" \
+						${broadcast:+broadcast $broadcast} \
+						dev "$interface" 2>/dev/null || :
+				else
+					ip addr add "$ip" \
+						${broadcast:+broadcast $broadcast} \
+						dev "$interface" 2>/dev/null || :
+				fi
+			fi
+			if [ -n "$router" ]; then
+				for gw in $router; do
+					ip route replace default via "$gw" \
+						dev "$interface" 2>/dev/null || :
+					break
+				done
+			fi
+		fi
+		if [ -n "$dns" ]; then
+			: >"$resolv"
+			[ -n "$domain" ] && printf 'search %s\n' "$domain" >>"$resolv"
+			for ns in $dns; do
+				printf 'nameserver %s\n' "$ns" >>"$resolv"
+			done
+		fi
+		;;
+esac
+exit 0

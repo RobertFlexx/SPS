@@ -716,6 +716,32 @@ printf '%s\n' \
 	'input:x:71:root' \
 	'render:x:107:root' \
 	>"$mkiso_live/etc/group"
+printf '%s\n' \
+	'127.0.0.1 localhost splux-live' \
+	'::1 localhost splux-live' \
+	>"$mkiso_live/etc/hosts"
+# Do not copy the host nsswitch.conf: this builder uses mdns modules the
+# live disc does not ship. Without a file, glibc still looks at 127.0.0.1
+# when resolv.conf is missing, so live DNS looks like it "does not exist".
+printf '%s\n' \
+	'passwd: files' \
+	'group: files' \
+	'shadow: files' \
+	'hosts: files dns' \
+	'networks: files' \
+	'protocols: files' \
+	'services: files' \
+	'ethers: files' \
+	'rpc: files' \
+	>"$mkiso_live/etc/nsswitch.conf"
+printf '%s\n' \
+	'nameserver 1.1.1.1' \
+	'nameserver 8.8.8.8' \
+	>"$mkiso_live/etc/resolv.conf"
+if [ -f "$mkiso_libdir/udhcpc-script" ]; then
+	install -m 0755 "$mkiso_libdir/udhcpc-script" \
+		"$mkiso_live/etc/sps/udhcpc-script"
+fi
 # Empty password on the live console only.
 printf '%s\n' 'root::0:0:99999:7:::' >"$mkiso_live/etc/shadow"
 chmod 600 "$mkiso_live/etc/shadow"
@@ -767,7 +793,8 @@ if [ -f "$mkiso_libdir/live-bins" ]; then
 fi
 printf '%s: copying disk tools for setup\n' "$sps_prog" >&2
 for mkiso_cmd in lsblk blkid sfdisk cfdisk fdisk wipefs mkfs.ext4 mke2fs \
-	mkfs.vfat mkswap partprobe udevadm udevd grub-install grub-mkconfig
+	mkfs.vfat mkswap partprobe udevadm udevd grub-install grub-mkconfig \
+	dhcpcd
 do
 	mkiso_copy_host_cmd "$mkiso_cmd" || :
 done

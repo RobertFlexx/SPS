@@ -71,16 +71,7 @@ do
 	modprobe "$mod" 2>/dev/null || :
 done
 
-if command -v ip >/dev/null 2>&1; then
-	ip link set lo up 2>/dev/null || :
-fi
-if command -v dhcpcd >/dev/null 2>&1; then
-	dhcpcd -b 2>/dev/null || :
-elif command -v dhclient >/dev/null 2>&1; then
-	dhclient -nw 2>/dev/null || :
-fi
-
-# udev if present (eudev or systemd-udevd).
+# udev first so virtio_net and friends have device nodes before DHCP.
 if command -v udevd >/dev/null 2>&1; then
 	udevd --daemon 2>/dev/null || :
 	udevadm trigger --action=add 2>/dev/null || :
@@ -89,6 +80,49 @@ elif [ -x /lib/systemd/systemd-udevd ]; then
 	/lib/systemd/systemd-udevd --daemon 2>/dev/null || :
 	udevadm trigger --action=add 2>/dev/null || :
 	udevadm settle --timeout=5 2>/dev/null || :
+fi
+
+if command -v ip >/dev/null 2>&1; then
+	ip link set lo up 2>/dev/null || :
+	for sps_netif in /sys/class/net/*; do
+		sps_if=${sps_netif##*/}
+		[ "$sps_if" = lo ] && continue
+		ip link set "$sps_if" up 2>/dev/null || :
+	done
+fi
+# A host resolv.conf symlink to systemd-resolved would leave libc talking
+# to 127.0.0.53 with no daemon. Keep a real file; DHCP may overwrite it.
+if [ -L /etc/resolv.conf ]; then
+	rm -f /etc/resolv.conf
+fi
+if [ ! -s /etc/resolv.conf ] || ! grep -q '^nameserver ' /etc/resolv.conf
+then
+	printf '%s\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' \
+		>/etc/resolv.conf
+fi
+if [ ! -s /etc/nsswitch.conf ]; then
+	printf '%s\n' 'passwd: files' 'group: files' 'shadow: files' \
+		'hosts: files dns' 'networks: files' 'protocols: files' \
+		'services: files' >/etc/nsswitch.conf
+fi
+mkdir -p /var/lib/dhcpcd /var/db /run/dhcpcd
+if command -v dhcpcd >/dev/null 2>&1; then
+	dhcpcd -b 2>/dev/null || :
+elif command -v udhcpc >/dev/null 2>&1; then
+	sps_udhcp_script=/etc/sps/udhcpc-script
+	for sps_netif in /sys/class/net/*; do
+		sps_if=${sps_netif##*/}
+		[ "$sps_if" = lo ] && continue
+		if [ -x "$sps_udhcp_script" ]; then
+			udhcpc -i "$sps_if" -s "$sps_udhcp_script" -b \
+				-p /run/udhcpc."$sps_if".pid 2>/dev/null || :
+		else
+			udhcpc -i "$sps_if" -b \
+				-p /run/udhcpc."$sps_if".pid 2>/dev/null || :
+		fi
+	done
+elif command -v dhclient >/dev/null 2>&1; then
+	dhclient -nw 2>/dev/null || :
 fi
 
 # System bus before Plasma. Always rewrite system-local.conf: a copied

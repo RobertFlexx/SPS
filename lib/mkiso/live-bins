@@ -30,3 +30,5 @@
 /usr/sbin/mkswap
 /sbin/partprobe
 /usr/sbin/partprobe
+/sbin/dhcpcd
+/usr/sbin/dhcpcd

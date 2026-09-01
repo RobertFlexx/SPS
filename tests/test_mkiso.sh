@@ -118,6 +118,24 @@ grep -q libgallium "$mkiso" ||
 	fail 'plasma ISO must copy Mesa libgallium'
 grep -q 'video:x:18:root' "$layout/etc/group" ||
 	fail 'live group must include video for seatd/DRM'
+grep -q 'hosts: files dns' "$layout/etc/nsswitch.conf" ||
+	fail 'live nsswitch must use files+dns (not host mdns)'
+grep -q 'nameserver 1.1.1.1' "$layout/etc/resolv.conf" ||
+	fail 'live resolv.conf must ship a fallback nameserver'
+grep -q localhost "$layout/etc/hosts" || fail 'live /etc/hosts missing localhost'
+grep -q dhcpcd "$project_dir/lib/mkiso/live-bins" ||
+	fail 'live-bins must include dhcpcd so slim images get a DHCP client'
+[ -x "$layout/etc/sps/udhcpc-script" ] ||
+	fail 'live udhcpc-script missing'
+grep -q 'udevd --daemon' "$layout/etc/sps/live-rc" ||
+	fail 'live-rc must start udev'
+# DHCP must not run before udev; virtio_net has no name yet.
+live_rc=$layout/etc/sps/live-rc
+udev_line=$(grep -n 'udevd --daemon' "$live_rc" | head -1 | cut -d: -f1)
+dhcp_line=$(grep -n 'dhcpcd -b' "$live_rc" | head -1 | cut -d: -f1)
+[ -n "$udev_line" ] && [ -n "$dhcp_line" ] &&
+	[ "$udev_line" -lt "$dhcp_line" ] ||
+	fail 'live-rc must start udev before dhcpcd'
 grep -q kwin_wayland_wrapper "$project_dir/lib/mkiso/plasma-bins" ||
 	fail 'plasma-bins must include kwin_wayland_wrapper'
 grep -q xdg-permission-store "$project_dir/lib/mkiso/plasma-bins" ||
