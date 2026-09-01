@@ -2,7 +2,9 @@ name: notify-site
 
 on:
   release:
-    types: [published]
+    types: [published, edited]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -14,7 +16,7 @@ jobs:
           GH_TOKEN: ${{ secrets.SPLUX_SITE_TOKEN }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            printf '%s\n' "SPLUX_SITE_TOKEN unset; splux-site cron will pick this up"
+            printf '%s\n' "SPLUX_SITE_TOKEN unset; splux-site rebuilds every five minutes and the news page also reads GitHub in the browser"
             exit 0
           fi
           gh api --method POST repos/RobertFlexx/splux-site/dispatches \
