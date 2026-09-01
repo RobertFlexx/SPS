@@ -352,6 +352,29 @@ mkiso_copy_mesa_deps()
 		"$mkiso_live/usr/lib/gbm/nvidia-drm_gbm.so"
 }
 
+# Session helpers and plugins plasmashell loads by soname. Tree copies can
+# leave the .so files in place while ldd of plasma-bins never saw them.
+mkiso_copy_plasma_runtime_deps()
+{
+	printf '%s: resolving Plasma session libraries\n' "$sps_prog" >&2
+	for mkiso_so in \
+		/usr/libexec/kactivitymanagerd \
+		/usr/libexec/kscreenlocker_greet \
+		/usr/bin/plasmashell \
+		/usr/bin/plasma_session \
+		/usr/bin/kwin_wayland \
+		/usr/bin/startplasma-wayland \
+		/usr/lib64/libseat.so \
+		/usr/lib64/libseat.so.1 \
+		/usr/lib64/qt6/plugins/wayland-shell-integration/liblayer-shell.so \
+		/usr/lib64/qt6/plugins/styles/breeze6.so \
+		/usr/lib64/qt6/plugins/platforms/libqwayland.so
+	do
+		[ -e "$mkiso_so" ] || [ -L "$mkiso_so" ] || continue
+		mkiso_copy_so_deps "$mkiso_so"
+	done
+}
+
 # ldd a host ELF and require each resolved library to exist in the live
 # root. Used so we refuse to ship gcc without libmpc or Mesa without SPIRV.
 mkiso_verify_elf_in_live()
@@ -617,6 +640,7 @@ mkiso_verify_live()
 
 	mkiso_verify_compiler
 	mkiso_verify_plasma
+	mkiso_verify_setup_catalog
 }
 
 # Seeded images ship gcc. The driver DT_NEEDs only libc; cc1 needs
@@ -674,8 +698,10 @@ mkiso_verify_plasma()
 	[ "$mkiso_session" = plasma ] || return 0
 	mkiso_miss=
 	for mkiso_need in usr/bin/kwin_wayland usr/bin/kwin_wayland_wrapper \
-		usr/bin/startplasma-wayland usr/lib64/gbm/dri_gbm.so \
-		usr/lib64/libxcb-cursor.so.0
+		usr/bin/startplasma-wayland usr/bin/plasmashell \
+		usr/libexec/kactivitymanagerd usr/libexec/kscreenlocker_greet \
+		usr/lib64/gbm/dri_gbm.so usr/lib64/libxcb-cursor.so.0 \
+		etc/xdg/kscreenlockerrc
 	do
 		if [ ! -e "$mkiso_live/$mkiso_need" ] &&
 			[ ! -L "$mkiso_live/$mkiso_need" ]
@@ -701,6 +727,10 @@ mkiso_verify_plasma()
 	then
 		mkiso_miss="$mkiso_miss usr/bin/Xwayland"
 	fi
+	if ! ls "$mkiso_live"/usr/share/fonts/TTF/*.ttf >/dev/null 2>&1
+	then
+		mkiso_miss="$mkiso_miss usr/share/fonts/TTF"
+	fi
 	[ -z "$mkiso_miss" ] ||
 		sps_die "$SPS_EX_PACKAGE" "plasma image missing:$mkiso_miss"
 	for mkiso_g in /usr/lib64/libgallium*.so
@@ -709,6 +739,103 @@ mkiso_verify_plasma()
 		mkiso_verify_elf_in_live "$mkiso_g"
 		break
 	done
+}
+
+# setup extras/sets/profiles may only name packages that exist in the
+# recipe trees on this image. An extras checklist entry for mpv with no
+# mpv recipe is how live setup died at "package 'mpv' not found".
+mkiso_verify_setup_catalog()
+{
+	mkiso_setupdir=$SPS_LIBDIR/setup
+	mkiso_extras=$mkiso_setupdir/extras
+	[ -f "$mkiso_extras" ] ||
+		sps_die "$SPS_EX_PACKAGE" "setup extras file is missing"
+	LC_ALL=C awk '
+		BEGIN { bad = 0; count = 0 }
+		/^[[:space:]]*$/ || /^#/ { next }
+		{
+			tab = index($0, "\t")
+			if (tab == 0) {
+				printf "mkiso: extras line has no tab: %s\n", $0
+				bad = 1
+				next
+			}
+			name = substr($0, 1, tab - 1)
+			if (name !~ /^[A-Za-z0-9][A-Za-z0-9+_.-]*$/) {
+				printf "mkiso: extras bad name: %s\n", name
+				bad = 1
+			}
+			if (name in seen) {
+				printf "mkiso: extras duplicate: %s\n", name
+				bad = 1
+			}
+			seen[name] = 1
+			count++
+			names[count] = name
+		}
+		END {
+			for (i = 1; i < count; i++)
+				if (names[i] > names[i + 1]) {
+					printf "mkiso: extras not sorted: %s before %s\n", \
+						names[i], names[i + 1]
+					bad = 1
+				}
+			exit bad
+		}
+	' "$mkiso_extras" ||
+		sps_die "$SPS_EX_PACKAGE" \
+			"setup extras must be unique, tab-separated, and sorted"
+
+	mkiso_recipes=$mkiso_work/catalog-recipes
+	: >"$mkiso_recipes"
+	for mkiso_tree in \
+		"$mkiso_live/usr/src/sps/core" \
+		"$mkiso_live/usr/src/sps/extra"
+	do
+		[ -d "$mkiso_tree" ] || continue
+		find "$mkiso_tree" \( -type d \( -name .git -o -name files -o \
+			-name patches -o -name hooks \) -prune \) -o \
+			-type f -name recipe -print
+	done | while IFS= read -r mkiso_rfile || [ -n "$mkiso_rfile" ]
+	do
+		[ -n "$mkiso_rfile" ] || continue
+		awk '/^name[[:space:]]/ { print $2; exit }' "$mkiso_rfile"
+	done | LC_ALL=C sort -u >"$mkiso_recipes"
+	[ -s "$mkiso_recipes" ] || return 0
+
+	mkiso_wanted=$mkiso_work/catalog-wanted
+	: >"$mkiso_wanted"
+	awk -F '\t' '/^[[:space:]]*$/ || /^#/ { next } { print $1 }' \
+		"$mkiso_extras" >>"$mkiso_wanted"
+	for mkiso_f in "$mkiso_setupdir"/sets/*.set \
+		"$mkiso_setupdir"/profiles/*.profile
+	do
+		[ -f "$mkiso_f" ] || continue
+		awk '/^package[[:space:]]/ { print $2 }' "$mkiso_f" \
+			>>"$mkiso_wanted"
+	done
+	if [ -f "$mkiso_setupdir/hwdetect.sh" ]; then
+		awk '
+			/printf '\''%s\\n'\'' [a-z]/ && $0 !~ /\$/ && $0 !~ /\|/ {
+				for (i = 3; i <= NF; i++) {
+					gsub(/;/, "", $i)
+					if ($i ~ /^[a-z][a-z0-9+-]*$/)
+						print $i
+				}
+			}
+		' "$mkiso_setupdir/hwdetect.sh" >>"$mkiso_wanted"
+	fi
+	LC_ALL=C sort -u "$mkiso_wanted" -o "$mkiso_wanted"
+	mkiso_miss=
+	while IFS= read -r mkiso_pkg || [ -n "$mkiso_pkg" ]
+	do
+		[ -n "$mkiso_pkg" ] || continue
+		grep -qx "$mkiso_pkg" "$mkiso_recipes" && continue
+		mkiso_miss="$mkiso_miss $mkiso_pkg"
+	done <"$mkiso_wanted"
+	[ -z "$mkiso_miss" ] ||
+		sps_die "$SPS_EX_PACKAGE" \
+			"setup names packages with no recipe:$mkiso_miss"
 }
 
 # BusyBox --install -s writes absolute symlinks to the host path. Relative
@@ -772,13 +899,21 @@ mkiso_copy_plasma()
 			mkiso_copy_path "$mkiso_so"
 		done
 	done
-	# Full /usr/share/fonts/TTF is hundreds of megabytes. DejaVu is enough
-	# for fontconfig's default aliases on the live session.
-	for mkiso_font in /usr/share/fonts/TTF/DejaVu*.ttf
+	# Host fontconfig prefers Liberation Sans. DejaVu alone leaves
+	# fc-match pointing at a file that is not on the disc.
+	for mkiso_font in /usr/share/fonts/TTF/DejaVu*.ttf \
+		/usr/share/fonts/TTF/Liberation*.ttf
 	do
 		[ -e "$mkiso_font" ] || continue
 		mkiso_copy_path "$mkiso_font"
 	done
+	mkdir -p "$mkiso_live/etc/xdg"
+	cat >"$mkiso_live/etc/xdg/kscreenlockerrc" <<'EOF'
+[Daemon]
+Autolock=false
+LockOnResume=false
+Timeout=0
+EOF
 	# Host /etc/dbus-1 may already contain system-local.conf. live-plasma
 	# used to skip the root-user override when that file existed, which
 	# left dbus-daemon --system looking for a messagebus account the live
@@ -806,6 +941,7 @@ EOF
 	mkdir -p "$mkiso_live/etc/systemd/system"
 	ln -sf /dev/null "$mkiso_live/etc/systemd/system/dbus.service"
 	ln -sf /dev/null "$mkiso_live/etc/systemd/system/dbus.socket"
+	mkiso_copy_plasma_runtime_deps
 	mkiso_copy_mesa_deps
 }
 
@@ -1096,6 +1232,16 @@ if [ "$mkiso_copy_seed" -eq 1 ] && [ -f "$mkiso_libdir/seed-bins" ]; then
 	done
 	# cc1 DT_NEEDs libmpc/libisl. ldd of the gcc driver does not.
 	mkiso_copy_gcc_deps
+	# file(1) is in seed-bins. Autoconf calls it during configure, and
+	# without the magic database it prints "could not find any valid
+	# magic files" and some probes then mis-detect object types.
+	printf '%s: copying file(1) magic database\n' "$sps_prog" >&2
+	for mkiso_magic in /etc/file /usr/share/file /usr/share/misc/magic \
+		/usr/share/misc/magic.mgc /usr/share/file/magic.mgc
+	do
+		[ -e "$mkiso_magic" ] || [ -L "$mkiso_magic" ] || continue
+		mkiso_copy_path "$mkiso_magic"
+	done
 	for mkiso_cmd in gcc g++ cc c++ as ld ld.bfd
 	do
 		mkiso_copy_host_cmd "$mkiso_cmd" || :

@@ -273,4 +273,12 @@ expect_stale_definition hook
 printf '%s\n' '# changed after indexing' >> "$tmp/repo/app/recipe"
 expect_stale_definition recipe
 
+set +e
+"$sget" install nosuch-a nosuch-b >"$tmp/miss.out" 2>"$tmp/miss.err"
+miss_st=$?
+set -e
+[ "$miss_st" -eq 5 ] || fail "two missing packages returned $miss_st"
+contains "$(cat "$tmp/miss.err")" "package 'nosuch-a' not found"
+contains "$(cat "$tmp/miss.err")" "package 'nosuch-b' not found"
+
 printf '%s\n' 'dependency resolution and install orchestration tests passed'

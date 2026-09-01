@@ -10,7 +10,9 @@ export XDG_RUNTIME_DIR=/run/user/0
 export XDG_SESSION_TYPE=wayland
 export XDG_SESSION_CLASS=user
 export XDG_SESSION_DESKTOP=KDE
+export XDG_CURRENT_DESKTOP=KDE
 export DESKTOP_SESSION=plasma
+export XDG_CONFIG_DIRS=/etc/xdg
 export TERM=${TERM:-linux}
 export LANG=${LANG:-C.UTF-8}
 export LC_ALL=${LC_ALL:-C.UTF-8}
@@ -37,6 +39,22 @@ fi
 if [ ! -s /root/.config/kdedefaults/ksplashrc ]; then
 	printf '%s\n' '[KSplash]' 'Engine=KSplashQML' \
 		'Theme=org.kde.breeze.desktop' >/root/.config/kdedefaults/ksplashrc
+fi
+# Live runs as root with no PAM stack. kscreenlocker_greet missing or
+# autolocking leaves KWin's lock surface up: black screen, cursor only.
+mkdir -p /etc/xdg /root/.config
+if [ ! -s /etc/xdg/kscreenlockerrc ]; then
+	printf '%s\n' \
+		'[Daemon]' \
+		'Autolock=false' \
+		'LockOnResume=false' \
+		'Timeout=0' >/etc/xdg/kscreenlockerrc
+fi
+if [ ! -s /root/.config/kscreenlockerrc ]; then
+	cp /etc/xdg/kscreenlockerrc /root/.config/kscreenlockerrc
+fi
+if command -v fc-cache >/dev/null 2>&1; then
+	fc-cache -f >/dev/null 2>&1 || :
 fi
 
 # Live NVIDIA is nouveau. Keep the proprietary stack unloaded.
@@ -131,7 +149,8 @@ if command -v startplasma-wayland >/dev/null 2>&1; then
 	chvt 1 2>/dev/null || :
 	# startplasma needs a *session* bus. The system bus above is not that.
 	if command -v dbus-run-session >/dev/null 2>&1; then
-		exec dbus-run-session -- startplasma-wayland
+		exec dbus-run-session -- startplasma-wayland \
+			>>/run/plasma.log 2>&1
 	fi
 	if command -v dbus-launch >/dev/null 2>&1; then
 		eval "$(dbus-launch --sh-syntax)"

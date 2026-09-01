@@ -226,3 +226,35 @@ then
 		fi
 	done
 fi
+grep -q 'copying file(1) magic database' "$mkiso" ||
+	fail 'seeded ISO must copy file(1) magic for autoconf'
+grep -q '/etc/file' "$mkiso" ||
+	fail 'mkiso must copy /etc/file magic used by this host file(1)'
+grep -q kactivitymanagerd "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include kactivitymanagerd'
+grep -q kscreenlocker_greet "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include kscreenlocker_greet'
+grep -q kscreenlockerrc "$mkiso" ||
+	fail 'mkiso must bake kscreenlockerrc so live Plasma does not autolock'
+grep -q Liberation "$mkiso" ||
+	fail 'plasma ISO must copy Liberation fonts matching host fontconfig'
+grep -q XDG_CURRENT_DESKTOP "$project_dir/lib/mkiso/live-plasma" ||
+	fail 'live-plasma must set XDG_CURRENT_DESKTOP=KDE'
+grep -q mkiso_copy_plasma_runtime_deps "$mkiso" ||
+	fail 'plasma ISO must ldd session helpers (kactivitymanagerd, greeter)'
+grep -q 'using .* for headers, libraries, and pkg-config' "$project_dir/bin/mkpkg" ||
+	fail 'mkpkg must compile against SPS_ROOT so setup can link target libs'
+grep -q mkiso_verify_setup_catalog "$mkiso" ||
+	fail 'mkiso must refuse extras/sets that name unpackaged recipes'
+if grep -E '^(htop|btop|tmux)[[:space:]]' "$project_dir/lib/setup/extras" |
+	awk '{c[$1]++} END { for (n in c) if (c[n] > 1) exit 1 }'
+then
+	:
+else
+	fail 'extras must not list htop, btop, or tmux more than once'
+fi
+if grep -E '^(mpv|gimp|libreoffice|qemu|screen)[[:space:]]' \
+	"$project_dir/lib/setup/extras"
+then
+	fail 'extras must not offer unpackaged names such as mpv'
+fi

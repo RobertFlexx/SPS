@@ -153,6 +153,23 @@ provides per-package parallelism and is exposed to build commands as
 contains downloaded sources;
 .B SPS_BUILD
 contains temporary build/staging trees.
+When
+.B SPS_ROOT
+is not
+.BR / ,
+every build phase also searches that root for headers, libraries, and
+pkg-config files
+.RB ( CFLAGS ,
+.BR LDFLAGS ,
+.BR LIBRARY_PATH ,
+.BR PKG_CONFIG_SYSROOT_DIR ,
+.BR CMAKE_PREFIX_PATH ).
+Live
+.BR setup (1)
+installs into a mounted target with the live compiler; without this, a
+package cannot link against a library
+.BR pkin (1)
+just unpacked into the target.
 With
 .BR --build-root ,
 .B SYSROOT

@@ -31,6 +31,15 @@ with the terminal attached so compiler and build-system output appear live.
 reports the finished archive;
 .BR pkin (1)
 reports installation. An exact cached archive is reused without a build.
+When
+.B SPS_ROOT
+is not
+.BR / ,
+.B mkpkg
+compiles and links against libraries already installed in that root so
+each package can see the previous one. Live
+.BR setup (1)
+depends on this.
 .SH COMMANDS
 .TP
 .BI search " pattern"

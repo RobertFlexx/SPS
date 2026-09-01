@@ -100,6 +100,55 @@ if [ -f "$SPS_LIBDIR/setup/service.sh" ]; then
 	# shellcheck disable=SC1091
 	. "$SPS_LIBDIR/setup/service.sh"
 fi
+
+setup_collect_recipe_names()
+{
+	setup_names_out=$1
+	: >"$setup_names_out"
+	for setup_rtree in \
+		/usr/src/sps/core \
+		/usr/src/sps/extra \
+		"${SPS_LIVE_ROOT:-/}/usr/src/sps/core" \
+		"${SPS_LIVE_ROOT:-/}/usr/src/sps/extra"
+	do
+		[ -d "$setup_rtree" ] || continue
+		find "$setup_rtree" \( -type d \( -name .git -o -name files -o \
+			-name patches -o -name hooks \) -prune \) -o \
+			-type f -name recipe -print
+	done | while IFS= read -r setup_rfile || [ -n "$setup_rfile" ]
+	do
+		[ -n "$setup_rfile" ] || continue
+		awk '/^name[[:space:]]/ { print $2; exit }' "$setup_rfile"
+	done | LC_ALL=C sort -u >"$setup_names_out"
+}
+
+setup_reject_unknown_packages()
+{
+	setup_index=${SPS_CACHE:-$setup_root/var/cache/sps}/indexes/packages.index
+	[ -f "$setup_index" ] || return 0
+	[ -s "$setup_pkg_file" ] || return 0
+	setup_unknown=$setup_work/unknown-packages
+	awk -F '\t' '
+		FNR == NR {
+			gsub(/\r/, "")
+			if ($1 != "")
+				want[$1] = 1
+			next
+		}
+		{ have[$1] = 1 }
+		END {
+			for (n in want)
+				if (!(n in have))
+					print n
+		}
+	' "$setup_pkg_file" "$setup_index" | LC_ALL=C sort >"$setup_unknown"
+	[ -s "$setup_unknown" ] || return 0
+	printf '%s: packages not in the recipe index:\n' "$sps_prog" >&2
+	sed 's/^/  /' "$setup_unknown" >&2
+	setup_fail "$SPS_EX_NOTFOUND" \
+		"requested packages are not packaged (see the list above)"
+}
+
 setup_work=
 setup_interactive=1
 setup_plan=0
@@ -817,6 +866,7 @@ fi
 
 setup_work=$(sps_mktemp_dir "${TMPDIR:-/tmp}" setup) || exit $?
 trap setup_cleanup 0 HUP INT TERM
+setup_collect_recipe_names "$setup_work/recipe-names"
 
 if [ "$setup_interactive" -eq 1 ]; then
 	if [ -f /etc/sps/live ]; then
@@ -944,6 +994,15 @@ Use /mnt after mounting the destination filesystem, or after a guided layout (se
 			setup_et=${setup_exline#*	}
 			[ -n "$setup_en" ] || continue
 			[ "$setup_et" != "$setup_exline" ] || setup_et=$setup_en
+			# Live recipe trees are the source of truth. Unpackaged
+			# names (mpv, LibreOffice, ...) must not reach sget.
+			if [ -s "$setup_work/recipe-names" ] &&
+				! grep -qx "$setup_en" "$setup_work/recipe-names"
+			then
+				printf '%s: skipping unpackaged extra %s\n' \
+					"$sps_prog" "$setup_en" >&2
+				continue
+			fi
 			setup_on=off
 			case " $setup_extra " in *" $setup_en "*) setup_on=on ;; esac
 			setup_ex_args="$setup_ex_args $setup_en '$setup_et' $setup_on"
@@ -1705,6 +1764,8 @@ if [ "$setup_do_update" -eq 1 ]; then
 	printf '%s: updating source repositories\n' "$sps_prog" >&2
 	src update || setup_fail "$SPS_EX_NETWORK" "src update failed"
 fi
+
+setup_reject_unknown_packages
 
 setup_pkgs=
 while IFS= read -r setup_pkg; do

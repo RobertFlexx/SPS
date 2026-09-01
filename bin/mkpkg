@@ -718,6 +718,59 @@ else
 	run_env=
 fi
 
+# Live setup builds into SPS_ROOT (a mounted disk) with the live compiler.
+# gcc and pkg-config search /usr unless they are pointed at packages pkin
+# already unpacked into the target. That is why alsa-utils configure found
+# host ALSA headers then died with "No linkable libasound was found" after
+# alsa-lib had been installed into the target, not the live root. The same
+# hole hits every later package that links a library from the target.
+if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
+	target_root=$SPS_ROOT
+	target_inc=$target_root/usr/include
+	target_pc=$target_root/usr/lib64/pkgconfig
+	target_pc=$target_pc:$target_root/usr/lib/pkgconfig
+	target_pc=$target_pc:$target_root/usr/share/pkgconfig
+	target_pc=$target_pc:$target_root/lib64/pkgconfig
+	target_pc=$target_pc:$target_root/lib/pkgconfig
+	target_libpath=$target_root/usr/lib64:$target_root/usr/lib
+	target_libpath=$target_libpath:$target_root/lib64:$target_root/lib
+	target_cflags="-I$target_inc"
+	target_ldflags="-L$target_root/usr/lib64 -L$target_root/usr/lib"
+	target_ldflags="$target_ldflags -L$target_root/lib64 -L$target_root/lib"
+
+	PKG_CONFIG_SYSROOT_DIR=$target_root
+	PKG_CONFIG_LIBDIR=$target_pc
+	PKG_CONFIG_PATH=$target_pc${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
+	PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1
+	PKG_CONFIG_ALLOW_SYSTEM_LIBS=1
+	export PKG_CONFIG_SYSROOT_DIR PKG_CONFIG_LIBDIR PKG_CONFIG_PATH \
+		PKG_CONFIG_ALLOW_SYSTEM_CFLAGS PKG_CONFIG_ALLOW_SYSTEM_LIBS
+
+	CPATH=$target_inc${CPATH:+:$CPATH}
+	C_INCLUDE_PATH=$target_inc${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}
+	CPLUS_INCLUDE_PATH=$target_inc${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}
+	LIBRARY_PATH=$target_libpath${LIBRARY_PATH:+:$LIBRARY_PATH}
+	LD_LIBRARY_PATH=$target_libpath${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+	export CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH \
+		LD_LIBRARY_PATH
+
+	CPPFLAGS="$target_cflags${CPPFLAGS:+ $CPPFLAGS}"
+	CFLAGS="$target_cflags${CFLAGS:+ $CFLAGS}"
+	CXXFLAGS="$target_cflags${CXXFLAGS:+ $CXXFLAGS}"
+	LDFLAGS="$target_ldflags${LDFLAGS:+ $LDFLAGS}"
+	export CPPFLAGS CFLAGS CXXFLAGS LDFLAGS
+
+	CMAKE_PREFIX_PATH=$target_root/usr${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}
+	CMAKE_INCLUDE_PATH=$target_inc${CMAKE_INCLUDE_PATH:+:$CMAKE_INCLUDE_PATH}
+	CMAKE_LIBRARY_PATH=$target_libpath${CMAKE_LIBRARY_PATH:+:$CMAKE_LIBRARY_PATH}
+	export CMAKE_PREFIX_PATH CMAKE_INCLUDE_PATH CMAKE_LIBRARY_PATH
+
+	ACLOCAL_PATH=$target_root/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}
+	export ACLOCAL_PATH
+
+	say "using $target_root for headers, libraries, and pkg-config"
+fi
+
 run_phase()
 {
 	phase_name=$1

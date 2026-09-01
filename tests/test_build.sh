@@ -198,4 +198,52 @@ esac
 [ ! -e "$tmp/root/usr/share/sysroot-probe" ] ||
 	fail "builder modified the target root with a build root"
 
+# When SPS_ROOT is a target disk, gcc must find libraries pkin already
+# installed there. Copying host libasound onto the live ISO would only
+# paper over alsa-utils; the next package would fail the same way.
+if command -v gcc >/dev/null 2>&1; then
+	mkdir -p "$tmp/root/usr/include" "$tmp/root/usr/lib64" \
+		"$tmp/link-recipe" "$tmp/link-out"
+	cat >"$tmp/root/usr/include/spsprobe.h" <<'EOF'
+int sps_probe_lib(void);
+EOF
+	cat >"$tmp/spsprobe.c" <<'EOF'
+int sps_probe_lib(void) { return 0; }
+EOF
+	gcc -shared -fPIC -o "$tmp/root/usr/lib64/libspsprobe.so" \
+		"$tmp/spsprobe.c" ||
+		fail "could not build the target-root probe library"
+	cat >"$tmp/link-recipe/recipe" <<'EOF'
+name        target-sysroot-probe
+version     1.0
+release     1
+arch        any
+description Confirms SPS_ROOT is searched for headers and libraries
+configure   printf '%s\n' "${PKG_CONFIG_SYSROOT_DIR-}" >"$WORK/sysroot"
+configure   printf '%s\n' "$LIBRARY_PATH" >"$WORK/libpath"
+configure   printf '%s\n' '#include <spsprobe.h>' 'int main(void){return sps_probe_lib();}' >"$WORK/probe.c"
+configure   gcc "$WORK/probe.c" -lspsprobe -o "$WORK/probe"
+install     mkdir -p "$PKG/usr/share/target-sysroot-probe" "$PKG/usr/bin"
+install     cp "$WORK/sysroot" "$WORK/libpath" "$PKG/usr/share/target-sysroot-probe/"
+install     cp "$WORK/probe" "$PKG/usr/bin/target-sysroot-probe"
+install     chmod 755 "$PKG/usr/bin/target-sysroot-probe"
+EOF
+	link_artifact=$(run_mkpkg --no-download --output "$tmp/link-out" \
+		"$tmp/link-recipe/recipe") ||
+		fail "target-root library probe failed to build"
+	mkdir "$tmp/link-extract"
+	tar -xf "$link_artifact" -C "$tmp/link-extract"
+	assert_equal "$tmp/root" \
+		"$(cat "$tmp/link-extract/usr/share/target-sysroot-probe/sysroot")" \
+		"PKG_CONFIG_SYSROOT_DIR was not set to SPS_ROOT"
+	case "$(cat "$tmp/link-extract/usr/share/target-sysroot-probe/libpath")" in
+		"$tmp/root/usr/lib64:"*) : ;;
+		*) fail "LIBRARY_PATH did not start with the target libdir" ;;
+	esac
+	[ -x "$tmp/link-extract/usr/bin/target-sysroot-probe" ] ||
+		fail "probe binary was not staged"
+	# The .so lives only under SPS_ROOT, so a successful link means gcc
+	# searched the target rather than the live /usr/lib64.
+fi
+
 printf '%s\n' 'test_build: ok'

@@ -147,7 +147,9 @@ Choosing zsh or fish also enables the
 set.
 .TP
 .BI --extra " pkg[,pkg...]"
-Individual packages in addition to the profile and sets.
+Individual packages in addition to the profile and sets. The extras
+screen only lists names that exist as recipes in sps-core or sps-extra.
+Unpackaged names are refused after the repository index is built.
 .TP
 .B --ssh yes|no
 Enable the OpenSSH set.

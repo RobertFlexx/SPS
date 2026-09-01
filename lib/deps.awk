@@ -14,8 +14,7 @@ function deps_stderr(message,    command) {
 }
 
 function deps_error(message) {
-    if (!deps_failed)
-        deps_stderr((program == "" ? "sget" : program) ": " message)
+    deps_stderr((program == "" ? "sget" : program) ": " message)
     deps_failed = 1
 }
 
@@ -96,8 +95,6 @@ function deps_cycle(package,    first, i, message) {
 }
 
 function deps_visit(package, parent,    list, count, items, i, child) {
-    if (deps_failed)
-        return
     if (!(package in deps_selected_priority)) {
         if (parent == "")
             deps_error("package '" package "' not found")
@@ -123,10 +120,8 @@ function deps_visit(package, parent,    list, count, items, i, child) {
         for (i = 1; i <= count; i++) {
             child = deps_dependency_name(items[i], package)
             if (child == "")
-                break
+                continue
             deps_visit(child, package)
-            if (deps_failed)
-                break
         }
     }
 
@@ -210,11 +205,8 @@ END {
         exit 5
     if (action == "validate") {
         deps_sort_names(deps_names, deps_name_count)
-        for (deps_i = 1; deps_i <= deps_name_count; deps_i++) {
+        for (deps_i = 1; deps_i <= deps_name_count; deps_i++)
             deps_visit(deps_names[deps_i], "")
-            if (deps_failed)
-                break
-        }
         if (deps_failed)
             exit 5
         exit 0
@@ -229,11 +221,9 @@ END {
         if (deps_roots[deps_i] !~ \
             /^[A-Za-z0-9][A-Za-z0-9+_.-]*$/) {
             deps_error("invalid package name '" deps_roots[deps_i] "'")
-            break
+            continue
         }
         deps_visit(deps_roots[deps_i], "")
-        if (deps_failed)
-            break
     }
     if (deps_failed)
         exit 5

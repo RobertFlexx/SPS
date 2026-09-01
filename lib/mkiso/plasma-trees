@@ -36,6 +36,8 @@
 /usr/lib64/gbm
 /usr/share/kwin
 /usr/share/kwin-wayland
+/usr/share/kf6
+/usr/share/wallpapers/Next
 /etc/fonts
 /usr/share/fontconfig
 /usr/share/glvnd

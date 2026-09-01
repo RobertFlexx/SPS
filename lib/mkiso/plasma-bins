@@ -51,6 +51,8 @@
 /usr/libexec/kf6/kio_http_cache_cleaner
 /usr/libexec/kf6/kiod6
 /usr/libexec/kf6/kscreen_backend_launcher
+/usr/libexec/kactivitymanagerd
+/usr/libexec/kscreenlocker_greet
 /usr/libexec/plasma-dbus-run-session-if-needed
 /usr/libexec/plasma-sourceenv.sh
 /usr/libexec/plasma-startup-sound

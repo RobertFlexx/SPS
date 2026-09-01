@@ -1,90 +1,82 @@
-neovim	Neovim
-vim	Vim
-nano	GNU nano
-emacs	GNU Emacs
-helix	Helix editor
-kakoune	Kakoune editor
-htop	htop
-btop	btop
-tmux	tmux
-sudo	sudo
-doas	OpenDoas
-zsh	Z shell
-fish	fish shell
-git	Git
-rsync	rsync
-openssh	OpenSSH
-gnupg	GnuPG
-firefox	Firefox
-falkon	Falkon
-flatpak	Flatpak
-pipewire	PipeWire
-wget	wget
-curl	curl
-jq	jq
-ripgrep	ripgrep
-fd	fd
-bat	bat
-eza	eza
-fzf	fzf
-lazygit	lazygit
-fastfetch	fastfetch
-python	Python
-lua	Lua
-go	Go
-rust	Rust
-nodejs	Node.js
-perl	Perl
-ruby	Ruby
-cmake	CMake
-meson	Meson
-ninja	Ninja
-gdb	GDB
-strace	strace
-lsof	lsof
-nmap	nmap
-iperf3	iperf3
-cups	CUPS printing
-sddm	SDDM
-mesa	Mesa
-nvidia-open	NVIDIA open kernel modules
-e2fsprogs	e2fsprogs
-dosfstools	dosfstools
-cryptsetup	cryptsetup
-iwd	iwd
-dhcpcd	dhcpcd
-micro	micro editor
-starship	starship prompt
-yq	yq
-networkmanager	NetworkManager
-parted	GNU parted
-gptfdisk	GPT fdisk
-ntfs-3g	NTFS driver
-exfatprogs	exFAT tools
-mdadm	Linux MD RAID
-smartmontools	S.M.A.R.T. tools
-bluez	BlueZ Bluetooth
+# Extra packages offered by setup(1). One name<TAB>title per line.
+# Names must exist as recipes in sps-core or sps-extra, appear once,
+# and stay in LC_ALL=C sort order. tests/test_setup_catalog.sh and
+# mkiso refuse anything else. Do not list unpackaged names (mpv, GIMP,
+# LibreOffice, and similar); the extra set or a later recipe is the place
+# for those.
 alsa-utils	ALSA utilities
-vulkan-tools	vulkaninfo
-ethtool	ethtool
-nftables	nftables
-wireguard-tools	WireGuard tools
-intel-ucode	Intel CPU microcode
 amd-ucode	AMD CPU microcode
-nouveau	Nouveau (NVIDIA open driver)
-linux-desktop	Linux kernel, daily desktop config
-linux	Linux kernel, upstream defconfig
-xorg-server	X.Org server
-mpv	mpv media player
-gimp	GNU Image Manipulation Program
-inkscape	Inkscape
-libreoffice	LibreOffice
-krita	Krita
-thunderbird	Thunderbird
-qemu	QEMU
-htop	htop
+bat	bat
+bluez	BlueZ Bluetooth
 btop	btop
+cmake	CMake
+cryptsetup	cryptsetup
+cups	CUPS printing
+curl	curl
+dhcpcd	dhcpcd
+doas	OpenDoas
+dosfstools	dosfstools
+e2fsprogs	e2fsprogs
+emacs	GNU Emacs
+ethtool	ethtool
+exfatprogs	exFAT tools
+eza	eza
+falkon	Falkon
+fastfetch	fastfetch
+fd	fd
+firefox	Firefox
+fish	fish shell
+flatpak	Flatpak
+fzf	fzf
+gdb	GDB
+git	Git
+gnupg	GnuPG
+go	Go
+gptfdisk	GPT fdisk
+helix	Helix editor
+htop	htop
+intel-ucode	Intel CPU microcode
+iperf3	iperf3
+iwd	iwd
+jq	jq
+kakoune	Kakoune editor
+lazygit	lazygit
+linux	Linux kernel, upstream defconfig
+linux-desktop	Linux kernel, daily desktop config
+lsof	lsof
+lua	Lua
+mdadm	Linux MD RAID
+mesa	Mesa
+meson	Meson
+micro	micro editor
+nano	GNU nano
+neovim	Neovim
+networkmanager	NetworkManager
+nftables	nftables
+ninja	Ninja
+nmap	nmap
+nodejs	Node.js
+nouveau	Nouveau (NVIDIA open driver)
+ntfs-3g	NTFS driver
+nvidia-open	NVIDIA open kernel modules
+openssh	OpenSSH
+parted	GNU parted
+perl	Perl
+pipewire	PipeWire
+python	Python
+ripgrep	ripgrep
+rsync	rsync
+ruby	Ruby
+rust	Rust
+sddm	SDDM
+smartmontools	S.M.A.R.T. tools
+starship	starship prompt
+strace	strace
+sudo	sudo
 tmux	tmux
-screen	GNU Screen
-
-
+vim	Vim
+vulkan-tools	vulkaninfo
+wget	wget
+wireguard-tools	WireGuard tools
+yq	yq
+zsh	Z shell
