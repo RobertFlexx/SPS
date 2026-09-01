@@ -21,7 +21,11 @@ mount -t devtmpfs devtmpfs /dev 2>/dev/null || :
 mkdir -p /dev/pts /dev/shm
 mount -t devpts devpts /dev/pts 2>/dev/null || :
 mount -t tmpfs tmpfs /run 2>/dev/null || :
-mount -t tmpfs tmpfs /tmp 2>/dev/null || :
+mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp 2>/dev/null || \
+	mount -t tmpfs tmpfs /tmp 2>/dev/null || :
+chmod 1777 /tmp 2>/dev/null || :
+mkdir -p /tmp/.X11-unix /tmp/.ICE-unix
+chmod 1777 /tmp/.X11-unix /tmp/.ICE-unix 2>/dev/null || :
 mkdir -p /run/dbus
 if [ ! -e /var/run ]; then
 	mkdir -p /var

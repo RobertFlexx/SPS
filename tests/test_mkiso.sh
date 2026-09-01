@@ -167,6 +167,26 @@ grep -q 'copying glibc startfiles' "$mkiso" ||
 	fail 'seeded ISO must copy glibc crt1.o for gcc'
 grep -q crt1.o "$mkiso" ||
 	fail 'mkiso must copy crt1.o with the seed compiler'
+grep -q 'resolving gcc cc1 libraries' "$mkiso" ||
+	fail 'seeded ISO must ldd cc1 so libmpc/libisl land on the disc'
+grep -q 'resolving Mesa DRI/GBM libraries' "$mkiso" ||
+	fail 'plasma ISO must ldd Mesa DRI/GBM so libSPIRV-Tools lands on the disc'
+grep -q libSPIRV-Tools "$mkiso" ||
+	fail 'plasma ISO must copy libSPIRV-Tools for Mesa GBM'
+grep -q nvidia-drm_gbm "$mkiso" ||
+	fail 'plasma ISO must drop the nvidia GBM backend'
+grep -q Xwayland "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include Xwayland'
+grep -q xdg-document-portal "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include xdg-document-portal'
+grep -q /usr/share/color-schemes "$project_dir/lib/mkiso/plasma-trees" ||
+	fail 'plasma-trees must include Breeze color schemes'
+grep -q '/tmp/.X11-unix' "$layout/etc/sps/live-rc" ||
+	fail 'live-rc must create /tmp/.X11-unix for Xwayland'
+grep -q '/tmp/.X11-unix' "$layout/etc/sps/live-plasma" ||
+	fail 'live-plasma must create /tmp/.X11-unix for Xwayland'
+grep -q 'live gcc cannot create executables' "$project_dir/bin/setup" ||
+	fail 'setup must probe live gcc before the first package build'
 grep -q 'copying disk tools for setup' "$mkiso" ||
 	fail 'mkiso must copy partition tools by command name'
 grep -q grub-install "$mkiso" ||

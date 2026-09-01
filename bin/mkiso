@@ -285,6 +285,107 @@ mkiso_copy_libs()
 	done
 }
 
+# close_libs only walks bin/sbin. cc1 (libmpc/libisl) and Mesa DRI
+# (libSPIRV-Tools) are dlopened helpers, so a seeded disc can have gcc
+# and still fail "C compiler cannot create executables", and Plasma can
+# have /dev/dri/card0 and still report "No suitable DRM devices".
+mkiso_copy_so_deps()
+{
+	mkiso_so=$1
+	[ -e "$mkiso_so" ] || [ -L "$mkiso_so" ] || return 0
+	case $mkiso_so in
+		*.a|*-rust*|*nvidia*) return 0 ;;
+	esac
+	mkiso_copy_path "$mkiso_so"
+	mkiso_copy_libs "$mkiso_so"
+}
+
+mkiso_copy_gcc_deps()
+{
+	command -v find >/dev/null 2>&1 || return 0
+	printf '%s: resolving gcc cc1 libraries\n' "$sps_prog" >&2
+	for mkiso_d in /usr/libexec/gcc /usr/lib64/gcc /usr/lib/gcc
+	do
+		[ -d "$mkiso_d" ] || continue
+		find "$mkiso_d" -type f \( \
+			-name cc1 -o -name cc1plus -o -name collect2 -o \
+			-name lto-wrapper -o -name lto1 -o \
+			-name liblto_plugin.so -o -name 'liblto_plugin.so.*' \
+			\) -print 2>/dev/null |
+		while IFS= read -r mkiso_elf || [ -n "$mkiso_elf" ]; do
+			[ -n "$mkiso_elf" ] || continue
+			mkiso_copy_so_deps "$mkiso_elf"
+		done
+	done
+}
+
+mkiso_copy_mesa_deps()
+{
+	printf '%s: resolving Mesa DRI/GBM libraries\n' "$sps_prog" >&2
+	for mkiso_d in /usr/lib64/dri /usr/lib/dri /usr/lib64/gbm /usr/lib/gbm
+	do
+		[ -d "$mkiso_d" ] || continue
+		find "$mkiso_d" -type f -name '*.so*' -print 2>/dev/null |
+		while IFS= read -r mkiso_so || [ -n "$mkiso_so" ]; do
+			[ -n "$mkiso_so" ] || continue
+			mkiso_copy_so_deps "$mkiso_so"
+		done
+	done
+	for mkiso_so in /usr/lib64/libgallium*.so /usr/lib64/libgallium*.so.* \
+		/usr/lib64/libEGL_mesa.so /usr/lib64/libEGL_mesa.so.* \
+		/usr/lib64/libGLX_mesa.so /usr/lib64/libGLX_mesa.so.* \
+		/usr/lib64/libgbm.so /usr/lib64/libgbm.so.* \
+		/usr/lib64/libglapi.so /usr/lib64/libglapi.so.* \
+		/usr/lib64/libSPIRV-Tools.so \
+		/usr/lib64/qt6/plugins/platforms/libqwayland.so \
+		/usr/lib64/qt6/plugins/platforms/libqxcb.so \
+		/usr/lib64/qt6/plugins/wayland-shell-integration/libxdg-shell.so \
+		/usr/bin/kwin_wayland /usr/bin/kwin_wayland_wrapper \
+		/usr/bin/Xwayland
+	do
+		[ -e "$mkiso_so" ] || [ -L "$mkiso_so" ] || continue
+		mkiso_copy_so_deps "$mkiso_so"
+	done
+	# Live uses nouveau. A dangling nvidia GBM backend makes libgbm
+	# probe a proprietary stack that is not on the disc.
+	rm -f "$mkiso_live/usr/lib64/gbm/nvidia-drm_gbm.so" \
+		"$mkiso_live/usr/lib/gbm/nvidia-drm_gbm.so"
+}
+
+# ldd a host ELF and require each resolved library to exist in the live
+# root. Used so we refuse to ship gcc without libmpc or Mesa without SPIRV.
+mkiso_verify_elf_in_live()
+{
+	mkiso_host=$1
+	[ -e "$mkiso_host" ] || return 0
+	command -v ldd >/dev/null 2>&1 || return 0
+	mkiso_ldd=$(ldd "$mkiso_host" 2>/dev/null) || return 0
+	mkiso_oldifs=$IFS
+	IFS='
+'
+	for mkiso_line in $mkiso_ldd
+	do
+		IFS=$mkiso_oldifs
+		case $mkiso_line in
+			*linux-vdso*|*'not a dynamic'*|*'not found'*) continue ;;
+		esac
+		mkiso_lib=${mkiso_line#*=> }
+		mkiso_lib=${mkiso_lib%% (*}
+		mkiso_lib=${mkiso_lib## }
+		case $mkiso_lib in
+			/*)
+				if [ ! -e "$mkiso_live$mkiso_lib" ] &&
+					[ ! -L "$mkiso_live$mkiso_lib" ]
+				then
+					sps_die "$SPS_EX_PACKAGE" \
+						"live image missing $mkiso_lib (needed by $mkiso_host)"
+				fi
+				;;
+		esac
+	done
+	IFS=$mkiso_oldifs
+}
+
 # Copy a host command by name. live-bins lists common paths, but util-linux
 # puts lsblk in /bin on this builder and /usr/bin on others. Silent skips
 # of a missing path are why live setup printed "no disks found".
@@ -449,14 +550,117 @@ mkiso_verify_live()
 		fi
 	fi
 
-	# chroot needs privileges; skip it in unprivileged tests.
+	# chroot needs privileges; skip it when the kernel refuses the
+	# syscall (user namespaces, unprivileged root in tests).
 	if [ "$(id -u 2>/dev/null)" = 0 ]; then
-		if ! "$mkiso_live/bin/busybox" chroot "$mkiso_live" /bin/sh -c ':' \
-			>/dev/null 2>&1; then
-			sps_die "$SPS_EX_BUILD" \
-				"live /bin/sh cannot execute inside the image"
+		mkiso_chroot_st=0
+		mkiso_chroot_err=$("$mkiso_live/bin/busybox" chroot \
+			"$mkiso_live" /bin/sh -c ':' 2>&1) || mkiso_chroot_st=$?
+		if [ "$mkiso_chroot_st" -ne 0 ]; then
+			case $mkiso_chroot_err in
+				*'Operation not permitted'*|*'not permitted'*) ;;
+				*)
+					sps_die "$SPS_EX_BUILD" \
+						"live /bin/sh cannot execute inside the image"
+					;;
+			esac
 		fi
 	fi
+
+	mkiso_verify_compiler
+	mkiso_verify_plasma
+}
+
+# Seeded images ship gcc. The driver DT_NEEDs only libc; cc1 needs
+# libmpc/libisl. Refuse to ship a disc whose first autoconf check dies.
+mkiso_verify_compiler()
+{
+	if [ ! -e "$mkiso_live/usr/bin/gcc" ] &&
+		[ ! -L "$mkiso_live/usr/bin/gcc" ]
+	then
+		return 0
+	fi
+	if [ ! -e "$mkiso_live/usr/lib64/crt1.o" ] &&
+		[ ! -e "$mkiso_live/lib64/crt1.o" ]
+	then
+		sps_die "$SPS_EX_PACKAGE" \
+			"seeded live gcc is missing crt1.o"
+	fi
+	if [ ! -e "$mkiso_live/usr/lib64/libc.so" ] &&
+		[ ! -L "$mkiso_live/usr/lib64/libc.so" ]
+	then
+		sps_die "$SPS_EX_PACKAGE" \
+			"seeded live gcc is missing the libc.so linker script"
+	fi
+	if [ ! -e "$mkiso_live/usr/bin/as" ] &&
+		[ ! -L "$mkiso_live/usr/bin/as" ]
+	then
+		sps_die "$SPS_EX_PACKAGE" "seeded live gcc is missing as"
+	fi
+	if [ ! -e "$mkiso_live/usr/bin/ld" ] &&
+		[ ! -L "$mkiso_live/usr/bin/ld" ]
+	then
+		sps_die "$SPS_EX_PACKAGE" "seeded live gcc is missing ld"
+	fi
+	mkiso_cc1=
+	for mkiso_d in "$mkiso_live/usr/libexec/gcc" "$mkiso_live/usr/lib64/gcc"
+	do
+		[ -d "$mkiso_d" ] || continue
+		mkiso_cc1=$(find "$mkiso_d" -name cc1 -type f -print 2>/dev/null |
+			head -1) || mkiso_cc1=
+		[ -n "$mkiso_cc1" ] && break
+	done
+	[ -n "$mkiso_cc1" ] ||
+		sps_die "$SPS_EX_PACKAGE" "seeded live gcc is missing cc1"
+	mkiso_verify_elf_in_live "${mkiso_cc1#"$mkiso_live"}"
+	mkiso_verify_elf_in_live /usr/bin/as
+	if [ -e /usr/bin/ld.bfd ]; then
+		mkiso_verify_elf_in_live /usr/bin/ld.bfd
+	elif [ -e /usr/bin/ld ]; then
+		mkiso_verify_elf_in_live /usr/bin/ld
+	fi
+}
+
+mkiso_verify_plasma()
+{
+	[ "$mkiso_session" = plasma ] || return 0
+	mkiso_miss=
+	for mkiso_need in usr/bin/kwin_wayland usr/bin/kwin_wayland_wrapper \
+		usr/bin/startplasma-wayland usr/lib64/gbm/dri_gbm.so \
+		usr/lib64/libxcb-cursor.so.0
+	do
+		if [ ! -e "$mkiso_live/$mkiso_need" ] &&
+			[ ! -L "$mkiso_live/$mkiso_need" ]
+		then
+			mkiso_miss="$mkiso_miss $mkiso_need"
+		fi
+	done
+	if ! ls "$mkiso_live"/usr/lib64/libgallium*.so* >/dev/null 2>&1
+	then
+		mkiso_miss="$mkiso_miss libgallium"
+	fi
+	if [ -e /usr/lib64/libSPIRV-Tools.so ] ||
+		[ -L /usr/lib64/libSPIRV-Tools.so ]
+	then
+		if ! ls "$mkiso_live"/usr/lib64/libSPIRV-Tools.so* >/dev/null 2>&1
+		then
+			mkiso_miss="$mkiso_miss libSPIRV-Tools.so"
+		fi
+	fi
+	if [ -e /usr/bin/Xwayland ] &&
+		[ ! -e "$mkiso_live/usr/bin/Xwayland" ] &&
+		[ ! -L "$mkiso_live/usr/bin/Xwayland" ]
+	then
+		mkiso_miss="$mkiso_miss usr/bin/Xwayland"
+	fi
+	[ -z "$mkiso_miss" ] ||
+		sps_die "$SPS_EX_PACKAGE" "plasma image missing:$mkiso_miss"
+	for mkiso_g in /usr/lib64/libgallium*.so
+	do
+		[ -e "$mkiso_g" ] || continue
+		mkiso_verify_elf_in_live "$mkiso_g"
+		break
+	done
 }
 
 # BusyBox --install -s writes absolute symlinks to the host path. Relative
@@ -507,7 +711,9 @@ mkiso_copy_plasma()
 		/usr/lib64/libEGL_mesa.so* /usr/lib64/libGLX_mesa.so* \
 		/usr/lib64/libgallium*.so* /usr/lib64/dri/libdril_dri.so \
 		/usr/lib64/libLLVM.so /usr/lib64/libLLVM.so.[0-9]* \
-		/usr/lib64/libOpenGL.so* /usr/lib64/libxcb-cursor.so*
+		/usr/lib64/libOpenGL.so* /usr/lib64/libxcb-cursor.so* \
+		/usr/lib64/libgbm.so* /usr/lib64/libglapi.so* \
+		/usr/lib64/libSPIRV-Tools.so
 	do
 		for mkiso_so in $mkiso_pat; do
 			[ -e "$mkiso_so" ] || continue
@@ -552,6 +758,7 @@ EOF
 	mkdir -p "$mkiso_live/etc/systemd/system"
 	ln -sf /dev/null "$mkiso_live/etc/systemd/system/dbus.service"
 	ln -sf /dev/null "$mkiso_live/etc/systemd/system/dbus.socket"
+	mkiso_copy_mesa_deps
 }
 
 # PID 1 must be an ELF. A shell script that execs getty/setsid is what
@@ -829,10 +1036,21 @@ if [ "$mkiso_copy_seed" -eq 1 ] && [ -f "$mkiso_libdir/seed-bins" ]; then
 		/usr/lib64/libthread_db.so /usr/lib64/libgcc_s.so \
 		/usr/lib64/libstdc++.so /usr/lib64/libc_nonshared.a \
 		/usr/lib64/libpthread_nonshared.a \
-		/usr/lib64/libmvec_nonshared.a
+		/usr/lib64/libmvec_nonshared.a \
+		/usr/lib64/rcrt1.o /usr/lib64/grcrt1.o \
+		/lib64/libc.so.6 /usr/lib64/libc.so.6 \
+		/lib64/libm.so.6 /usr/lib64/libm.so.6 \
+		/lib64/libmvec.so.1 /usr/lib64/libmvec.so.1 \
+		/lib64/ld-linux-x86-64.so.2 /usr/lib64/ld-linux-x86-64.so.2
 	do
 		[ -e "$mkiso_crt" ] || [ -L "$mkiso_crt" ] || continue
 		mkiso_copy_path "$mkiso_crt"
+	done
+	# cc1 DT_NEEDs libmpc/libisl. ldd of the gcc driver does not.
+	mkiso_copy_gcc_deps
+	for mkiso_cmd in gcc g++ cc c++ as ld ld.bfd
+	do
+		mkiso_copy_host_cmd "$mkiso_cmd" || :
 	done
 	mkiso_copy_path /usr/lib64/python3.12
 	mkiso_copy_path /usr/share/terminfo

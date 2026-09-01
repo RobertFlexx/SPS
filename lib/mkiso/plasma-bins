@@ -34,6 +34,7 @@
 /usr/bin/dbus-send
 /usr/libexec/dbus-daemon-launch-helper
 /usr/bin/seatd
+/usr/bin/Xwayland
 /usr/bin/Xorg
 /usr/bin/xauth
 /usr/bin/xrdb
@@ -55,5 +56,6 @@
 /usr/libexec/plasma-startup-sound
 /usr/libexec/xdg-desktop-portal
 /usr/libexec/xdg-desktop-portal-kde
+/usr/libexec/xdg-document-portal
 /usr/libexec/xdg-permission-store
 

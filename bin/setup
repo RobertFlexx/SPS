@@ -1715,6 +1715,24 @@ $(sort -u "$setup_pkg_file")
 EOF
 
 printf '%s: installing packages:%s\n' "$sps_prog" "$setup_pkgs" >&2
+# Fail before the first autoconf package if the live gcc cannot link.
+# Missing libmpc (cc1) or crt1.o shows up as "C compiler cannot create
+# executables" two screens later otherwise.
+if command -v gcc >/dev/null 2>&1; then
+	setup_cc_dir=${SPS_BUILD:-$setup_root/var/tmp/sps}
+	mkdir -p "$setup_cc_dir" ||
+		setup_fail "$SPS_EX_PERMISSION" "cannot create $setup_cc_dir"
+	setup_cc_log=$setup_cc_dir/sps-cc-probe.log
+	setup_cc_out=$setup_cc_dir/sps-cc-probe
+	if ! printf '%s\n' 'int main(void){return 0;}' |
+		gcc -x c - -o "$setup_cc_out" >"$setup_cc_log" 2>&1
+	then
+		printf '%s: live gcc cannot create executables\n' "$sps_prog" >&2
+		cat "$setup_cc_log" >&2
+		setup_fail "$SPS_EX_BUILD" "live gcc cannot create executables"
+	fi
+	rm -f "$setup_cc_out"
+fi
 # sget treats requested names as explicit world roots.
 # shellcheck disable=SC2086
 sget install $setup_pkgs ||

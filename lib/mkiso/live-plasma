@@ -18,14 +18,17 @@ export FONTCONFIG_PATH=/etc/fonts
 export QT_PLUGIN_PATH=/usr/lib64/qt6/plugins
 export QT_QPA_PLATFORM_PLUGIN_PATH=/usr/lib64/qt6/plugins/platforms
 export QML2_IMPORT_PATH=/usr/lib64/qt6/qml
+export LIBGL_DRIVERS_PATH=/usr/lib64/dri:/usr/lib/dri
+export GBM_BACKENDS_PATH=/usr/lib64/gbm:/usr/lib/gbm
 # KWin is the compositor. QT_QPA_PLATFORM=wayland makes Qt try to
 # connect to a display that does not exist yet, so kwin_wayland dies
 # with "Failed to create wl_display" and plasmashell follows.
 unset QT_QPA_PLATFORM
 
 mkdir -p "$XDG_RUNTIME_DIR" /run/dbus /var/lib/dbus /etc/dbus-1 \
-	/root/.config/kdedefaults
+	/root/.config/kdedefaults /tmp/.X11-unix /tmp/.ICE-unix
 chmod 700 "$XDG_RUNTIME_DIR"
+chmod 1777 /tmp /tmp/.X11-unix /tmp/.ICE-unix 2>/dev/null || :
 # startplasma reads this before KSplash. A missing file logs
 # QIODevice::readLineInto ... kdedefaults/package.
 if [ ! -s /root/.config/kdedefaults/package ]; then
@@ -113,6 +116,14 @@ if [ ! -e /dev/dri/card0 ] && [ ! -e /dev/dri/card1 ]; then
 	printf '%s\n' "SPS: no /dev/dri/card0; KWin cannot start a compositor."
 	printf '%s\n' "SPS: use tty2 (Ctrl-Alt-F2) for a shell."
 	ls /dev/dri 2>/dev/null || :
+fi
+if [ ! -e /usr/lib64/gbm/dri_gbm.so ] && [ ! -e /usr/lib/gbm/dri_gbm.so ]
+then
+	printf '%s\n' "SPS: Mesa GBM backend dri_gbm.so is missing; KWin cannot use DRM."
+fi
+if ! ls /usr/lib64/libSPIRV-Tools.so* >/dev/null 2>&1
+then
+	printf '%s\n' "SPS: libSPIRV-Tools.so is missing; Mesa GBM will fail to open DRI."
 fi
 
 if command -v startplasma-wayland >/dev/null 2>&1; then
