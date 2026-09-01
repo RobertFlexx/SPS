@@ -4,6 +4,7 @@ description Complete Plasma desktop plus KDE applications.
 package     base-system
 package     dialog
 package     splux-base
+package     fastfetch
 package     plasma-full
 package     sddm
 package     dejavu-fonts
