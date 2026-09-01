@@ -193,7 +193,7 @@ as PID 1 (`--init`); those packages conflict. `grub-install` still needs
 console, mount a destination filesystem on `/mnt`, and run `setup`. Ready-made
 images:
 
-https://github.com/RobertFlexx/SPS/releases/tag/live-2026-09-01-2
+https://github.com/RobertFlexx/SPS/releases/tag/live-2026-09-01-3
 
 ```sh
 mkiso --output dist/sps-live.iso --init systemd \
