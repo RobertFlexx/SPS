@@ -261,6 +261,9 @@ set -e
 [ "$st" -eq 2 ] || fail "guided without --format yes returned $st"
 contains "$(cat "$tmp/err")" '--format yes'
 
+grep -q 'remount,rw,exec' "$project_dir/lib/setup/partition.sh" ||
+	fail 'setup must remount the target exec so autoconf can run conftest'
+
 plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init systemd \
 	--disable qol-cli --disable power --disable firmware)
 contains "$plan" 'Init:       systemd'

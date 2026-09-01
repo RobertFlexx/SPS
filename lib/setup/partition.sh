@@ -151,6 +151,8 @@ setup_mount_prepared()
 	[ -n "$setup_part_root" ] || return 1
 	mkdir -p "$setup_tgt" || return 1
 	mount "$setup_part_root" "$setup_tgt" || return 1
+	# autoconf links and runs conftest in $SPS_BUILD on this mount.
+	mount -o remount,rw,exec,suid,dev "$setup_tgt" 2>/dev/null || :
 	if [ -n "$setup_part_efi" ]; then
 		mkdir -p "$setup_tgt/boot/efi"
 		mount "$setup_part_efi" "$setup_tgt/boot/efi" || return 1
@@ -183,6 +185,8 @@ setup_format_and_mount()
 	fi
 
 	mount "$setup_part_root" "$setup_tgt" || return 1
+	# autoconf links and runs conftest in $SPS_BUILD on this mount.
+	mount -o remount,rw,exec,suid,dev "$setup_tgt" 2>/dev/null || :
 	if [ -n "$setup_part_efi" ]; then
 		mkdir -p "$setup_tgt/boot/efi"
 		mount "$setup_part_efi" "$setup_tgt/boot/efi" || return 1

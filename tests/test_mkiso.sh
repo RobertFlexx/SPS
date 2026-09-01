@@ -163,6 +163,10 @@ if command -v lsblk >/dev/null 2>&1; then
 		fail 'lsblk missing from live layout (setup disk menu needs it)'
 	fi
 fi
+grep -q 'copying glibc startfiles' "$mkiso" ||
+	fail 'seeded ISO must copy glibc crt1.o for gcc'
+grep -q crt1.o "$mkiso" ||
+	fail 'mkiso must copy crt1.o with the seed compiler'
 grep -q 'copying disk tools for setup' "$mkiso" ||
 	fail 'mkiso must copy partition tools by command name'
 grep -q grub-install "$mkiso" ||

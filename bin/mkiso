@@ -812,7 +812,28 @@ if [ "$mkiso_copy_seed" -eq 1 ] && [ -f "$mkiso_libdir/seed-bins" ]; then
 	# Compiler support files.
 	mkiso_copy_path /usr/libexec/gcc
 	mkiso_copy_path /usr/lib64/gcc
+	mkiso_copy_path /usr/lib/gcc
 	mkiso_copy_path /usr/include
+	# gcc and ld without glibc startfiles fail the first autoconf check
+	# with "C compiler cannot create executables". Runtime libc.so.6 is
+	# not enough; the linker needs crt1.o and the libc.so script.
+	printf '%s: copying glibc startfiles for the seed compiler\n' \
+		"$sps_prog" >&2
+	for mkiso_crt in /usr/lib64/crt1.o /usr/lib64/crti.o /usr/lib64/crtn.o \
+		/usr/lib64/Scrt1.o /usr/lib64/gcrt1.o /usr/lib64/Mcrt1.o \
+		/lib64/crt1.o /lib64/crti.o /lib64/crtn.o \
+		/usr/lib64/libc.so /usr/lib64/libm.so /usr/lib64/libmvec.so \
+		/usr/lib64/libpthread.so /usr/lib64/libdl.so \
+		/usr/lib64/librt.so /usr/lib64/libutil.so \
+		/usr/lib64/libresolv.so /usr/lib64/libanl.so \
+		/usr/lib64/libthread_db.so /usr/lib64/libgcc_s.so \
+		/usr/lib64/libstdc++.so /usr/lib64/libc_nonshared.a \
+		/usr/lib64/libpthread_nonshared.a \
+		/usr/lib64/libmvec_nonshared.a
+	do
+		[ -e "$mkiso_crt" ] || [ -L "$mkiso_crt" ] || continue
+		mkiso_copy_path "$mkiso_crt"
+	done
 	mkiso_copy_path /usr/lib64/python3.12
 	mkiso_copy_path /usr/share/terminfo
 	mkiso_copy_path /usr/share/zoneinfo
