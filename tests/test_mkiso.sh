@@ -145,6 +145,10 @@ grep -q /usr/share/kwin "$project_dir/lib/mkiso/plasma-trees" ||
 	fail 'plasma-trees must include /usr/share/kwin'
 grep -q /etc/fonts "$project_dir/lib/mkiso/plasma-trees" ||
 	fail 'plasma-trees must include fontconfig'
+grep -q /usr/share/xkeyboard-config-2 "$project_dir/lib/mkiso/plasma-trees" ||
+	fail 'plasma-trees must include the real XKB rules behind /usr/share/X11/xkb'
+grep -q /usr/share/libinput "$project_dir/lib/mkiso/plasma-trees" ||
+	fail 'plasma-trees must include libinput device quirks'
 grep -q kglobalacceld "$project_dir/lib/mkiso/plasma-bins" ||
 	fail 'plasma-bins must include kglobalacceld'
 grep -q xdg-desktop-portal-kde "$project_dir/lib/mkiso/plasma-bins" ||
@@ -202,6 +206,8 @@ grep -q 'copying glibc startfiles' "$mkiso" ||
 	fail 'seeded ISO must copy glibc crt1.o for gcc'
 grep -q crt1.o "$mkiso" ||
 	fail 'mkiso must copy crt1.o with the seed compiler'
+grep -q /usr/lib64/libpthread.a "$mkiso" ||
+	fail 'seeded ISO must copy the glibc -lpthread compatibility archive'
 grep -q 'resolving gcc cc1 libraries' "$mkiso" ||
 	fail 'seeded ISO must ldd cc1 so libmpc/libisl land on the disc'
 grep -q 'resolving Mesa DRI/GBM libraries' "$mkiso" ||
@@ -212,6 +218,8 @@ grep -q nvidia-drm_gbm "$mkiso" ||
 	fail 'plasma ISO must drop the nvidia GBM backend'
 grep -q Xwayland "$project_dir/lib/mkiso/plasma-bins" ||
 	fail 'plasma-bins must include Xwayland'
+grep -q xkbcomp "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include xkbcomp for Xwayland keyboard setup'
 grep -q xdg-document-portal "$project_dir/lib/mkiso/plasma-bins" ||
 	fail 'plasma-bins must include xdg-document-portal'
 grep -q /usr/share/color-schemes "$project_dir/lib/mkiso/plasma-trees" ||
@@ -259,6 +267,10 @@ then
 fi
 grep -q 'copying file(1) magic database' "$mkiso" ||
 	fail 'seeded ISO must copy file(1) magic for autoconf'
+grep -q /usr/bin/msgfmt "$project_dir/lib/mkiso/seed-bins" ||
+	fail 'seeded ISO must include msgfmt for alsa-utils translations'
+grep -q /usr/bin/xgettext "$project_dir/lib/mkiso/seed-bins" ||
+	fail 'seeded ISO must include xgettext with the gettext tools'
 grep -q '/etc/file' "$mkiso" ||
 	fail 'mkiso must copy /etc/file magic used by this host file(1)'
 grep -q kactivitymanagerd "$project_dir/lib/mkiso/plasma-bins" ||
@@ -273,6 +285,22 @@ grep -q XDG_CURRENT_DESKTOP "$project_dir/lib/mkiso/live-plasma" ||
 	fail 'live-plasma must set XDG_CURRENT_DESKTOP=KDE'
 grep -q mkiso_copy_plasma_runtime_deps "$mkiso" ||
 	fail 'plasma ISO must ldd session helpers (kactivitymanagerd, greeter)'
+grep -q libKirigamiplugin "$mkiso" ||
+	fail 'plasma ISO must ldd the Kirigami QML plugin closure'
+grep -q libqsqlite "$mkiso" ||
+	fail 'plasma ISO must ldd the Qt SQLite driver used by kactivitymanagerd'
+grep -q 'qt6/qml/org/kde' "$mkiso" ||
+	fail 'plasma ISO must close the Plasma QML plugin dependency graph'
+grep -q 'qt6/plugins/plasma' "$mkiso" ||
+	fail 'plasma ISO must close the Plasma applet plugin dependency graph'
+grep -q 'qt6/plugins/kwin' "$mkiso" ||
+	fail 'plasma ISO must close the KWin plugin dependency graph'
+grep -q libtaskmanager "$mkiso" ||
+	fail 'plasma ISO must verify libtaskmanager for the activity switcher'
+grep -q 'xkeyboard-config-2/rules/evdev' "$mkiso" ||
+	fail 'plasma ISO must verify the XKB evdev rules used by KWin'
+grep -q XCURSOR_THEME "$project_dir/lib/mkiso/live-plasma" ||
+	fail 'live-plasma must select a cursor theme that exists on the image'
 grep -q 'using .* for headers, libraries, and pkg-config' "$project_dir/bin/mkpkg" ||
 	fail 'mkpkg must compile against SPS_ROOT so setup can link target libs'
 grep -q write_cc_wrapper "$project_dir/bin/mkpkg" ||

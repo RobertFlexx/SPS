@@ -352,11 +352,14 @@ mkiso_copy_mesa_deps()
 		"$mkiso_live/usr/lib/gbm/nvidia-drm_gbm.so"
 }
 
-# Session helpers and plugins plasmashell loads by soname. Tree copies can
-# leave the .so files in place while ldd of plasma-bins never saw them.
+# Session helpers and Plasma's own QML/applet plugins. Tree copies leave the
+# plugin .so files in place while their non-Qt libraries (taskmanager,
+# KExiv2, notificationmanager, processcore, and others) stay on the host.
 mkiso_copy_plasma_runtime_deps()
 {
 	printf '%s: resolving Plasma session libraries\n' "$sps_prog" >&2
+	mkiso_plasma_runtime=$mkiso_work/plasma-runtime-elfs
+	: >"$mkiso_plasma_runtime"
 	for mkiso_so in \
 		/usr/libexec/kactivitymanagerd \
 		/usr/libexec/kscreenlocker_greet \
@@ -364,15 +367,47 @@ mkiso_copy_plasma_runtime_deps()
 		/usr/bin/plasma_session \
 		/usr/bin/kwin_wayland \
 		/usr/bin/startplasma-wayland \
+		/usr/bin/xkbcomp \
 		/usr/lib64/libseat.so \
 		/usr/lib64/libseat.so.1 \
 		/usr/lib64/qt6/plugins/wayland-shell-integration/liblayer-shell.so \
 		/usr/lib64/qt6/plugins/styles/breeze6.so \
-		/usr/lib64/qt6/plugins/platforms/libqwayland.so
+		/usr/lib64/qt6/plugins/platforms/libqwayland.so \
+		/usr/lib64/qt6/plugins/sqldrivers/libqsqlite.so \
+		/usr/lib64/qt6/qml/org/kde/kirigami/libKirigamiplugin.so \
+		/usr/lib64/qt6/plugins/kf6/kauth/backend/kauth_backend_plugin.so \
+		/usr/lib64/qt6/plugins/kwin/plugins/eis.so \
+		/usr/lib64/libtaskmanager.so.6 \
+		/usr/lib64/libKirigami.so.6 \
+		/usr/lib64/libKirigamiPlatform.so.6 \
+		/usr/lib/qt6/plugins/sqldrivers/libqsqlite.so \
+		/usr/lib/qt6/qml/org/kde/kirigami/libKirigamiplugin.so \
+		/usr/lib/qt6/plugins/kf6/kauth/backend/kauth_backend_plugin.so \
+		/usr/lib/qt6/plugins/kwin/plugins/eis.so
+	do
+		printf '%s\n' "$mkiso_so" >>"$mkiso_plasma_runtime"
+	done
+	# org/kde covers Kirigami, activityswitcher, and the rest of the
+	# desktop QML graph. plugins/plasma is applets; plugins/kwin is
+	# compositor helpers such as eis.so.
+	for mkiso_d in \
+		/usr/lib64/qt6/qml/org/kde \
+		/usr/lib64/qt6/plugins/plasma \
+		/usr/lib64/qt6/plugins/kwin \
+		/usr/lib/qt6/qml/org/kde \
+		/usr/lib/qt6/plugins/plasma \
+		/usr/lib/qt6/plugins/kwin
+	do
+		[ -d "$mkiso_d" ] || continue
+		find "$mkiso_d" -type f -name '*.so' -print 2>/dev/null \
+			>>"$mkiso_plasma_runtime"
+	done
+	LC_ALL=C sort -u "$mkiso_plasma_runtime" -o "$mkiso_plasma_runtime"
+	while IFS= read -r mkiso_so || [ -n "$mkiso_so" ]
 	do
 		[ -e "$mkiso_so" ] || [ -L "$mkiso_so" ] || continue
 		mkiso_copy_so_deps "$mkiso_so"
-	done
+	done <"$mkiso_plasma_runtime"
 }
 
 # ldd a host ELF and require each resolved library to exist in the live
@@ -668,6 +703,22 @@ mkiso_verify_compiler()
 		sps_die "$SPS_EX_PACKAGE" \
 			"seeded live gcc is missing the libc.so linker script"
 	fi
+	# glibc 2.34 folded pthread into libc. On such hosts -lpthread is
+	# provided by a tiny compatibility archive rather than libpthread.so.
+	# Autoconf's ALSA probe still passes -lpthread explicitly.
+	if [ -e /usr/lib64/libpthread.a ] &&
+		[ ! -e "$mkiso_live/usr/lib64/libpthread.a" ]
+	then
+		sps_die "$SPS_EX_PACKAGE" \
+			"seeded live gcc is missing the libpthread.a linker archive"
+	fi
+	if [ -e /usr/bin/msgfmt ] &&
+		[ ! -e "$mkiso_live/usr/bin/msgfmt" ] &&
+		[ ! -L "$mkiso_live/usr/bin/msgfmt" ]
+	then
+		sps_die "$SPS_EX_PACKAGE" \
+			"seeded live gcc is missing msgfmt"
+	fi
 	if [ ! -e "$mkiso_live/usr/bin/as" ] &&
 		[ ! -L "$mkiso_live/usr/bin/as" ]
 	then
@@ -702,9 +753,15 @@ mkiso_verify_plasma()
 	[ "$mkiso_session" = plasma ] || return 0
 	mkiso_miss=
 	for mkiso_need in usr/bin/kwin_wayland usr/bin/kwin_wayland_wrapper \
-		usr/bin/startplasma-wayland usr/bin/plasmashell \
+		usr/bin/startplasma-wayland usr/bin/plasmashell usr/bin/xkbcomp \
 		usr/libexec/kactivitymanagerd usr/libexec/kscreenlocker_greet \
 		usr/lib64/gbm/dri_gbm.so usr/lib64/libxcb-cursor.so.0 \
+		usr/lib64/libtaskmanager.so.6 usr/lib64/libKirigami.so.6 \
+		usr/lib64/qt6/plugins/sqldrivers/libqsqlite.so \
+		usr/lib64/qt6/qml/org/kde/kirigami/libKirigamiplugin.so \
+		usr/share/xkeyboard-config-2/rules/evdev \
+		usr/share/libinput/10-generic-keyboard.quirks \
+		usr/share/icons/breeze_cursors/index.theme \
 		etc/xdg/kscreenlockerrc
 	do
 		if [ ! -e "$mkiso_live/$mkiso_need" ] &&
@@ -743,6 +800,13 @@ mkiso_verify_plasma()
 		mkiso_verify_elf_in_live "$mkiso_g"
 		break
 	done
+	if [ -f "$mkiso_work/plasma-runtime-elfs" ]; then
+		while IFS= read -r mkiso_plugin || [ -n "$mkiso_plugin" ]
+		do
+			[ -e "$mkiso_plugin" ] || [ -L "$mkiso_plugin" ] || continue
+			mkiso_verify_elf_in_live "$mkiso_plugin"
+		done <"$mkiso_work/plasma-runtime-elfs"
+	fi
 }
 
 # setup extras/sets/profiles may only name packages that exist in the
@@ -1233,6 +1297,9 @@ if [ "$mkiso_copy_seed" -eq 1 ] && [ -f "$mkiso_libdir/seed-bins" ]; then
 		/usr/lib64/libresolv.so /usr/lib64/libanl.so \
 		/usr/lib64/libthread_db.so /usr/lib64/libgcc_s.so \
 		/usr/lib64/libstdc++.so /usr/lib64/libc_nonshared.a \
+		/usr/lib64/libpthread.a /usr/lib64/libdl.a \
+		/usr/lib64/librt.a /usr/lib64/libutil.a \
+		/usr/lib64/libanl.a \
 		/usr/lib64/libpthread_nonshared.a \
 		/usr/lib64/libmvec_nonshared.a \
 		/usr/lib64/rcrt1.o /usr/lib64/grcrt1.o \

@@ -22,6 +22,7 @@ export QT_QPA_PLATFORM_PLUGIN_PATH=/usr/lib64/qt6/plugins/platforms
 export QML2_IMPORT_PATH=/usr/lib64/qt6/qml
 export LIBGL_DRIVERS_PATH=/usr/lib64/dri:/usr/lib/dri
 export GBM_BACKENDS_PATH=/usr/lib64/gbm:/usr/lib/gbm
+export XCURSOR_THEME=breeze_cursors
 # KWin is the compositor. QT_QPA_PLATFORM=wayland makes Qt try to
 # connect to a display that does not exist yet, so kwin_wayland dies
 # with "Failed to create wl_display" and plasmashell follows.

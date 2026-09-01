@@ -27,6 +27,8 @@
 /usr/share/wayland-protocols
 /usr/share/libdrm
 /usr/share/X11
+/usr/share/xkeyboard-config-2
+/usr/share/libinput
 /usr/lib64/xorg
 /usr/lib/xorg
 /etc/X11
