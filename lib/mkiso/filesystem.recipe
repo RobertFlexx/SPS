@@ -1,0 +1,58 @@
+# SPS-owned base filesystem hierarchy and initial static configuration.
+name        filesystem
+version     1.0
+release     2
+arch        any
+description Base filesystem hierarchy and static system configuration
+
+install     for directory in dev etc home media mnt opt proc root run run/lock \
+            srv sys tmp usr usr/bin usr/include usr/lib usr/libexec usr/sbin \
+            usr/share usr/src var \
+            var/cache var/empty var/lib var/log var/spool var/tmp; do \
+                mkdir -p "$PKG/$directory"; \
+            done
+install     chmod 0700 "$PKG/root" "$PKG/var/empty"
+install     chmod 0755 "$PKG/run/lock"
+install     chmod 1777 "$PKG/tmp" "$PKG/var/tmp"
+install     ln -s usr/bin "$PKG/bin"
+install     ln -s usr/lib "$PKG/lib"
+install     ln -s usr/sbin "$PKG/sbin"
+install     ln -s ../run "$PKG/var/run"
+install     ln -s ../run/lock "$PKG/var/lock"
+install     ln -s ../proc/self/mounts "$PKG/etc/mtab"
+install     printf '%s\n' \
+            '# Static filesystems are configured here.' \
+            > "$PKG/etc/fstab"
+install     printf '%s\n' \
+            '127.0.0.1 localhost' \
+            '::1 localhost' \
+            > "$PKG/etc/hosts"
+install     printf '%s\n' \
+            'passwd: files' \
+            'group: files' \
+            'shadow: files' \
+            'hosts: files dns' \
+            'networks: files' \
+            'services: files' \
+            'protocols: files' \
+            'rpc: files' \
+            > "$PKG/etc/nsswitch.conf"
+install     printf '%s\n' \
+            'root:x:0:0:root:/root:/bin/sh' \
+            'nobody:x:65534:65534:Unprivileged User:/:/usr/bin/nologin' \
+            > "$PKG/etc/passwd"
+install     printf '%s\n' \
+            'root:x:0:' \
+            'nogroup:x:65534:' \
+            > "$PKG/etc/group"
+install     printf '%s\n' \
+            'root:!:0:0:99999:7:::' \
+            'nobody:!:0:0:99999:7:::' \
+            > "$PKG/etc/shadow"
+install     printf '%s\n' \
+            'root:!::' \
+            'nogroup:!::' \
+            > "$PKG/etc/gshadow"
+install     chmod 0644 "$PKG/etc/group" "$PKG/etc/hosts" \
+            "$PKG/etc/nsswitch.conf" "$PKG/etc/passwd"
+install     chmod 0600 "$PKG/etc/gshadow" "$PKG/etc/shadow"

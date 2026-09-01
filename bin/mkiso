@@ -240,6 +240,11 @@ mkiso_copy_path()
 			cp -a "$mkiso_src"/. "$mkiso_dest"/ 2>/dev/null ||
 			cp -R "$mkiso_src"/. "$mkiso_dest"/ 2>/dev/null || :
 	else
+		# usr-merge puts busybox applets in usr/bin. cp onto a
+		# symlink follows it and overwrites busybox itself.
+		if [ -L "$mkiso_dest" ]; then
+			rm -f "$mkiso_dest"
+		fi
 		cp -a --reflink=auto "$mkiso_src" "$mkiso_dest" 2>/dev/null ||
 			cp -a "$mkiso_src" "$mkiso_dest" 2>/dev/null ||
 			cp "$mkiso_src" "$mkiso_dest" 2>/dev/null || :
@@ -380,6 +385,8 @@ mkiso_copy_plasma_runtime_deps()
 		/usr/lib64/libtaskmanager.so.6 \
 		/usr/lib64/libKirigami.so.6 \
 		/usr/lib64/libKirigamiPlatform.so.6 \
+		/usr/lib64/firefox/firefox-bin \
+		/usr/lib64/firefox/libxul.so \
 		/usr/lib/qt6/plugins/sqldrivers/libqsqlite.so \
 		/usr/lib/qt6/qml/org/kde/kirigami/libKirigamiplugin.so \
 		/usr/lib/qt6/plugins/kf6/kauth/backend/kauth_backend_plugin.so \
@@ -394,9 +401,11 @@ mkiso_copy_plasma_runtime_deps()
 		/usr/lib64/qt6/qml/org/kde \
 		/usr/lib64/qt6/plugins/plasma \
 		/usr/lib64/qt6/plugins/kwin \
+		/usr/lib64/qt6/plugins/kf6 \
 		/usr/lib/qt6/qml/org/kde \
 		/usr/lib/qt6/plugins/plasma \
-		/usr/lib/qt6/plugins/kwin
+		/usr/lib/qt6/plugins/kwin \
+		/usr/lib/qt6/plugins/kf6
 	do
 		[ -d "$mkiso_d" ] || continue
 		find "$mkiso_d" -type f -name '*.so' -print 2>/dev/null \
@@ -762,6 +771,9 @@ mkiso_verify_plasma()
 		usr/share/xkeyboard-config-2/rules/evdev \
 		usr/share/libinput/10-generic-keyboard.quirks \
 		usr/share/icons/breeze_cursors/index.theme \
+		usr/share/systemsettings/categories \
+		usr/share/glib-2.0/schemas/gschemas.compiled \
+		usr/lib/polkit-1/polkitd \
 		etc/xdg/kscreenlockerrc
 	do
 		if [ ! -e "$mkiso_live/$mkiso_need" ] &&
@@ -770,6 +782,18 @@ mkiso_verify_plasma()
 			mkiso_miss="$mkiso_miss $mkiso_need"
 		fi
 	done
+	if [ -e /usr/bin/firefox ]; then
+		if [ ! -e "$mkiso_live/usr/bin/firefox" ] &&
+			[ ! -L "$mkiso_live/usr/bin/firefox" ]
+		then
+			mkiso_miss="$mkiso_miss usr/bin/firefox"
+		fi
+		if [ ! -e "$mkiso_live/usr/lib64/firefox/firefox-bin" ] &&
+			[ ! -L "$mkiso_live/usr/lib64/firefox/firefox-bin" ]
+		then
+			mkiso_miss="$mkiso_miss usr/lib64/firefox/firefox-bin"
+		fi
+	fi
 	if ! ls "$mkiso_live"/usr/lib64/libgallium*.so* >/dev/null 2>&1
 	then
 		mkiso_miss="$mkiso_miss libgallium"
@@ -916,9 +940,200 @@ mkiso_busybox_links()
 	do
 		[ -n "$mkiso_ap" ] || continue
 		[ "$mkiso_ap" = busybox ] && continue
+		if [ -e "$mkiso_bbdir/$mkiso_ap" ] &&
+			[ ! -L "$mkiso_bbdir/$mkiso_ap" ]
+		then
+			continue
+		fi
 		ln -sf busybox "$mkiso_bbdir/$mkiso_ap"
 	done
 	ln -sf busybox "$mkiso_bbdir/sh"
+}
+
+# filesystem ships /bin -> usr/bin. A real /bin directory on the live
+# root makes pkin refuse the package, so sget install dies immediately.
+mkiso_ensure_usr_merge()
+{
+	mkdir -p "$mkiso_live/usr/bin" "$mkiso_live/usr/sbin" \
+		"$mkiso_live/usr/lib"
+	for mkiso_merge in bin:usr/bin sbin:usr/sbin lib:usr/lib
+	do
+		mkiso_merge_name=${mkiso_merge%%:*}
+		mkiso_merge_target=${mkiso_merge#*:}
+		mkiso_merge_path=$mkiso_live/$mkiso_merge_name
+		if [ -L "$mkiso_merge_path" ]; then
+			continue
+		fi
+		if [ -e "$mkiso_merge_path" ]; then
+			sps_die "$SPS_EX_BUILD" \
+				"live /$mkiso_merge_name exists and is not a usr-merge symlink"
+		fi
+		ln -s "$mkiso_merge_target" "$mkiso_merge_path"
+	done
+}
+
+# Own the usr-merge links and static files so later packages that depend
+# on filesystem can install on the live image itself.
+mkiso_install_base_filesystem()
+{
+	mkiso_fs_recipe=
+	if [ -n "${mkiso_core:-}" ] &&
+		[ -f "$mkiso_core/base/filesystem/recipe" ]
+	then
+		mkiso_fs_recipe=$mkiso_core/base/filesystem/recipe
+	elif [ -f "$mkiso_libdir/filesystem.recipe" ]; then
+		mkiso_fs_recipe=$mkiso_libdir/filesystem.recipe
+	fi
+	[ -n "$mkiso_fs_recipe" ] || return 0
+
+	printf '%s: installing filesystem into the live root\n' \
+		"$sps_prog" >&2
+	mkiso_fs_out=$(mktemp -d "${TMPDIR:-/tmp}/.sps-mkiso-fs.XXXXXX") ||
+		sps_die "$SPS_EX_BUILD" "cannot create filesystem package workspace"
+	mkiso_fs_st=0
+	if ! (
+		unset SPS_ROOT SPS_DB SPS_CACHE SPS_BUILD SPS_CONFIG \
+			SPS_REPOS_CONFIG SPS_COMPRESSION
+		SPS_ROOT=$mkiso_live
+		SPS_DB=$mkiso_live/var/lib/sps
+		SPS_CACHE=$mkiso_live/var/cache/sps
+		SPS_BUILD=$mkiso_live/var/tmp/sps
+		SPS_CONFIG=/dev/null
+		SPS_REPOS_CONFIG=/dev/null
+		SPS_COMPRESSION=none
+		PATH=$sps_bin_dir:$PATH
+		export SPS_ROOT SPS_DB SPS_CACHE SPS_BUILD SPS_CONFIG \
+			SPS_REPOS_CONFIG SPS_COMPRESSION SPS_LIBDIR PATH
+		mkdir -p "$SPS_DB" "$SPS_CACHE" "$SPS_BUILD"
+		mkpkg --output "$mkiso_fs_out" "$mkiso_fs_recipe" || exit 1
+		mkiso_fs_pkg=
+		for mkiso_fs_cand in "$mkiso_fs_out"/filesystem-*.pkg.tar \
+			"$mkiso_fs_out"/filesystem-*.pkg.tar.gz \
+			"$mkiso_fs_out"/filesystem-*.pkg.tar.xz \
+			"$mkiso_fs_out"/filesystem-*.pkg.tar.zst
+		do
+			[ -f "$mkiso_fs_cand" ] || continue
+			mkiso_fs_pkg=$mkiso_fs_cand
+			break
+		done
+		[ -n "$mkiso_fs_pkg" ] || exit 1
+		pkin --dependency "$mkiso_fs_pkg"
+	)
+	then
+		mkiso_fs_st=1
+	fi
+	rm -rf "$mkiso_fs_out"
+	[ "$mkiso_fs_st" -eq 0 ] ||
+		sps_die "$SPS_EX_BUILD" \
+			"failed to install filesystem into the live root"
+}
+
+mkiso_add_group()
+{
+	mkiso_gname=$1
+	mkiso_gid=$2
+	mkiso_gmembers=${3-}
+	mkiso_gfile=$mkiso_live/etc/group
+	[ -f "$mkiso_gfile" ] || printf '%s\n' 'root:x:0:' >"$mkiso_gfile"
+	grep -q "^${mkiso_gname}:" "$mkiso_gfile" && return 0
+	if [ -n "$mkiso_gmembers" ]; then
+		printf '%s:x:%s:%s\n' "$mkiso_gname" "$mkiso_gid" \
+			"$mkiso_gmembers" >>"$mkiso_gfile"
+	else
+		printf '%s:x:%s:\n' "$mkiso_gname" "$mkiso_gid" >>"$mkiso_gfile"
+	fi
+}
+
+mkiso_add_user()
+{
+	mkiso_uname=$1
+	mkiso_uid=$2
+	mkiso_ugid=$3
+	mkiso_ugeos=$4
+	mkiso_uhome=$5
+	mkiso_pfile=$mkiso_live/etc/passwd
+	mkiso_sfile=$mkiso_live/etc/shadow
+	[ -f "$mkiso_pfile" ] ||
+		printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' >"$mkiso_pfile"
+	grep -q "^${mkiso_uname}:" "$mkiso_pfile" && return 0
+	printf '%s:x:%s:%s:%s:%s:/usr/bin/nologin\n' \
+		"$mkiso_uname" "$mkiso_uid" "$mkiso_ugid" "$mkiso_ugeos" \
+		"$mkiso_uhome" >>"$mkiso_pfile"
+	if [ -f "$mkiso_sfile" ] && ! grep -q "^${mkiso_uname}:" "$mkiso_sfile"
+	then
+		printf '%s:!:0:0:99999:7:::\n' "$mkiso_uname" >>"$mkiso_sfile"
+	fi
+}
+
+mkiso_write_live_accounts()
+{
+	mkdir -p "$mkiso_live/etc" "$mkiso_live/var/lib/polkit" \
+		"$mkiso_live/run/dbus"
+	if [ ! -s "$mkiso_live/etc/passwd" ]; then
+		printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' \
+			>"$mkiso_live/etc/passwd"
+	fi
+	if [ ! -s "$mkiso_live/etc/group" ]; then
+		printf '%s\n' 'root:x:0:' >"$mkiso_live/etc/group"
+	fi
+	mkiso_add_group tty 5
+	mkiso_add_group disk 6
+	mkiso_add_group audio 17
+	mkiso_add_group video 18 root
+	mkiso_add_group input 71 root
+	mkiso_add_group render 107 root
+	mkiso_add_group messagebus 81
+	mkiso_add_group polkitd 87
+	mkiso_add_user messagebus 81 81 "User for D-BUS" /run/dbus
+	mkiso_add_user polkitd 87 87 "PolicyKit daemon owner" /var/lib/polkit
+	if [ ! -s "$mkiso_live/etc/hosts" ]; then
+		printf '%s\n' '127.0.0.1 localhost' '::1 localhost' \
+			>"$mkiso_live/etc/hosts"
+	fi
+	if ! grep -q splux-live "$mkiso_live/etc/hosts"; then
+		mkiso_hosts=$mkiso_live/etc/hosts
+		mkiso_hosts_tmp=$(mktemp "${TMPDIR:-/tmp}/.sps-hosts.XXXXXX") ||
+			sps_die "$SPS_EX_BUILD" "cannot stage live hosts"
+		awk '{
+			if ($1 == "127.0.0.1" && $0 !~ /splux-live/)
+				print $0 " splux-live"
+			else if ($1 == "::1" && $0 !~ /splux-live/)
+				print $0 " splux-live"
+			else
+				print
+		}' "$mkiso_hosts" >"$mkiso_hosts_tmp"
+		cat "$mkiso_hosts_tmp" >"$mkiso_hosts"
+		rm -f "$mkiso_hosts_tmp"
+	fi
+	if [ ! -s "$mkiso_live/etc/nsswitch.conf" ]; then
+		printf '%s\n' \
+			'passwd: files' \
+			'group: files' \
+			'shadow: files' \
+			'hosts: files dns' \
+			'networks: files' \
+			'protocols: files' \
+			'services: files' \
+			'ethers: files' \
+			'rpc: files' \
+			>"$mkiso_live/etc/nsswitch.conf"
+	fi
+	if [ ! -s "$mkiso_live/etc/shadow" ]; then
+		printf '%s\n' 'root::0:0:99999:7:::' \
+			>"$mkiso_live/etc/shadow"
+	else
+		mkiso_shadow_tmp=$(mktemp "${TMPDIR:-/tmp}/.sps-shadow.XXXXXX") ||
+			sps_die "$SPS_EX_BUILD" "cannot stage live shadow"
+		awk -F: 'BEGIN { OFS=":" }
+			$1 == "root" { $2 = ""; print; next }
+			{ print }' "$mkiso_live/etc/shadow" >"$mkiso_shadow_tmp"
+		cat "$mkiso_shadow_tmp" >"$mkiso_live/etc/shadow"
+		rm -f "$mkiso_shadow_tmp"
+	fi
+	chmod 600 "$mkiso_live/etc/shadow"
+	if [ -f "$mkiso_live/etc/gshadow" ]; then
+		chmod 600 "$mkiso_live/etc/gshadow"
+	fi
 }
 
 # Copy a host Plasma/Wayland stack. mkiso does not compile Qt.
@@ -1138,12 +1353,14 @@ make -C "$sps_bin_dir/.." \
 	install install-config >/dev/null ||
 	sps_die "$SPS_EX_BUILD" "make install into the live root failed"
 
-mkdir -p "$mkiso_live/bin" "$mkiso_live/sbin" "$mkiso_live/usr/bin" \
-	"$mkiso_live/usr/sbin" "$mkiso_live/root" "$mkiso_live/mnt" \
-	"$mkiso_live/proc" "$mkiso_live/sys" "$mkiso_live/dev" \
-	"$mkiso_live/tmp" "$mkiso_live/run" "$mkiso_live/etc/sps" \
-	"$mkiso_live/usr/src/sps" "$mkiso_live/var/cache/sps" \
-	"$mkiso_live/var/lib/sps" "$mkiso_live/var/tmp/sps"
+mkdir -p "$mkiso_live/usr/bin" "$mkiso_live/usr/sbin" "$mkiso_live/root" \
+	"$mkiso_live/mnt" "$mkiso_live/proc" "$mkiso_live/sys" \
+	"$mkiso_live/dev" "$mkiso_live/tmp" "$mkiso_live/run" \
+	"$mkiso_live/etc/sps" "$mkiso_live/usr/src/sps" \
+	"$mkiso_live/var/cache/sps" "$mkiso_live/var/lib/sps" \
+	"$mkiso_live/var/tmp/sps"
+mkiso_install_base_filesystem
+mkiso_ensure_usr_merge
 
 if [ -z "$mkiso_busybox" ]; then
 	for mkiso_bb in /tmp/sps-wave/busybox.static \
@@ -1175,34 +1392,23 @@ install -m 0644 "$mkiso_libdir/issue" "$mkiso_live/etc/issue"
 printf '%s\n' live >"$mkiso_live/etc/sps/live"
 printf '%s\n' splux-live >"$mkiso_live/etc/hostname"
 mkiso_stamp_os_release
-printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' >"$mkiso_live/etc/passwd"
-printf '%s\n' \
-	'root:x:0:' \
-	'tty:x:5:' \
-	'disk:x:6:' \
-	'audio:x:17:' \
-	'video:x:18:root' \
-	'input:x:71:root' \
-	'render:x:107:root' \
-	>"$mkiso_live/etc/group"
-printf '%s\n' \
-	'127.0.0.1 localhost splux-live' \
-	'::1 localhost splux-live' \
-	>"$mkiso_live/etc/hosts"
+mkiso_write_live_accounts
 # Do not copy the host nsswitch.conf: this builder uses mdns modules the
 # live disc does not ship. Without a file, glibc still looks at 127.0.0.1
 # when resolv.conf is missing, so live DNS looks like it "does not exist".
-printf '%s\n' \
-	'passwd: files' \
-	'group: files' \
-	'shadow: files' \
-	'hosts: files dns' \
-	'networks: files' \
-	'protocols: files' \
-	'services: files' \
-	'ethers: files' \
-	'rpc: files' \
-	>"$mkiso_live/etc/nsswitch.conf"
+if [ ! -s "$mkiso_live/etc/nsswitch.conf" ]; then
+	printf '%s\n' \
+		'passwd: files' \
+		'group: files' \
+		'shadow: files' \
+		'hosts: files dns' \
+		'networks: files' \
+		'protocols: files' \
+		'services: files' \
+		'ethers: files' \
+		'rpc: files' \
+		>"$mkiso_live/etc/nsswitch.conf"
+fi
 printf '%s\n' \
 	'nameserver 1.1.1.1' \
 	'nameserver 8.8.8.8' \
@@ -1211,9 +1417,6 @@ if [ -f "$mkiso_libdir/udhcpc-script" ]; then
 	install -m 0755 "$mkiso_libdir/udhcpc-script" \
 		"$mkiso_live/etc/sps/udhcpc-script"
 fi
-# Empty password on the live console only.
-printf '%s\n' 'root::0:0:99999:7:::' >"$mkiso_live/etc/shadow"
-chmod 600 "$mkiso_live/etc/shadow"
 
 printf '%s\n' \
 	'db /var/lib/sps' \

@@ -12,6 +12,8 @@ export XDG_SESSION_CLASS=user
 export XDG_SESSION_DESKTOP=KDE
 export XDG_CURRENT_DESKTOP=KDE
 export DESKTOP_SESSION=plasma
+export MOZ_ENABLE_WAYLAND=1
+export MOZ_ALLOW_DOWNGRADE=1
 
 if command -v kded6 >/dev/null 2>&1; then
 	kded6 >/run/kded6.log 2>&1 &
@@ -23,6 +25,28 @@ elif [ -x /usr/libexec/kglobalacceld ]; then
 fi
 if [ -x /usr/libexec/kactivitymanagerd ]; then
 	/usr/libexec/kactivitymanagerd >/run/kactivity.log 2>&1 &
+fi
+if [ -x /usr/libexec/kf6/kiod6 ]; then
+	/usr/libexec/kf6/kiod6 >/run/kiod6.log 2>&1 &
+fi
+if command -v pipewire >/dev/null 2>&1; then
+	pipewire >/run/sps-pipewire.log 2>&1 &
+fi
+if command -v wireplumber >/dev/null 2>&1; then
+	wireplumber >/run/sps-wireplumber.log 2>&1 &
+fi
+if command -v pipewire-pulse >/dev/null 2>&1; then
+	pipewire-pulse >/run/sps-pipewire-pulse.log 2>&1 &
+fi
+if [ -x /usr/libexec/xdg-desktop-portal ]; then
+	/usr/libexec/xdg-desktop-portal >/run/sps-portal.log 2>&1 &
+fi
+if [ -x /usr/libexec/xdg-desktop-portal-kde ]; then
+	/usr/libexec/xdg-desktop-portal-kde >/run/sps-portal-kde.log 2>&1 &
+fi
+if [ -x /usr/libexec/polkit-kde-authentication-agent-1 ]; then
+	/usr/libexec/polkit-kde-authentication-agent-1 \
+		>/run/sps-polkit-agent.log 2>&1 &
 fi
 
 if command -v plasma-welcome >/dev/null 2>&1; then

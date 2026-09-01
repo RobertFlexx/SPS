@@ -23,6 +23,8 @@ export QML2_IMPORT_PATH=/usr/lib64/qt6/qml
 export LIBGL_DRIVERS_PATH=/usr/lib64/dri:/usr/lib/dri
 export GBM_BACKENDS_PATH=/usr/lib64/gbm:/usr/lib/gbm
 export XCURSOR_THEME=breeze_cursors
+export MOZ_ENABLE_WAYLAND=1
+export MOZ_ALLOW_DOWNGRADE=1
 # KWin is the compositor. QT_QPA_PLATFORM=wayland makes Qt try to
 # connect to a display that does not exist yet, so kwin_wayland dies
 # with "Failed to create wl_display" and plasmashell follows.
@@ -132,6 +134,9 @@ if command -v dbus-daemon >/dev/null 2>&1; then
 	fi
 else
 	printf '%s\n' "SPS: dbus-daemon is not on PATH; Plasma needs it."
+fi
+if [ -x /usr/lib/polkit-1/polkitd ]; then
+	/usr/lib/polkit-1/polkitd --no-debug >/run/sps-polkitd.log 2>&1 &
 fi
 if command -v seatd >/dev/null 2>&1; then
 	seatd -g video >/dev/null 2>&1 &

@@ -62,3 +62,16 @@
 /usr/libexec/xdg-desktop-portal-kde
 /usr/libexec/xdg-document-portal
 /usr/libexec/xdg-permission-store
+/usr/bin/firefox
+/usr/lib64/firefox/firefox-bin
+/usr/bin/pkexec
+/usr/lib/polkit-1/polkitd
+/usr/libexec/polkit-kde-authentication-agent-1
+/usr/bin/gwenview
+/usr/bin/okular
+/usr/bin/spectacle
+/usr/bin/ark
+/usr/bin/kcalc
+/usr/bin/kcharselect
+/usr/bin/kfind
+/usr/bin/partitionmanager

@@ -175,6 +175,9 @@ then
 		fi
 	fi
 fi
+if [ -x /usr/lib/polkit-1/polkitd ]; then
+	/usr/lib/polkit-1/polkitd --no-debug >/run/sps-polkitd.log 2>&1 &
+fi
 
 cat /etc/issue 2>/dev/null || :
 cat /etc/motd 2>/dev/null || :

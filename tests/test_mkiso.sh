@@ -48,6 +48,11 @@ fi
 [ -f "$layout/etc/sps/live" ] || fail 'live marker missing'
 [ -f "$layout/etc/motd" ] || fail 'motd missing'
 [ -x "$layout/sbin/init" ] || fail 'live init missing'
+[ -L "$layout/bin" ] || fail 'live /bin must be a usr-merge symlink'
+[ "$(readlink "$layout/bin")" = usr/bin ] ||
+	fail 'live /bin must point at usr/bin'
+[ -d "$layout/var/lib/sps/installed/filesystem" ] ||
+	fail 'live image must record filesystem as installed'
 [ -x "$layout/etc/sps/live-rc" ] || fail 'live-rc missing'
 [ -f "$layout/etc/inittab" ] || fail 'inittab missing'
 [ "$(cat "$layout/etc/sps/init")" = systemd ] || fail 'live default init is not systemd'
@@ -295,8 +300,23 @@ grep -q 'qt6/plugins/plasma' "$mkiso" ||
 	fail 'plasma ISO must close the Plasma applet plugin dependency graph'
 grep -q 'qt6/plugins/kwin' "$mkiso" ||
 	fail 'plasma ISO must close the KWin plugin dependency graph'
-grep -q libtaskmanager "$mkiso" ||
-	fail 'plasma ISO must verify libtaskmanager for the activity switcher'
+grep -q /usr/share/systemsettings "$project_dir/lib/mkiso/plasma-trees" ||
+	fail 'plasma-trees must include System Settings categories'
+grep -q /usr/bin/firefox "$project_dir/lib/mkiso/plasma-bins" ||
+	fail 'plasma-bins must include firefox'
+grep -q /usr/lib64/firefox "$project_dir/lib/mkiso/plasma-trees" ||
+	fail 'plasma-trees must include the Firefox runtime tree'
+grep -q pipewire "$project_dir/lib/mkiso/live-plasma-session" ||
+	fail 'live Plasma session must start pipewire'
+grep -q polkitd "$project_dir/lib/mkiso/live-rc" ||
+	fail 'live-rc must start polkitd'
+grep -q polkit-kde-authentication-agent \
+	"$project_dir/lib/mkiso/live-plasma-session" ||
+	fail 'live Plasma session must start the KDE polkit agent'
+grep -q qt6/plugins/kf6 "$mkiso" ||
+	fail 'plasma ISO must close KF6 plugin libraries'
+grep -q mkiso_install_base_filesystem "$mkiso" ||
+	fail 'mkiso must install filesystem so live sget can own /bin'
 grep -q 'xkeyboard-config-2/rules/evdev' "$mkiso" ||
 	fail 'plasma ISO must verify the XKB evdev rules used by KWin'
 grep -q XCURSOR_THEME "$project_dir/lib/mkiso/live-plasma" ||
