@@ -261,8 +261,10 @@ description Confirms PATH gcc injects SPS_ROOT -L even without LDFLAGS
 configure   unset LDFLAGS CFLAGS CPPFLAGS LIBRARY_PATH
 configure   printf '%s\n' '#include <spsprobe.h>' 'int main(void){return sps_probe_lib();}' >"$WORK/probe.c"
 configure   gcc "$WORK/probe.c" -lspsprobe -o "$WORK/probe"
-install     mkdir -p "$PKG/usr/bin"
+configure   sed -n '1,20p' "$CC" >"$WORK/ccwrap"
+install     mkdir -p "$PKG/usr/bin" "$PKG/usr/share/target-cc-wrapper-probe"
 install     cp "$WORK/probe" "$PKG/usr/bin/target-cc-wrapper-probe"
+install     cp "$WORK/ccwrap" "$PKG/usr/share/target-cc-wrapper-probe/gcc"
 install     chmod 755 "$PKG/usr/bin/target-cc-wrapper-probe"
 EOF
 	wrap_artifact=$(run_mkpkg --no-download --output "$tmp/wrap-out" \
@@ -272,6 +274,44 @@ EOF
 	tar -xf "$wrap_artifact" -C "$tmp/wrap-extract"
 	[ -x "$tmp/wrap-extract/usr/bin/target-cc-wrapper-probe" ] ||
 		fail "wrapper probe binary was not staged"
+	grep -q SPS_HOST_LD_LIBRARY_PATH \
+		"$tmp/wrap-extract/usr/share/target-cc-wrapper-probe/gcc" ||
+		fail "gcc wrapper must restore the host LD_LIBRARY_PATH"
+
+	# CPython's check_extension_modules *runs* _sqlite3.so. Linking is
+	# not enough: the loader must find the sqlite in SPS_ROOT, not the
+	# live disc. Host gcc must not see that LD_LIBRARY_PATH.
+	mkdir -p "$tmp/run-recipe" "$tmp/run-out"
+	cat >"$tmp/run-recipe/recipe" <<'EOF'
+name        target-runtime-lib-probe
+version     1.0
+release     1
+arch        any
+description Confirms just-built binaries load libraries from SPS_ROOT
+configure   printf '%s\n' "$LD_LIBRARY_PATH" >"$WORK/ldpath"
+configure   printf '%s\n' "$SPS_TARGET_LIBRARY_PATH" >"$WORK/targetld"
+configure   printf '%s\n' '#include <spsprobe.h>' 'int main(void){return sps_probe_lib();}' >"$WORK/probe.c"
+configure   gcc "$WORK/probe.c" -lspsprobe -o "$WORK/probe"
+configure   "$WORK/probe"
+install     mkdir -p "$PKG/usr/share/target-runtime-lib-probe" "$PKG/usr/bin"
+install     cp "$WORK/ldpath" "$WORK/targetld" "$PKG/usr/share/target-runtime-lib-probe/"
+install     cp "$WORK/probe" "$PKG/usr/bin/target-runtime-lib-probe"
+install     chmod 755 "$PKG/usr/bin/target-runtime-lib-probe"
+EOF
+	run_artifact=$(run_mkpkg --no-download --output "$tmp/run-out" \
+		"$tmp/run-recipe/recipe") ||
+		fail "target-root runtime library probe failed (just-built binaries must load SPS_ROOT libs)"
+	mkdir "$tmp/run-extract"
+	tar -xf "$run_artifact" -C "$tmp/run-extract"
+	case "$(cat "$tmp/run-extract/usr/share/target-runtime-lib-probe/ldpath")" in
+		"$tmp/root/usr/lib64:"*) : ;;
+		*) fail "LD_LIBRARY_PATH did not start with the target libdir" ;;
+	esac
+	assert_equal "$tmp/root/usr/lib64:$tmp/root/usr/lib:$tmp/root/lib64:$tmp/root/lib" \
+		"$(cat "$tmp/run-extract/usr/share/target-runtime-lib-probe/targetld")" \
+		"SPS_TARGET_LIBRARY_PATH was not the target libdirs"
+	[ -x "$tmp/run-extract/usr/bin/target-runtime-lib-probe" ] ||
+		fail "runtime probe binary was not staged"
 fi
 
 printf '%s\n' 'test_build: ok'

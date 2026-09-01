@@ -804,6 +804,19 @@ mkiso_verify_live()
 		fi
 	fi
 
+	if [ -e /usr/sbin/efibootmgr ] || [ -L /usr/sbin/efibootmgr ] ||
+		[ -e /usr/bin/efibootmgr ] || [ -L /usr/bin/efibootmgr ]
+	then
+		if [ ! -e "$mkiso_live/usr/sbin/efibootmgr" ] &&
+			[ ! -L "$mkiso_live/usr/sbin/efibootmgr" ] &&
+			[ ! -e "$mkiso_live/usr/bin/efibootmgr" ] &&
+			[ ! -L "$mkiso_live/usr/bin/efibootmgr" ]
+		then
+			sps_die "$SPS_EX_PACKAGE" \
+				"seeded live image is missing efibootmgr"
+		fi
+	fi
+
 	mkiso_verify_compiler
 	mkiso_verify_plasma
 	mkiso_verify_setup_catalog
@@ -1608,7 +1621,7 @@ fi
 printf '%s: copying disk tools for setup\n' "$sps_prog" >&2
 for mkiso_cmd in lsblk blkid sfdisk cfdisk fdisk wipefs mkfs.ext4 mke2fs \
 	mkfs.vfat mkswap partprobe udevadm udevd grub-install grub-mkconfig \
-	dhcpcd
+	efibootmgr dhcpcd
 do
 	mkiso_copy_host_cmd "$mkiso_cmd" || :
 done

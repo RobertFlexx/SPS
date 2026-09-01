@@ -241,6 +241,10 @@ grep -q 'copying disk tools for setup' "$mkiso" ||
 	fail 'mkiso must copy partition tools by command name'
 grep -q grub-install "$mkiso" ||
 	fail 'mkiso must copy grub-install by command name for setup'
+grep -q efibootmgr "$mkiso" ||
+	fail 'mkiso must copy efibootmgr by command name for EFI NVRAM'
+grep -q /usr/sbin/efibootmgr "$project_dir/lib/mkiso/seed-bins" ||
+	fail 'seed-bins must list efibootmgr'
 grep -q 'system-local.conf' "$mkiso" ||
 	fail 'mkiso must bake a live D-Bus system-local.conf'
 grep -q '<user>root</user>' "$project_dir/lib/mkiso/live-plasma" ||
@@ -349,6 +353,10 @@ grep -q 'using .* for headers, libraries, and pkg-config' "$project_dir/bin/mkpk
 	fail 'mkpkg must compile against SPS_ROOT so setup can link target libs'
 grep -q write_cc_wrapper "$project_dir/bin/mkpkg" ||
 	fail 'mkpkg must wrap gcc so autoconf finds libraries in SPS_ROOT'
+grep -q SPS_HOST_LD_LIBRARY_PATH "$project_dir/bin/mkpkg" ||
+	fail 'mkpkg must keep host gcc from loading SPS_ROOT via LD_LIBRARY_PATH'
+grep -q SPS_TARGET_LIBRARY_PATH "$project_dir/bin/mkpkg" ||
+	fail 'mkpkg must put SPS_ROOT on LD_LIBRARY_PATH for just-built test programs'
 grep -q CONFIG_SITE "$project_dir/bin/mkpkg" ||
 	fail 'mkpkg must export CONFIG_SITE so autoconf sees SPS_ROOT LDFLAGS'
 grep -q 'sps_say "unpacking' "$project_dir/bin/pkin" ||

@@ -121,6 +121,8 @@
 /usr/bin/patch
 /usr/bin/diff
 /usr/sbin/grub-install
+/usr/sbin/efibootmgr
+/usr/bin/efibootmgr
 /usr/bin/grub-mkconfig
 /usr/sbin/grub-mkconfig
 /usr/bin/grub-probe

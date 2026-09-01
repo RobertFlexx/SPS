@@ -2162,10 +2162,27 @@ if [ "$setup_install_bootloader" -eq 1 ]; then
 			"--install-bootloader requires --disk; refusing to guess. See /root/sps-bootloader.txt"
 	printf '%s: grub-install %s (explicit)\n' "$sps_prog" "$setup_disk" >&2
 	if [ -d "$setup_root/boot/efi" ]; then
-		grub-install --target=x86_64-efi --efi-directory="$setup_root/boot/efi" \
-			--bootloader-id=SPS --boot-directory="$setup_root/boot" \
+		# Firmware fallback path: \EFI\BOOT\BOOTX64.EFI. This does not
+		# need efibootmgr or working NVRAM, which QEMU often lacks.
+		printf '%s: grub-install EFI removable (EFI/BOOT/BOOTX64.EFI)\n' \
+			"$sps_prog" >&2
+		grub-install --target=x86_64-efi \
+			--efi-directory="$setup_root/boot/efi" \
+			--boot-directory="$setup_root/boot" \
+			--removable --no-nvram \
 			"$setup_disk" ||
-			setup_fail "$SPS_EX_BUILD" "grub-install (EFI) failed"
+			setup_fail "$SPS_EX_BUILD" "grub-install (EFI removable) failed"
+		if command -v efibootmgr >/dev/null 2>&1; then
+			printf '%s: grub-install EFI Boot#### via efibootmgr\n' \
+				"$sps_prog" >&2
+			grub-install --target=x86_64-efi \
+				--efi-directory="$setup_root/boot/efi" \
+				--bootloader-id=SPS \
+				--boot-directory="$setup_root/boot" \
+				"$setup_disk" ||
+				printf '%s: efibootmgr NVRAM update failed; EFI/BOOT/BOOTX64.EFI is in place\n' \
+					"$sps_prog" >&2
+		fi
 	else
 		grub-install --target=i386-pc --boot-directory="$setup_root/boot" \
 			"$setup_disk" ||

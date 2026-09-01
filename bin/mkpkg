@@ -713,6 +713,17 @@ shell_quote()
 	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
+# Host tools must load the live disc's libraries, not SPS_ROOT. CPython's
+# `make` imports just-built _sqlite3.so against the sqlite on the target;
+# that needs LD_LIBRARY_PATH. gcc loading a half-installed libc from the
+# disk would abort the compiler. Restore the caller's LD_LIBRARY_PATH.
+write_host_ld_restore()
+{
+	printf '%s\n' 'LD_LIBRARY_PATH=$SPS_HOST_LD_LIBRARY_PATH'
+	printf '%s\n' 'export LD_LIBRARY_PATH'
+	printf '%s\n' '[ -n "$LD_LIBRARY_PATH" ] || unset LD_LIBRARY_PATH'
+}
+
 # gcc on PATH must inject -L/-isystem itself. Autoconf often runs `gcc`
 # without LDFLAGS, which is how alsa-utils printed "No linkable libasound
 # was found" after alsa-lib was already in SPS_ROOT.
@@ -723,6 +734,7 @@ write_cc_wrapper()
 	[ -n "$real_cc" ] && [ -x "$real_cc" ] || return 0
 	{
 		printf '%s\n' '#!/bin/sh'
+		write_host_ld_restore
 		printf 'exec %s -isystem %s -L%s -L%s -L%s -L%s -Wl,-rpath-link,%s -Wl,-rpath-link,%s "$@"\n' \
 			"$(shell_quote "$real_cc")" \
 			"$(shell_quote "$target_inc")" \
@@ -732,6 +744,19 @@ write_cc_wrapper()
 			"$(shell_quote "$target_root/lib")" \
 			"$(shell_quote "$target_root/usr/lib64")" \
 			"$(shell_quote "$target_root/usr/lib")"
+	} >"$wrapper_path"
+	chmod 755 "$wrapper_path"
+}
+
+write_host_tool_wrapper()
+{
+	wrapper_path=$1
+	real_tool=$2
+	[ -n "$real_tool" ] && [ -x "$real_tool" ] || return 0
+	{
+		printf '%s\n' '#!/bin/sh'
+		write_host_ld_restore
+		printf 'exec %s "$@"\n' "$(shell_quote "$real_tool")"
 	} >"$wrapper_path"
 	chmod 755 "$wrapper_path"
 }
@@ -764,8 +789,11 @@ fi
 # target, not only live /usr. Exporting LDFLAGS is not enough: autoconf
 # AC_CHECK_LIB often invokes `gcc conftest.c -lasound` with a cleared
 # environment. Wrappers named gcc/g++ on PATH inject -L/-isystem instead.
-# Do not set LD_LIBRARY_PATH to the target; that makes host gcc load a
-# half-installed libc from the disk.
+# CPython then *runs* the new _sqlite3.so (check_extension_modules) and
+# renames it to _sqlite3_failed if the loader picked the live disc's
+# older libsqlite3. LD_LIBRARY_PATH must include SPS_ROOT for that
+# import. Host gcc/python3/meson/git wrappers restore the previous
+# LD_LIBRARY_PATH so they do not load a half-installed libc from the disk.
 if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
 	target_root=$SPS_ROOT
 	target_inc=$target_root/usr/include
@@ -794,7 +822,11 @@ if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
 	C_INCLUDE_PATH=$target_inc${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}
 	CPLUS_INCLUDE_PATH=$target_inc${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}
 	LIBRARY_PATH=$target_libpath${LIBRARY_PATH:+:$LIBRARY_PATH}
-	export CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH
+	SPS_HOST_LD_LIBRARY_PATH=${LD_LIBRARY_PATH-}
+	SPS_TARGET_LIBRARY_PATH=$target_libpath
+	LD_LIBRARY_PATH=$target_libpath${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+	export CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH \
+		SPS_HOST_LD_LIBRARY_PATH SPS_TARGET_LIBRARY_PATH LD_LIBRARY_PATH
 
 	CPPFLAGS="$target_cflags${CPPFLAGS:+ $CPPFLAGS}"
 	CFLAGS="$target_cflags${CFLAGS:+ $CFLAGS}"
@@ -839,6 +871,11 @@ if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
 		CXX=$build_dir/run/g++
 		export CXX
 	fi
+	for host_tool in python3 python meson cmake git curl wget perl; do
+		host_tool_path=$(PATH=$host_path command -v "$host_tool" 2>/dev/null) ||
+			host_tool_path=
+		write_host_tool_wrapper "$build_dir/run/$host_tool" "$host_tool_path"
+	done
 
 	# Autoconf sources CONFIG_SITE before AC_CHECK_LIB. AM_PATH_ALSA
 	# (alsa-utils) only adds -L when --with-alsa-prefix is set; this

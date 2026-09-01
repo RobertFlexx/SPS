@@ -138,6 +138,7 @@ The phase environment provides:
 | `SRC` | Downloaded/copied sources and support trees |
 | `PKG` | Package staging root |
 | `MAKEJOBS` | Positive parallel-job count |
+| `SPS_TARGET_LIBRARY_PATH` | Target `lib64`/`lib` dirs when `SPS_ROOT` is not `/` |
 
 Typical build-system records look like:
 
@@ -165,6 +166,17 @@ Passing `-Dpython=false` to libxml2 2.15 is a meson error, not a compiler error.
 Use the upstream project's intended build system and supported options. Build
 commands run on the host; `mkpkg` is not a chroot and cannot prevent a bad
 command from modifying paths outside `$PKG`.
+
+When `SPS_ROOT` is a mounted disk (live `setup`), `mkpkg` puts that root on
+`LD_LIBRARY_PATH` so a just-built interpreter can import its own extensions
+against libraries already unpacked into the target. CPython's
+`check_extension_modules` will otherwise load the live disc's older
+`libsqlite3`, rename `_sqlite3` to `_sqlite3_failed`, and then `make install`
+dies on `sharedinstall`. Host `gcc`, `python3`, `meson`, and `git` wrappers
+restore the previous `LD_LIBRARY_PATH` so those tools do not load a
+half-installed libc from the disk. Shared libraries belong in `lib64` on
+this architecture; pass `--libdir=/usr/lib64` (or Meson's `--libdir=lib64`)
+instead of relying on Autoconf's `/usr/lib` default.
 
 ## Local files and patches
 

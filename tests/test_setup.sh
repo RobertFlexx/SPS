@@ -281,6 +281,12 @@ st=$?
 set -e
 [ "$st" -eq 2 ] || fail "--install-bootloader without --disk returned $st"
 contains "$(cat "$tmp/err")" '--disk'
+grep -q -- '--removable' "$setup" ||
+	fail 'EFI grub-install must write EFI/BOOT/BOOTX64.EFI'
+grep -q -- '--no-nvram' "$setup" ||
+	fail 'EFI removable grub-install must not require firmware NVRAM'
+grep -q efibootmgr "$setup" ||
+	fail 'EFI grub-install must use efibootmgr when it is on PATH'
 
 set +e
 "$setup" --non-interactive --no-update --target "$tmp/noformat" \
