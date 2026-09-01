@@ -154,10 +154,13 @@ install DESTDIR="$PKG" cmake --install build
 ```
 
 ```text
-configure meson setup build --prefix=/usr --buildtype=release
+configure meson setup build --prefix=/usr --libdir=lib64 --buildtype=release
 build meson compile -C build -j "$MAKEJOBS"
 install DESTDIR="$PKG" meson install -C build
 ```
+
+Meson feature options take `enabled`, `disabled`, or `auto`, not `true`/`false`.
+Passing `-Dpython=false` to libxml2 2.15 is a meson error, not a compiler error.
 
 Use the upstream project's intended build system and supported options. Build
 commands run on the host; `mkpkg` is not a chroot and cannot prevent a bad

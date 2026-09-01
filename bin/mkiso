@@ -24,7 +24,10 @@
 # this host does not ship, so the image is built with grub-mkimage and
 # xorriso.
 #
-# Seed toolchain (--no-seed to skip): gcc, headers, cmake, ninja, python.
+# Seed toolchain (--no-seed to skip): gcc, headers, cmake, ninja, python
+# stdlib, Meson (mesonbuild), Perl library. Host /usr/bin/meson is a
+# setuptools wrapper; mesonbuild lives under site-packages, not next
+# to the Python stdlib, so copying python3.12 is not enough.
 # Pass --core/--extra so the live image can build packages without cloning
 # the recipe repos. --with-go copies the official Go tree; gccgo on PATH
 # is too old for the Go recipes in extra.
@@ -322,6 +325,121 @@ mkiso_copy_gcc_deps()
 			mkiso_copy_so_deps "$mkiso_elf"
 		done
 	done
+}
+
+# Python's stdlib is under lib64; Meson is a pure-Python package under
+# /usr/lib/pythonX.Y/site-packages. Copying the interpreter and
+# lib64/pythonX.Y is not enough: that tree's site-packages is PyQt and
+# friends, not mesonbuild. The setuptools /usr/bin/meson then dies with
+# ModuleNotFoundError, which looks like a Python error at the first
+# meson recipe (often libxml2).
+mkiso_python_version()
+{
+	python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' \
+		2>/dev/null || printf '%s\n' 3.12
+}
+
+mkiso_copy_python_stdlib()
+{
+	mkiso_pyver=$(mkiso_python_version)
+	for mkiso_pylib in /usr/lib64/python$mkiso_pyver \
+		/usr/lib/python$mkiso_pyver
+	do
+		[ -d "$mkiso_pylib" ] || continue
+		printf '%s: copying Python %s stdlib from %s\n' \
+			"$sps_prog" "$mkiso_pyver" "$mkiso_pylib" >&2
+		for mkiso_pyent in "$mkiso_pylib"/*; do
+			[ -e "$mkiso_pyent" ] || continue
+			mkiso_pybase=${mkiso_pyent##*/}
+			case $mkiso_pybase in
+				test|idlelib|ensurepip|turtledemo|site-packages)
+					continue
+					;;
+			esac
+			mkiso_copy_path "$mkiso_pyent"
+		done
+		if [ -d "$mkiso_pylib/lib-dynload" ]; then
+			for mkiso_pyso in "$mkiso_pylib/lib-dynload"/*.so \
+				"$mkiso_pylib/lib-dynload"/*.so.*
+			do
+				[ -e "$mkiso_pyso" ] || continue
+				mkiso_copy_libs "$mkiso_pyso"
+			done
+		fi
+	done
+}
+
+# Install Meson as meson.py next to mesonbuild so it does not need
+# importlib.metadata or a setuptools egg-info (the host /usr/bin/meson
+# does). Same layout the meson recipe ships.
+mkiso_install_meson()
+{
+	mkiso_mod=
+	mkiso_mod=$(python3 -c 'import mesonbuild, os; print(os.path.dirname(mesonbuild.__file__))' \
+		2>/dev/null) || mkiso_mod=
+	if [ -z "$mkiso_mod" ] || [ ! -d "$mkiso_mod" ]; then
+		for mkiso_cand in \
+			/usr/lib/python*/site-packages/mesonbuild \
+			/usr/lib64/python*/site-packages/mesonbuild
+		do
+			[ -d "$mkiso_cand" ] || continue
+			mkiso_mod=$mkiso_cand
+			break
+		done
+	fi
+	[ -n "$mkiso_mod" ] && [ -d "$mkiso_mod" ] || return 0
+	printf '%s: copying Meson from %s\n' "$sps_prog" "$mkiso_mod" >&2
+	mkdir -p "$mkiso_live/usr/share/meson" "$mkiso_live/usr/bin"
+	rm -rf "$mkiso_live/usr/share/meson/mesonbuild"
+	cp -a --reflink=auto "$mkiso_mod" \
+		"$mkiso_live/usr/share/meson/mesonbuild" 2>/dev/null ||
+		cp -a "$mkiso_mod" "$mkiso_live/usr/share/meson/mesonbuild" 2>/dev/null ||
+		cp -R "$mkiso_mod" "$mkiso_live/usr/share/meson/mesonbuild"
+	cat >"$mkiso_live/usr/share/meson/meson.py" <<'EOF'
+#!/usr/bin/python3
+import sys
+from pathlib import Path
+meson_exe = Path(sys.argv[0]).resolve()
+if (meson_exe.parent / 'mesonbuild').is_dir():
+    sys.path.insert(0, str(meson_exe.parent))
+from mesonbuild import mesonmain
+if __name__ == '__main__':
+    sys.exit(mesonmain.main())
+EOF
+	chmod 755 "$mkiso_live/usr/share/meson/meson.py"
+	rm -f "$mkiso_live/usr/bin/meson"
+	ln -s ../share/meson/meson.py "$mkiso_live/usr/bin/meson"
+}
+
+mkiso_copy_cmake_data()
+{
+	printf '%s: copying CMake modules\n' "$sps_prog" >&2
+	for mkiso_cmake in /usr/share/cmake /usr/share/cmake-*
+	do
+		[ -e "$mkiso_cmake" ] || continue
+		mkiso_copy_path "$mkiso_cmake"
+	done
+}
+
+mkiso_copy_perl_lib()
+{
+	printf '%s: copying Perl library\n' "$sps_prog" >&2
+	for mkiso_perl in /usr/lib64/perl5 /usr/lib/perl5 \
+		/usr/share/perl5 /usr/share/perl
+	do
+		[ -e "$mkiso_perl" ] || continue
+		mkiso_copy_path "$mkiso_perl"
+	done
+}
+
+# Host /usr/include is copied so gcc can compile against libc. Optional
+# third-party headers on that tree make configure detect libraries the
+# disc does not ship (alsa-utils vs samplerate.h) or compile a recipe
+# against a different upstream version (host libxml2 vs the tarball).
+mkiso_prune_seed_headers()
+{
+	rm -f "$mkiso_live/usr/include/samplerate.h"
+	rm -rf "$mkiso_live/usr/include/libxml2"
 }
 
 mkiso_copy_mesa_deps()
@@ -754,6 +872,30 @@ mkiso_verify_compiler()
 		mkiso_verify_elf_in_live /usr/bin/ld.bfd
 	elif [ -e /usr/bin/ld ]; then
 		mkiso_verify_elf_in_live /usr/bin/ld
+	fi
+	# Meson is a Python program. The host driver is a setuptools
+	# wrapper; without mesonbuild and encodings, the first meson
+	# recipe dies with a traceback (libxml2's -Dpython= option is a
+	# second, separate failure).
+	if [ -e /usr/bin/meson ] || [ -L /usr/bin/meson ]; then
+		if [ ! -e "$mkiso_live/usr/share/meson/mesonbuild/mesonmain.py" ]
+		then
+			sps_die "$SPS_EX_PACKAGE" \
+				"seeded meson is missing mesonbuild"
+		fi
+		if [ ! -e "$mkiso_live/usr/bin/meson" ] &&
+			[ ! -L "$mkiso_live/usr/bin/meson" ]
+		then
+			sps_die "$SPS_EX_PACKAGE" \
+				"seeded meson wrapper is missing"
+		fi
+		mkiso_pyver=$(mkiso_python_version)
+		if [ ! -e "$mkiso_live/usr/lib64/python$mkiso_pyver/encodings/__init__.py" ] &&
+			[ ! -e "$mkiso_live/usr/lib/python$mkiso_pyver/encodings/__init__.py" ]
+		then
+			sps_die "$SPS_EX_PACKAGE" \
+				"seeded python is missing the encodings stdlib module"
+		fi
 	fi
 }
 
@@ -1486,6 +1628,7 @@ if [ "$mkiso_copy_seed" -eq 1 ] && [ -f "$mkiso_libdir/seed-bins" ]; then
 	mkiso_copy_path /usr/lib64/gcc
 	mkiso_copy_path /usr/lib/gcc
 	mkiso_copy_path /usr/include
+	mkiso_prune_seed_headers
 	# gcc and ld without glibc startfiles fail the first autoconf check
 	# with "C compiler cannot create executables". Runtime libc.so.6 is
 	# not enough; the linker needs crt1.o and the libc.so script.
@@ -1530,7 +1673,10 @@ if [ "$mkiso_copy_seed" -eq 1 ] && [ -f "$mkiso_libdir/seed-bins" ]; then
 	do
 		mkiso_copy_host_cmd "$mkiso_cmd" || :
 	done
-	mkiso_copy_path /usr/lib64/python3.12
+	mkiso_copy_python_stdlib
+	mkiso_install_meson
+	mkiso_copy_cmake_data
+	mkiso_copy_perl_lib
 	mkiso_copy_path /usr/share/terminfo
 	mkiso_copy_path /usr/share/zoneinfo
 	mkiso_copy_path /etc/ssl

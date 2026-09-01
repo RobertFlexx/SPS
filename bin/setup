@@ -1999,6 +1999,20 @@ if command -v gcc >/dev/null 2>&1; then
 	fi
 	rm -f "$setup_cc_out"
 fi
+# Meson recipes (libxml2 is the first for many desktop graphs) fail with
+# a Python traceback when mesonbuild is missing, or with a meson error
+# about option "python" when the recipe passes -Dpython=false.
+if command -v meson >/dev/null 2>&1; then
+	setup_meson_dir=${SPS_BUILD:-$setup_root/var/tmp/sps}
+	mkdir -p "$setup_meson_dir" ||
+		setup_fail "$SPS_EX_PERMISSION" "cannot create $setup_meson_dir"
+	setup_meson_log=$setup_meson_dir/sps-meson-probe.log
+	if ! meson --version >"$setup_meson_log" 2>&1; then
+		printf '%s: live meson cannot run\n' "$sps_prog" >&2
+		cat "$setup_meson_log" >&2
+		setup_fail "$SPS_EX_BUILD" "live meson cannot run"
+	fi
+fi
 # sget treats requested names as explicit world roots.
 # shellcheck disable=SC2086
 sget install $setup_pkgs ||

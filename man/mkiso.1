@@ -40,7 +40,14 @@ writes the live root only, for tests and inspection.
 .PP
 Host compiler tools can be copied into the image so
 .B setup
-can build packages from the bundled recipes. Pass
+can build packages from the bundled recipes. The seed includes gcc,
+the Python stdlib, Meson as
+.B meson.py
+next to
+.BR mesonbuild ,
+CMake modules, and the Perl library. Host
+.B /usr/bin/meson
+is a setuptools wrapper and is replaced. Pass
 .B --no-seed
 to omit them.
 .SH OPTIONS

@@ -235,6 +235,8 @@ grep -q '/tmp/.X11-unix' "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must create /tmp/.X11-unix for Xwayland'
 grep -q 'live gcc cannot create executables' "$project_dir/bin/setup" ||
 	fail 'setup must probe live gcc before the first package build'
+grep -q 'live meson cannot run' "$project_dir/bin/setup" ||
+	fail 'setup must probe live meson before the first meson package'
 grep -q 'copying disk tools for setup' "$mkiso" ||
 	fail 'mkiso must copy partition tools by command name'
 grep -q grub-install "$mkiso" ||
@@ -276,6 +278,22 @@ grep -q /usr/bin/msgfmt "$project_dir/lib/mkiso/seed-bins" ||
 	fail 'seeded ISO must include msgfmt for alsa-utils translations'
 grep -q /usr/bin/xgettext "$project_dir/lib/mkiso/seed-bins" ||
 	fail 'seeded ISO must include xgettext with the gettext tools'
+grep -q mkiso_install_meson "$mkiso" ||
+	fail 'seeded ISO must install mesonbuild next to meson.py'
+grep -q mkiso_copy_python_stdlib "$mkiso" ||
+	fail 'seeded ISO must copy the Python stdlib without host site-packages'
+grep -q 'seeded meson is missing mesonbuild' "$mkiso" ||
+	fail 'mkiso must refuse a disc whose meson cannot import mesonbuild'
+grep -q encodings "$mkiso" ||
+	fail 'mkiso must verify the Python encodings module landed'
+grep -q mkiso_copy_cmake_data "$mkiso" ||
+	fail 'seeded ISO must copy CMake modules'
+grep -q mkiso_copy_perl_lib "$mkiso" ||
+	fail 'seeded ISO must copy the Perl library for autoconf'
+grep -q mkiso_prune_seed_headers "$mkiso" ||
+	fail 'mkiso must drop host samplerate.h and libxml2 headers'
+grep -q samplerate.h "$mkiso" ||
+	fail 'mkiso must prune host samplerate.h from seeded includes'
 grep -q '/etc/file' "$mkiso" ||
 	fail 'mkiso must copy /etc/file magic used by this host file(1)'
 grep -q kactivitymanagerd "$project_dir/lib/mkiso/plasma-bins" ||

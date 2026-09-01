@@ -295,6 +295,8 @@ grep -q 'remount,rw,exec' "$project_dir/lib/setup/partition.sh" ||
 	fail 'setup must remount the target exec so autoconf can run conftest'
 grep -q 'live gcc cannot create executables' "$setup" ||
 	fail 'setup must probe live gcc before sget install'
+grep -q 'live meson cannot run' "$setup" ||
+	fail 'setup must probe live meson before sget install'
 
 plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init systemd \
 	--disable qol-cli --disable power --disable firmware)
