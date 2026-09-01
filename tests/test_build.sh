@@ -187,9 +187,10 @@ tar -xf "$sysroot_artifact" -C "$tmp/sysroot-extract"
 assert_equal "$tmp/buildroot" \
 	"$(cat "$tmp/sysroot-extract/usr/share/sysroot-probe/sysroot")" \
 	"SYSROOT was not set to the build root"
-case "$(cat "$tmp/sysroot-extract/usr/share/sysroot-probe/path")" in
-	"$tmp/buildroot/usr/bin:$tmp/buildroot/bin:"*) : ;;
-	*) fail "build root bin dirs were not first on PATH" ;;
+sysroot_path=$(cat "$tmp/sysroot-extract/usr/share/sysroot-probe/path")
+case $sysroot_path in
+	"$tmp/buildroot/usr/bin:$tmp/buildroot/bin:"*|*/run:"$tmp/buildroot/usr/bin:$tmp/buildroot/bin:"*) : ;;
+	*) fail "build root bin dirs were not on PATH ahead of the host ($sysroot_path)" ;;
 esac
 
 [ ! -e "$tmp/buildroot/usr/share/sysroot-probe" ] ||
@@ -244,6 +245,30 @@ EOF
 		fail "probe binary was not staged"
 	# The .so lives only under SPS_ROOT, so a successful link means gcc
 	# searched the target rather than the live /usr/lib64.
+
+	# Autoconf AC_CHECK_LIB often unsets LDFLAGS and invokes `gcc`
+	# from PATH. The wrapper named gcc must still find the target lib.
+	mkdir -p "$tmp/wrap-recipe" "$tmp/wrap-out"
+	cat >"$tmp/wrap-recipe/recipe" <<'EOF'
+name        target-cc-wrapper-probe
+version     1.0
+release     1
+arch        any
+description Confirms PATH gcc injects SPS_ROOT -L even without LDFLAGS
+configure   unset LDFLAGS CFLAGS CPPFLAGS LIBRARY_PATH
+configure   printf '%s\n' '#include <spsprobe.h>' 'int main(void){return sps_probe_lib();}' >"$WORK/probe.c"
+configure   gcc "$WORK/probe.c" -lspsprobe -o "$WORK/probe"
+install     mkdir -p "$PKG/usr/bin"
+install     cp "$WORK/probe" "$PKG/usr/bin/target-cc-wrapper-probe"
+install     chmod 755 "$PKG/usr/bin/target-cc-wrapper-probe"
+EOF
+	wrap_artifact=$(run_mkpkg --no-download --output "$tmp/wrap-out" \
+		"$tmp/wrap-recipe/recipe") ||
+		fail "target-root gcc wrapper probe failed to build"
+	mkdir "$tmp/wrap-extract"
+	tar -xf "$wrap_artifact" -C "$tmp/wrap-extract"
+	[ -x "$tmp/wrap-extract/usr/bin/target-cc-wrapper-probe" ] ||
+		fail "wrapper probe binary was not staged"
 fi
 
 printf '%s\n' 'test_build: ok'

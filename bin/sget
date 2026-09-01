@@ -502,7 +502,14 @@ sget_install()
             fi
 
             case ,$sget_roots, in *,"$sget_package",*) sget_reason=explicit ;; *) sget_reason=dependency ;; esac
-            SPS_INSTALL_REASON=$sget_reason pkin "$sget_artifact" ||
+            sget_pkin_flags=
+            if [ "${sget_verbose:-0}" -eq 1 ]; then
+                sget_pkin_flags=-v
+            elif [ "${sget_quiet:-0}" -eq 1 ]; then
+                sget_pkin_flags=-q
+            fi
+            # shellcheck disable=SC2086
+            SPS_INSTALL_REASON=$sget_reason pkin $sget_pkin_flags "$sget_artifact" ||
                 sps_die $? "installation failed for '$sget_package'"
         done <"$sget_work/todo"
     fi

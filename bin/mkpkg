@@ -707,23 +707,65 @@ WORK=$work_dir
 MAKEJOBS=$makejobs
 export PKG SRC WORK MAKEJOBS
 
+# Quote a path for a generated wrapper. SPS_ROOT is an absolute directory.
+shell_quote()
+{
+	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# gcc on PATH must inject -L/-isystem itself. Autoconf often runs `gcc`
+# without LDFLAGS, which is how alsa-utils printed "No linkable libasound
+# was found" after alsa-lib was already in SPS_ROOT.
+write_cc_wrapper()
+{
+	wrapper_path=$1
+	real_cc=$2
+	[ -n "$real_cc" ] && [ -x "$real_cc" ] || return 0
+	{
+		printf '%s\n' '#!/bin/sh'
+		printf 'exec %s -isystem %s -L%s -L%s -L%s -L%s -Wl,-rpath-link,%s -Wl,-rpath-link,%s "$@"\n' \
+			"$(shell_quote "$real_cc")" \
+			"$(shell_quote "$target_inc")" \
+			"$(shell_quote "$target_root/usr/lib64")" \
+			"$(shell_quote "$target_root/usr/lib")" \
+			"$(shell_quote "$target_root/lib64")" \
+			"$(shell_quote "$target_root/lib")" \
+			"$(shell_quote "$target_root/usr/lib64")" \
+			"$(shell_quote "$target_root/usr/lib")"
+	} >"$wrapper_path"
+	chmod 755 "$wrapper_path"
+}
+
 # A controlled build root runs each phase with the root's /usr/bin and /bin
 # ahead of the host PATH and exposes the root as $SYSROOT.  Recipes building a
 # staged toolchain use this to ensure their compiler, linker, and headers are
 # taken from the target root rather than the host, mirroring an LFS sysroot.
+wrapper_bin=
+if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
+	wrapper_bin=$build_dir/run
+fi
+
 if [ -n "$build_root" ]; then
-	run_env="PATH=$build_root/usr/bin:$build_root/bin:$PATH SYSROOT=$build_root"
+	if [ -n "$wrapper_bin" ]; then
+		run_env="PATH=$wrapper_bin:$build_root/usr/bin:$build_root/bin:$PATH SYSROOT=$build_root"
+	else
+		run_env="PATH=$build_root/usr/bin:$build_root/bin:$PATH SYSROOT=$build_root"
+	fi
 	say "using build root $build_root"
+elif [ -n "$wrapper_bin" ]; then
+	run_env="PATH=$wrapper_bin:$PATH"
 else
 	run_env=
 fi
 
 # Live setup builds into SPS_ROOT (a mounted disk) with the live compiler.
-# gcc and pkg-config search /usr unless they are pointed at packages pkin
-# already unpacked into the target. That is why alsa-utils configure found
-# host ALSA headers then died with "No linkable libasound was found" after
-# alsa-lib had been installed into the target, not the live root. The same
-# hole hits every later package that links a library from the target.
+# The live disc copies host /usr/include (so ALSA headers exist) but not
+# host libasound. gcc must search packages pkin already unpacked into the
+# target, not only live /usr. Exporting LDFLAGS is not enough: autoconf
+# AC_CHECK_LIB often invokes `gcc conftest.c -lasound` with a cleared
+# environment. Wrappers named gcc/g++ on PATH inject -L/-isystem instead.
+# Do not set LD_LIBRARY_PATH to the target; that makes host gcc load a
+# half-installed libc from the disk.
 if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
 	target_root=$SPS_ROOT
 	target_inc=$target_root/usr/include
@@ -737,6 +779,8 @@ if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
 	target_cflags="-I$target_inc"
 	target_ldflags="-L$target_root/usr/lib64 -L$target_root/usr/lib"
 	target_ldflags="$target_ldflags -L$target_root/lib64 -L$target_root/lib"
+	target_ldflags="$target_ldflags -Wl,-rpath-link,$target_root/usr/lib64"
+	target_ldflags="$target_ldflags -Wl,-rpath-link,$target_root/usr/lib"
 
 	PKG_CONFIG_SYSROOT_DIR=$target_root
 	PKG_CONFIG_LIBDIR=$target_pc
@@ -750,9 +794,7 @@ if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
 	C_INCLUDE_PATH=$target_inc${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}
 	CPLUS_INCLUDE_PATH=$target_inc${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}
 	LIBRARY_PATH=$target_libpath${LIBRARY_PATH:+:$LIBRARY_PATH}
-	LD_LIBRARY_PATH=$target_libpath${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-	export CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH \
-		LD_LIBRARY_PATH
+	export CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH
 
 	CPPFLAGS="$target_cflags${CPPFLAGS:+ $CPPFLAGS}"
 	CFLAGS="$target_cflags${CFLAGS:+ $CFLAGS}"
@@ -767,6 +809,36 @@ if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
 
 	ACLOCAL_PATH=$target_root/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}
 	export ACLOCAL_PATH
+
+	mkdir -p "$build_dir/run"
+	host_path=$PATH
+	if [ -n "$build_root" ]; then
+		host_path=$build_root/usr/bin:$build_root/bin:$PATH
+	fi
+	host_cc=$(PATH=$host_path command -v gcc 2>/dev/null) || host_cc=
+	host_cxx=$(PATH=$host_path command -v g++ 2>/dev/null) || host_cxx=
+	host_cc_alt=$(PATH=$host_path command -v cc 2>/dev/null) || host_cc_alt=
+	host_cxx_alt=$(PATH=$host_path command -v c++ 2>/dev/null) || host_cxx_alt=
+	write_cc_wrapper "$build_dir/run/gcc" "$host_cc"
+	write_cc_wrapper "$build_dir/run/g++" "$host_cxx"
+	if [ -z "$host_cc_alt" ] || [ "$host_cc_alt" = "$host_cc" ]; then
+		write_cc_wrapper "$build_dir/run/cc" "$host_cc"
+	else
+		write_cc_wrapper "$build_dir/run/cc" "$host_cc_alt"
+	fi
+	if [ -z "$host_cxx_alt" ] || [ "$host_cxx_alt" = "$host_cxx" ]; then
+		write_cc_wrapper "$build_dir/run/c++" "$host_cxx"
+	else
+		write_cc_wrapper "$build_dir/run/c++" "$host_cxx_alt"
+	fi
+	if [ -x "$build_dir/run/gcc" ]; then
+		CC=$build_dir/run/gcc
+		export CC
+	fi
+	if [ -x "$build_dir/run/g++" ]; then
+		CXX=$build_dir/run/g++
+		export CXX
+	fi
 
 	say "using $target_root for headers, libraries, and pkg-config"
 fi

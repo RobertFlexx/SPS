@@ -282,6 +282,8 @@ contains "$sget_all" FOO-BUILD-LINE
 contains "$sget_all" 'mkpkg: built libbar-2.1-1-any.pkg.tar'
 contains "$sget_all" 'pkin: installed libbar 2.1-1'
 contains "$sget_all" 'pkin: installed foo 4.7-2'
+contains "$sget_all" 'pkin: unpacking'
+contains "$sget_all" 'pkin: /usr/share/sps-test/foo'
 [ "$(cat "$tmp/root/usr/share/sps-test/foo")" = foo ] || fail 'foo payload missing'
 
 # Cached binary package: no build phases, no fake progress.
@@ -312,6 +314,7 @@ contains "$quiet_all" 'install quietpkg 1.0-1'
 contains "$quiet_all" 'pkin: installed quietpkg 1.0-1'
 omits "$quiet_all" QUIET-SHOULD-HIDE
 omits "$quiet_all" 'running build phase'
+omits "$quiet_all" 'pkin: /usr/share/sps-test/quietpkg'
 
 set +e
 sget -q install --reinstall --nodeps broken >"$tmp/qfail.stdout" 2>"$tmp/qfail.stderr"

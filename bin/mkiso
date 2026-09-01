@@ -912,6 +912,7 @@ mkiso_copy_plasma()
 [Daemon]
 Autolock=false
 LockOnResume=false
+LockOnStart=false
 Timeout=0
 EOF
 	# Host /etc/dbus-1 may already contain system-local.conf. live-plasma
@@ -1394,7 +1395,9 @@ if [ -d "$mkiso_modules" ]; then
 	for mkiso_mod in squashfs overlay loop isofs cdrom sr_mod sd_mod \
 		ahci nvme usb-storage xhci-pci ehci-hcd uhci-hcd \
 		virtio_blk virtio_pci virtio_scsi virtio_net \
-		nls_cp437 nls_iso8859-1 vfat fat crc32c libcrc32c
+		nls_cp437 nls_iso8859-1 vfat fat crc32c libcrc32c \
+		drm drm_kms_helper drm_shmem_helper drm_ttm_helper ttm \
+		virtio_dma_buf virtio_gpu bochs simpledrm
 	do
 		if command -v modprobe >/dev/null 2>&1; then
 			modprobe -D "$mkiso_mod" 2>/dev/null | while IFS= read -r mkiso_line

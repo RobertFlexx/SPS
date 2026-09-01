@@ -146,7 +146,7 @@ then
 		dbus-daemon --system --nofork --nopidfile --nosyslog \
 			>/run/sps-dbus.log 2>&1 &
 		n=0
-		while [ "$n" -lt 8 ]; do
+		while [ "$n" -lt 5 ]; do
 			if [ -S /run/dbus/system_bus_socket ] ||
 			   [ -S /var/run/dbus/system_bus_socket ]
 			then

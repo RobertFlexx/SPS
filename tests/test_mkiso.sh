@@ -98,6 +98,12 @@ grep -q C.UTF-8 "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must set a UTF-8 locale'
 grep -q kdedefaults "$layout/etc/sps/live-plasma" ||
 	fail 'live-plasma must seed kdedefaults for KSplash'
+grep -q 'Engine=none' "$layout/etc/sps/live-plasma" ||
+	fail 'live-plasma must disable KSplash so plasma_waitforname cannot hang'
+grep -q LockOnStart "$layout/etc/sps/live-plasma" ||
+	fail 'live-plasma must disable kscreenlocker LockOnStart'
+grep -q virtio_gpu "$project_dir/lib/mkiso/initrd-init" ||
+	fail 'initrd must load virtio_gpu so Plasma has DRM before switch_root'
 if grep -q 'export QT_QPA_PLATFORM=wayland' "$layout/etc/sps/live-plasma"
 then
 	fail 'live-plasma must not force QT_QPA_PLATFORM=wayland on KWin'
@@ -244,6 +250,12 @@ grep -q mkiso_copy_plasma_runtime_deps "$mkiso" ||
 	fail 'plasma ISO must ldd session helpers (kactivitymanagerd, greeter)'
 grep -q 'using .* for headers, libraries, and pkg-config' "$project_dir/bin/mkpkg" ||
 	fail 'mkpkg must compile against SPS_ROOT so setup can link target libs'
+grep -q write_cc_wrapper "$project_dir/bin/mkpkg" ||
+	fail 'mkpkg must wrap gcc so autoconf finds libraries in SPS_ROOT'
+grep -q 'sps_say "unpacking' "$project_dir/bin/pkin" ||
+	fail 'pkin must log unpacking'
+grep -q sps_verbose_say "$project_dir/bin/pkin" ||
+	fail 'pkin must have a verbose file-install path'
 grep -q mkiso_verify_setup_catalog "$mkiso" ||
 	fail 'mkiso must refuse extras/sets that name unpackaged recipes'
 if grep -E '^(htop|btop|tmux)[[:space:]]' "$project_dir/lib/setup/extras" |

@@ -33,28 +33,38 @@ chmod 700 "$XDG_RUNTIME_DIR"
 chmod 1777 /tmp /tmp/.X11-unix /tmp/.ICE-unix 2>/dev/null || :
 # startplasma reads this before KSplash. A missing file logs
 # QIODevice::readLineInto ... kdedefaults/package.
+# Engine=none skips ksplashqml. Engine=KSplashQML plus a missing
+# breeze splash makes plasma_waitforname hang forever: KWin is up
+# (black screen, cursor only) and the desktop never appears.
+mkdir -p /root/.config /root/.config/kdedefaults /etc/xdg
 if [ ! -s /root/.config/kdedefaults/package ]; then
 	printf '%s\n' 'org.kde.breeze.desktop' >/root/.config/kdedefaults/package
 fi
-if [ ! -s /root/.config/kdedefaults/ksplashrc ]; then
-	printf '%s\n' '[KSplash]' 'Engine=KSplashQML' \
-		'Theme=org.kde.breeze.desktop' >/root/.config/kdedefaults/ksplashrc
-fi
-# Live runs as root with no PAM stack. kscreenlocker_greet missing or
-# autolocking leaves KWin's lock surface up: black screen, cursor only.
-mkdir -p /etc/xdg /root/.config
+printf '%s\n' '[KSplash]' 'Engine=none' >/root/.config/kdedefaults/ksplashrc
+printf '%s\n' '[KSplash]' 'Engine=none' >/root/.config/ksplashrc
+# Live runs as root with no PAM stack. kscreenlocker autolock or
+# LockOnStart leaves KWin's lock surface up: black screen, cursor only.
 if [ ! -s /etc/xdg/kscreenlockerrc ]; then
 	printf '%s\n' \
 		'[Daemon]' \
 		'Autolock=false' \
 		'LockOnResume=false' \
+		'LockOnStart=false' \
 		'Timeout=0' >/etc/xdg/kscreenlockerrc
 fi
 if [ ! -s /root/.config/kscreenlockerrc ]; then
 	cp /etc/xdg/kscreenlockerrc /root/.config/kscreenlockerrc
+else
+	grep -q LockOnStart /root/.config/kscreenlockerrc ||
+		printf '%s\n' 'LockOnStart=false' >>/root/.config/kscreenlockerrc
+fi
+# Indexing a live overlay is slow and not useful.
+if [ ! -s /root/.config/baloofilerc ]; then
+	printf '%s\n' '[Basic Settings]' 'Indexing-Enabled=false' \
+		>/root/.config/baloofilerc
 fi
 if command -v fc-cache >/dev/null 2>&1; then
-	fc-cache -f >/dev/null 2>&1 || :
+	fc-cache >/dev/null 2>&1 || :
 fi
 
 # Live NVIDIA is nouveau. Keep the proprietary stack unloaded.
@@ -94,7 +104,7 @@ if command -v dbus-daemon >/dev/null 2>&1; then
 		dbus-daemon --system --nofork --nopidfile --nosyslog \
 			>/run/sps-dbus.log 2>&1 &
 		n=0
-		while [ "$n" -lt 8 ]; do
+		while [ "$n" -lt 5 ]; do
 			if [ -S /run/dbus/system_bus_socket ] ||
 			   [ -S /var/run/dbus/system_bus_socket ]
 			then
@@ -117,13 +127,19 @@ else
 fi
 if command -v seatd >/dev/null 2>&1; then
 	seatd -g video >/dev/null 2>&1 &
-	sleep 1
+	n=0
+	while [ "$n" -lt 5 ]; do
+		[ -S /run/seatd.sock ] && break
+		n=$((n + 1))
+		sleep 1
+	done
 fi
 
-# kwin_wayland needs a KMS node. live-rc loads virtio_gpu/bochs/qxl;
-# wait here so Plasma does not race the first DRM probe.
+# kwin_wayland needs a KMS node. GPU modules are loaded in the
+# initramfs and again in live-rc; wait briefly so Plasma does not
+# race the first DRM probe.
 n=0
-while [ "$n" -lt 10 ]; do
+while [ "$n" -lt 5 ]; do
 	if [ -e /dev/dri/card0 ] || [ -e /dev/dri/card1 ]; then
 		break
 	fi

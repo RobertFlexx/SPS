@@ -20,7 +20,18 @@ sps_load_config || exit $?
 
 sps_usage()
 {
-    printf '%s\n' 'usage: pkin [--explicit|--dependency] PACKAGE'
+    printf '%s\n' 'usage: pkin [-v|--verbose] [-q|--quiet] [--explicit|--dependency] PACKAGE'
+}
+
+sps_say()
+{
+    printf '%s: %s\n' "$sps_prog" "$*" >&2
+}
+
+sps_verbose_say()
+{
+    [ "${sps_verbose:-1}" -eq 1 ] || return 0
+    sps_say "$*"
 }
 
 sps_fail()
@@ -159,11 +170,20 @@ trap sps_cleanup 0
 trap 'exit 130' 1 2 3 15
 
 sps_reason=${SPS_INSTALL_REASON:-explicit}
-case ${1-} in
-    --explicit) sps_reason=explicit; shift ;;
-    --dependency) sps_reason=dependency; shift ;;
-    -h|--help) sps_usage; exit 0 ;;
-esac
+sps_verbose=1
+case ${SPS_QUIET-} in 1|yes|true) sps_verbose=0 ;; esac
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -v|--verbose) sps_verbose=1; shift ;;
+        -q|--quiet) sps_verbose=0; shift ;;
+        --explicit) sps_reason=explicit; shift ;;
+        --dependency) sps_reason=dependency; shift ;;
+        -h|--help) sps_usage; exit 0 ;;
+        --) shift; break ;;
+        -*) sps_fail 2 "unknown option '$1'" ;;
+        *) break ;;
+    esac
+done
 case $sps_reason in
     explicit|dependency) ;;
     *) sps_fail 2 "invalid install reason '$sps_reason'" ;;
@@ -240,6 +260,7 @@ for sps_control in .SPS/meta .SPS/files .SPS/hashes; do
 done
 
 # Extract only after member names pass validation, and always into a fresh tree.
+sps_say "unpacking ${sps_archive##*/}"
 if ! sps_archive_extract 2>"$sps_work/tar.error"; then
     sed 's/^/pkin: tar: /' "$sps_work/tar.error" >&2
     sps_fail 4 "cannot extract package archive '$sps_archive'"
@@ -510,6 +531,9 @@ done <"$sps_stage/.SPS/files"
 
 mkdir -p "$SPS_ROOT" || sps_fail 8 "cannot create target root '$SPS_ROOT'"
 
+sps_file_count=$(awk 'END { print NR + 0 }' "$sps_work/owned")
+sps_say "$sps_install_action $sps_name $sps_version-$sps_release ($sps_file_count files)"
+
 # Create directories first. Existing directories are shared, not exclusively
 # owned by a package.
 while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
@@ -542,6 +566,7 @@ while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
     sps_parent=${sps_target%/*}
     [ -n "$sps_parent" ] || sps_parent=/
     mkdir -p "$sps_parent" || sps_fail 8 "cannot create parent of /$sps_path"
+    sps_verbose_say "/$sps_path"
     if [ -L "$sps_source" ]; then
         sps_link_tmp=$(sps_mktemp_dir "$sps_parent" link) ||
             sps_fail 8 "cannot stage symlink /$sps_path"
