@@ -240,7 +240,11 @@ is reported as an orphan.
 A managed non-directory path has one SPS owner. `pkin` checks both the owner
 index and the target filesystem before writing a payload entry.
 
-An existing unowned file is a conflict. SPS does not silently claim it.
+An existing unowned file is a conflict unless it is already identical to the
+payload: the same symlink target, or a regular file with the same SHA-256
+digest. Identical paths are adopted so a live image can install `filesystem`
+over usr-merge links it already created. A different target or digest still
+fails.
 
 Directories are shared and are not stored in the exclusive owner index.
 Existing shared directories are not re-owned or chmodded just because another

@@ -165,6 +165,67 @@ printf '%s\n' administrator >"$root/usr/bin/occupied"
 expect_status 7 "$project_dir/bin/pkin" "$archive"
 [ "$(cat "$root/usr/bin/occupied")" = administrator ] || fail 'unowned collision was overwritten'
 
+# Identical unowned bytes are adopted. Live /bin -> usr/bin must not block
+# filesystem, but a different symlink target is still a conflict.
+fresh_root
+stage=$tmp/stage-identical-link
+mkdir -p "$stage/.SPS" "$stage/usr/bin" "$root/usr/bin"
+ln -s usr/bin "$stage/bin"
+ln -s usr/bin "$root/bin"
+printf '%s\n' same >"$stage/usr/bin/tool"
+printf '%s\n' same >"$root/usr/bin/tool"
+{
+    printf 'format\t1\n'
+    printf 'name\tidenticallink\nversion\t1.0\nrelease\t1\narch\tany\n'
+} >"$stage/.SPS/meta"
+: >"$stage/.SPS/files.tmp"
+(CDPATH= cd "$stage" && find . ! -name . ! -path './.SPS' ! -path './.SPS/*' -print) |
+sed 's#^\./##' | while IFS= read -r package_entry; do
+    if [ -d "$stage/$package_entry" ] && [ ! -L "$stage/$package_entry" ]; then
+        printf '%s/\n' "$package_entry"
+    else
+        printf '%s\n' "$package_entry"
+    fi
+done >"$stage/.SPS/files.tmp"
+LC_ALL=C sort "$stage/.SPS/files.tmp" >"$stage/.SPS/files"
+rm -f "$stage/.SPS/files.tmp"
+printf 'sha256\t%s\tusr/bin/tool\n' \
+    "$(sha256sum "$stage/usr/bin/tool" | awk '{ print $1 }')" \
+    >"$stage/.SPS/hashes"
+tar -C "$stage" -cf "$tmp/identicallink.pkg.tar" .
+run_sps "$project_dir/bin/pkin" "$tmp/identicallink.pkg.tar" >/dev/null ||
+    fail 'identical unowned symlink/file should be adopted'
+[ -L "$root/bin" ] || fail 'adopted usr-merge /bin was lost'
+[ "$(readlink "$root/bin")" = usr/bin ] || fail 'adopted /bin target changed'
+
+fresh_root
+stage=$tmp/stage-different-link
+mkdir -p "$stage/.SPS" "$stage/usr/bin" "$root/usr/sbin"
+ln -s usr/bin "$stage/bin"
+ln -s usr/sbin "$root/bin"
+printf '%s\n' same >"$stage/usr/bin/tool"
+{
+    printf 'format\t1\n'
+    printf 'name\tdifferentlink\nversion\t1.0\nrelease\t1\narch\tany\n'
+} >"$stage/.SPS/meta"
+: >"$stage/.SPS/files.tmp"
+(CDPATH= cd "$stage" && find . ! -name . ! -path './.SPS' ! -path './.SPS/*' -print) |
+sed 's#^\./##' | while IFS= read -r package_entry; do
+    if [ -d "$stage/$package_entry" ] && [ ! -L "$stage/$package_entry" ]; then
+        printf '%s/\n' "$package_entry"
+    else
+        printf '%s\n' "$package_entry"
+    fi
+done >"$stage/.SPS/files.tmp"
+LC_ALL=C sort "$stage/.SPS/files.tmp" >"$stage/.SPS/files"
+rm -f "$stage/.SPS/files.tmp"
+printf 'sha256\t%s\tusr/bin/tool\n' \
+    "$(sha256sum "$stage/usr/bin/tool" | awk '{ print $1 }')" \
+    >"$stage/.SPS/hashes"
+tar -C "$stage" -cf "$tmp/differentlink.pkg.tar" .
+expect_status 7 "$project_dir/bin/pkin" "$tmp/differentlink.pkg.tar"
+[ "$(readlink "$root/bin")" = usr/sbin ] || fail 'different symlink target was replaced'
+
 fresh_root
 archive=$(make_basic redirected 1.0)
 outside=$tmp/outside-target

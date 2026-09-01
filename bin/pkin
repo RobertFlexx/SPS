@@ -503,9 +503,35 @@ fi
 LC_ALL=C sort -u "$sps_work/self-owned" -o "$sps_work/self-owned"
 comm -23 "$sps_work/owned" "$sps_work/self-owned" >"$sps_work/unowned"
 
+# Live images and other bootstraps often already contain usr-merge
+# symlinks and identical static files. Claiming the same bytes is not
+# a hijack; a different target or digest still is.
+sps_payload_matches_existing()
+{
+    sps_match_path=$1
+    sps_match_target=$2
+    sps_match_source=$sps_stage/$sps_match_path
+    if [ -L "$sps_match_source" ] && [ -L "$sps_match_target" ]; then
+        [ "$(readlink "$sps_match_source")" = "$(readlink "$sps_match_target")" ]
+        return $?
+    fi
+    if [ -f "$sps_match_source" ] && [ ! -L "$sps_match_source" ] &&
+       [ -f "$sps_match_target" ] && [ ! -L "$sps_match_target" ]
+    then
+        sps_match_new=$(sps_sha256 "$sps_match_source") || return 1
+        sps_match_old=$(sps_sha256 "$sps_match_target") || return 1
+        [ "$sps_match_new" = "$sps_match_old" ]
+        return $?
+    fi
+    return 1
+}
+
 while IFS= read -r sps_path || [ -n "$sps_path" ]; do
     sps_target_path "$sps_path"
     if sps_exists "$sps_target"; then
+        if sps_payload_matches_existing "$sps_path" "$sps_target"; then
+            continue
+        fi
         sps_fail 7 "/$sps_path exists and is not owned by an installed package"
     fi
 done <"$sps_work/unowned"
