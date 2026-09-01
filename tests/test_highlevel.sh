@@ -73,6 +73,15 @@ sget upgrade >"$tmp/upgrade.out"
 reinstall=$(sget install --reinstall app)
 contains "$reinstall" 'using cached app-1.0-1-any.pkg.tar'
 
+# A cache filename is not enough to prove that an artifact matches the
+# current recipe/support tree. Rebuild an unchanged version when its package
+# definition changes, rather than reusing a stale library from an earlier
+# live-setup attempt.
+printf '%s\n' '# definition changed without a release bump' >>"$repo/app/recipe"
+src update >/dev/null
+reinstall=$(sget install --reinstall app)
+contains "$reinstall" 'discarding stale cached app-1.0-1-any.pkg.tar'
+
 # Do not trust the cache filename. A different valid package under this name
 # must be rejected before pkin sees it.
 app_cache=$(find "$cache/packages" -type f -name 'app-1.0-1-any.pkg.tar*' | head -1)

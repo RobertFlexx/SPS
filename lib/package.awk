@@ -57,13 +57,17 @@ function sps_meta_line(line,    pos, key, value, controls) {
     sps_meta_count[key]++
     if (!(key in sps_meta_first))
         sps_meta_first[key] = value
-    if ((key == "format" || key == "name" || key == "version" ||
-         key == "release" || key == "arch") && sps_meta_count[key] > 1) {
+    if ((key == "format" || key == "definition_sha256" || key == "name" ||
+         key == "version" || key == "release" || key == "arch") &&
+        sps_meta_count[key] > 1) {
         sps_diag("duplicate metadata key '" key "'")
         return 1
     }
     if (key == "format" && value != "1")
         sps_diag("unsupported package format '" value "'")
+    if (key == "definition_sha256" &&
+        (value !~ /^[0123456789abcdef]+$/ || length(value) != 64))
+        sps_diag("invalid package definition digest")
     if (key == "name" && !sps_valid_name(value))
         sps_diag("invalid package name '" value "'")
     if ((key == "version" || key == "release") &&

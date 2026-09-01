@@ -246,7 +246,7 @@ command -v mktemp >/dev/null 2>&1 || die "mktemp is required"
 recipe_dir=$(CDPATH= cd "$(dirname "$recipe")" 2>/dev/null && pwd) ||
 	die "cannot enter recipe directory"
 recipe_file=$recipe_dir/$(basename "$recipe")
-sps_definition_sha256 "$recipe_file" >/dev/null ||
+definition_sha256=$(sps_definition_sha256 "$recipe_file") ||
 	die_status 4 "invalid package definition support inputs"
 default_arch=${SPS_ARCH:-}
 if [ -z "$default_arch" ]; then
@@ -957,8 +957,11 @@ meta=$stage_dir/.SPS/meta
 files=$stage_dir/.SPS/files
 file_hashes=$stage_dir/.SPS/hashes
 
-awk -F '\t' '
-BEGIN { print "format\t1" }
+awk -F '\t' -v definition_sha256="$definition_sha256" '
+BEGIN {
+	print "format\t1"
+	print "definition_sha256\t" definition_sha256
+}
 $1 == "name" || $1 == "version" || $1 == "release" || $1 == "arch" ||
 $1 == "description" {
 	scalar[$1] = $0

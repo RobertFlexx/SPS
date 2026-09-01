@@ -143,11 +143,16 @@ etc/...
 
 ```text
 format 1
+definition_sha256 VALUE
 name VALUE
 version VALUE
 release VALUE
 arch VALUE
 ```
+
+`definition_sha256` binds a built artifact to the indexed recipe and its
+support files. `sget` rebuilds a cached artifact when this digest is absent or
+does not match, even when name, version, and release are unchanged.
 
 `.SPS/files` is a sorted list of normalized payload paths. Directory entries
 end in `/`.

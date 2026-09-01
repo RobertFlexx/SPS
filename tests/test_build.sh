@@ -84,7 +84,10 @@ $1 == "name" && $2 == "hello-sps" { name = 1 }
 $1 == "version" && $2 == "1.0" { version = 1 }
 $1 == "release" && $2 == "1" { release = 1 }
 $1 == "arch" && $2 == "any" { arch = 1 }
-END { exit !(format && name && version && release && arch) }
+$1 == "definition_sha256" && $2 ~ /^[0-9a-f]+$/ && length($2) == 64 {
+	definition = 1
+}
+END { exit !(format && name && version && release && arch && definition) }
 ' "$tmp/extract/.SPS/meta" || fail "package metadata is incomplete"
 
 cat >"$tmp/expected-files" <<'EOF'

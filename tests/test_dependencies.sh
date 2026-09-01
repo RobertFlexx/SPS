@@ -167,6 +167,7 @@ contains "$(cat "$tmp/explicit.out")" 'explicit'
 
 cat > "$tmp/fakebin/mkpkg" <<'EOF_FAKE_MKPKG'
 #!/bin/sh
+. "$SPS_LIBDIR/common.sh"
 printf "mkpkg\t%s\n" "$PWD" >> "$TEST_LOG"
 artifact_file=
 recipe=recipe
@@ -200,10 +201,12 @@ version=$(awk '$1=="version" {print $2; exit}' "$recipe")
 release=$(awk '$1=="release" {print $2; exit}' "$recipe")
 arch=$(awk '$1=="arch" {print $2; exit}' "$recipe")
 [ -n "$arch" ] || arch=$(uname -m)
+definition_sha256=$(sps_definition_sha256 "$recipe") || exit 4
 work=$PWD/.fakepkg.$$
 mkdir -p "$work/.SPS"
-printf "format\t1\nname\t%s\nversion\t%s\nrelease\t%s\narch\t%s\n" \
-    "$name" "$version" "$release" "$arch" > "$work/.SPS/meta"
+printf "format\t1\ndefinition_sha256\t%s\nname\t%s\nversion\t%s\nrelease\t%s\narch\t%s\n" \
+    "$definition_sha256" "$name" "$version" "$release" "$arch" \
+    > "$work/.SPS/meta"
 : > "$work/.SPS/files"
 : > "$work/.SPS/hashes"
 artifact=$PWD/$name-$version-$release-$arch.pkg.tar

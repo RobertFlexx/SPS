@@ -222,6 +222,7 @@ sget_verify_artifact_identity()
     sget_verify_version=$3
     sget_verify_release=$4
     sget_verify_arch=$5
+    sget_verify_definition=${6-}
 
     case $sget_verify_archive in
         *.tar.gz|*.tgz)
@@ -254,7 +255,15 @@ sget_verify_artifact_identity()
     [ "$1" = "$sget_verify_name" ] &&
     [ "$2" = "$sget_verify_version" ] &&
     [ "$3" = "$sget_verify_release" ] &&
-    [ "$4" = "$sget_verify_arch" ]
+    [ "$4" = "$sget_verify_arch" ] || return 1
+
+    [ -n "$sget_verify_definition" ] || return 0
+    sget_verify_cached_definition=$(printf '%s\n' "$sget_verify_meta" |
+        awk -v sps_action=meta-get -v sps_key_name=definition_sha256 \
+            -v sps_program=sget -f "$SPS_LIBDIR/package.awk" 2>/dev/null) ||
+        return 2
+    [ "$sget_verify_cached_definition" = "$sget_verify_definition" ] ||
+        return 2
 }
 
 # Set by the upgrade path.
@@ -462,12 +471,31 @@ sget_install()
                 fi
             done
             if [ -n "$sget_artifact" ]; then
+                sget_cache_status=0
                 sget_verify_artifact_identity "$sget_artifact" "$sget_package" \
-                    "$sget_version" "$sget_release" "$sget_arch" ||
-                    sps_die "$SPS_EX_PACKAGE" "cached artifact identity is invalid for '$sget_package': $sget_artifact"
-                sget_note "binary cache hit"
-                printf '%s: using cached %s\n' "$sps_prog" "${sget_artifact##*/}"
-            else
+                    "$sget_version" "$sget_release" "$sget_arch" \
+                    "$sget_recipe_hash" || sget_cache_status=$?
+                case $sget_cache_status in
+                    0)
+                        sget_note "binary cache hit"
+                        printf '%s: using cached %s\n' \
+                            "$sps_prog" "${sget_artifact##*/}"
+                        ;;
+                    2)
+                        printf '%s: discarding stale cached %s\n' \
+                            "$sps_prog" "${sget_artifact##*/}"
+                        rm -f "$sget_artifact" ||
+                            sps_die "$SPS_EX_PERMISSION" \
+                                "cannot replace stale cache artifact: $sget_artifact"
+                        sget_artifact=
+                        ;;
+                    *)
+                        sps_die "$SPS_EX_PACKAGE" \
+                            "cached artifact identity is invalid for '$sget_package': $sget_artifact"
+                        ;;
+                esac
+            fi
+            if [ -z "$sget_artifact" ]; then
                 sget_note "binary cache miss"
                 sget_note "building $sget_recipe_dir"
                 sget_artifact_file=$sget_work/artifact-$sget_package
@@ -497,7 +525,8 @@ sget_install()
                 [ -f "$sget_artifact" ] ||
                     sps_die "$SPS_EX_BUILD" "mkpkg artifact for '$sget_package' is missing: $sget_artifact"
                 sget_verify_artifact_identity "$sget_artifact" "$sget_package" \
-                    "$sget_version" "$sget_release" "$sget_arch" ||
+                    "$sget_version" "$sget_release" "$sget_arch" \
+                    "$sget_recipe_hash" ||
                     sps_die "$SPS_EX_PACKAGE" "mkpkg produced the wrong package identity for '$sget_package'"
             fi
 
