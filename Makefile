@@ -29,6 +29,11 @@ lint:
 		[ -f $$library ] || continue; \
 		$(POSIX_SHELL) -n $$library; \
 	done
+	@set -e; for script in lib/setup/sv/runit/*/run lib/setup/sv/s6/*/run \
+		lib/setup/sv/openrc/*; do \
+		[ -f $$script ] || continue; \
+		$(POSIX_SHELL) -n $$script; \
+	done
 	@set -e; for script in lib/mkiso/initrd-init lib/mkiso/live-rc \
 		lib/mkiso/live-plasma lib/mkiso/live-plasma-session \
 		lib/mkiso/live-init lib/mkiso/udhcpc-script; do \
@@ -190,6 +195,20 @@ install:
 		[ -f "$$f" ] || continue; \
 		install -m 0644 $$f "$(DESTDIR)$(LIBDIR)/setup/"; \
 	done
+	@set -e; \
+	if [ -d lib/setup/sv ]; then \
+		find lib/setup/sv -type d | while read -r d; do \
+			install -d "$(DESTDIR)$(LIBDIR)/setup/$${d#lib/setup/}"; \
+		done; \
+		find lib/setup/sv -type f | while read -r f; do \
+			mode=0644; \
+			case $$f in \
+				*/sv/openrc/*|*/sv/runit/*/run|*/sv/runit/*/finish|*/sv/s6/*/run|*/sv/s6/*/finish) \
+					mode=0755 ;; \
+			esac; \
+			install -m $$mode $$f "$(DESTDIR)$(LIBDIR)/setup/$${f#lib/setup/}"; \
+		done; \
+	fi
 
 # Configuration is separate so installation never overwrites administrator
 # policy. Existing files are deliberately left untouched.

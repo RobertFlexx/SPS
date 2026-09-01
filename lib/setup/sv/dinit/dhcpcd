@@ -1,0 +1,4 @@
+type = process
+command = /usr/sbin/dhcpcd --nobackground
+restart = true
+smooth-recovery = true

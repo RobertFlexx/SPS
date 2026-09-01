@@ -1,0 +1,11 @@
+[Unit]
+Description=Simple Desktop Display Manager
+After=dbus.service
+Wants=dbus.service
+
+[Service]
+ExecStart=/usr/bin/sddm
+Restart=on-failure
+
+[Install]
+WantedBy=graphical.target

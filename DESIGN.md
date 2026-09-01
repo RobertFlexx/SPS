@@ -87,6 +87,19 @@ post-remove
 
 Hook entries must be regular files, not symlinks.
 
+`pkin` always attempts to enable a mapped service after a successful
+post-install. The map is `$SPS_LIBDIR/setup/services`. The init name is
+read from `$SPS_ROOT/etc/sps/init`. Supported names are `systemd`,
+`openrc`, `s6`, `runit`, `dinit`, and `shepherd`. When the package did
+not ship a file for that init, a stock script is copied from
+`$SPS_LIBDIR/setup/sv/<init>/` and then enabled. Unknown packages and
+`init` set to `none` are no-ops.
+
+`setup --init` installs the matching `init-*` metapackage, drops
+conflicting PID 1 packages from the plan, writes `/etc/sps/init` and
+`/etc/sps/sps.conf` before the first `sget`, and enables every mapped
+service that is present (or can be filled from stock scripts).
+
 ## Repository index
 
 Indexes live under `$SPS_CACHE/indexes`. Each package record is tab-separated

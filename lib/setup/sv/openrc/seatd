@@ -1,0 +1,6 @@
+#!/sbin/openrc-run
+description="seat management daemon"
+command="/usr/bin/seatd"
+command_args="-g video"
+command_background="yes"
+pidfile="/run/seatd.pid"

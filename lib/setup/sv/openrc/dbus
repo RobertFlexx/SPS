@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+description="D-Bus system message bus"
+command="/usr/bin/dbus-daemon"
+command_args="--system --nofork --nopidfile --nosyslog"
+command_background="yes"
+pidfile="/run/dbus.pid"
+
+depend() {
+	need localmount
+	provide dbus
+}
+
+start_pre() {
+	mkdir -p /run/dbus /var/lib/dbus
+}

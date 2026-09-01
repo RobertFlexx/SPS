@@ -33,6 +33,13 @@ new packaged default changed, it is written beside the file as
 Visible package hooks may run before/after install or upgrade. A failing
 pre-install hook aborts before payload installation. A failing post-install
 hook returns status 10 after committed package state and history are retained.
+After a successful post-install,
+.B pkin
+enables a mapped service for the init recorded in
+.I $SPS_ROOT/etc/sps/init
+(systemd, OpenRC, s6, runit, dinit, or Shepherd). Stock scripts under
+.I $SPS_LIBDIR/setup/sv
+are copied when the package did not ship a file for that init.
 .SH OWNERSHIP
 When run as uid 0, new payload files and package-created directories are
 normalized to uid/gid 0 while keeping their packaged modes. Existing shared

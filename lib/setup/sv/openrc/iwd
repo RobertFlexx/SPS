@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="iNet wireless daemon"
+command="/usr/libexec/iwd"
+command_background="yes"
+pidfile="/run/iwd.pid"
+
+depend() {
+	need dbus
+	after dbus
+	provide net
+}

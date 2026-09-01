@@ -1,0 +1,5 @@
+type = process
+command = /usr/bin/wireplumber
+restart = true
+smooth-recovery = true
+depends-on = dbus

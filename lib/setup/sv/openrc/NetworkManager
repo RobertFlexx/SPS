@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+description="NetworkManager"
+command="/usr/sbin/NetworkManager"
+command_args="--no-daemon"
+command_background="yes"
+pidfile="/run/NetworkManager.pid"
+
+depend() {
+	need dbus
+	after dbus
+	provide net
+}

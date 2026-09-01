@@ -1,5 +1,5 @@
 #!/bin/sh
-# setup service map: enable systemd units and OpenRC scripts in a fake root.
+# setup service map: enable systemd, OpenRC, and supervision inits in a fake root.
 
 set -eu
 
@@ -69,6 +69,42 @@ chmod 755 "$root/etc/init.d/sshd"
 setup_service_hook_enable || fail 'hook_enable with openrc failed'
 [ -L "$root/etc/runlevels/default/sshd" ] ||
 	fail 'openssh hook did not enable sshd for OpenRC'
+
+# Stock scripts are copied when the package did not ship this init's file.
+root2=$tmp/stock
+mkdir -p "$root2/etc/sps"
+printf '%s\n' runit >"$root2/etc/sps/init"
+enabled=$(setup_service_enable_one "$root2" runit sddm) ||
+	fail 'runit enable of sddm from stock scripts failed'
+[ -f "$root2/etc/sv/sddm/run" ] || fail 'stock runit sddm/run was not copied'
+[ -L "$root2/etc/runit/runsvdir/default/sddm" ] ||
+	fail 'runit sddm was not linked into runsvdir/default'
+
+enabled=$(setup_service_enable_one "$root2" s6 dbus) ||
+	fail 's6 enable of dbus from stock scripts failed'
+[ -f "$root2/etc/s6/sv/dbus/run" ] || fail 'stock s6 dbus/run was not copied'
+[ -L "$root2/etc/s6/enabled/dbus" ] || fail 's6 dbus was not linked into enabled'
+
+enabled=$(setup_service_enable_one "$root2" dinit NetworkManager) ||
+	fail 'dinit enable of NetworkManager from stock scripts failed'
+[ -f "$root2/etc/dinit.d/NetworkManager" ] ||
+	fail 'stock dinit NetworkManager was not copied'
+[ -L "$root2/etc/dinit.d/boot.d/NetworkManager" ] ||
+	fail 'dinit NetworkManager was not linked into boot.d'
+
+enabled=$(setup_service_enable_one "$root2" shepherd sshd) ||
+	fail 'shepherd enable of sshd from stock scripts failed'
+[ -f "$root2/etc/shepherd.d/sshd.scm" ] ||
+	fail 'stock shepherd sshd.scm was not copied'
+
+# Do not overwrite a package-shipped run script.
+mkdir -p "$root2/etc/sv/sshd"
+printf '%s\n' '#!/bin/sh' 'exec /opt/custom/sshd' >"$root2/etc/sv/sshd/run"
+chmod 755 "$root2/etc/sv/sshd/run"
+setup_service_enable_one "$root2" runit openssh >/dev/null ||
+	fail 'runit enable of shipped sshd failed'
+grep -q '/opt/custom/sshd' "$root2/etc/sv/sshd/run" ||
+	fail 'stock runit script overwrote a package-shipped run file'
 
 if grep -q '^package[[:space:]]*elogind' "$project_dir/lib/setup/sets/power.set"
 then

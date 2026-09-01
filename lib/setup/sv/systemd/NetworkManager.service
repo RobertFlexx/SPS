@@ -1,0 +1,11 @@
+[Unit]
+Description=NetworkManager
+After=dbus.service
+Wants=dbus.service
+
+[Service]
+ExecStart=/usr/sbin/NetworkManager --no-daemon
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

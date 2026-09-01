@@ -1,0 +1,5 @@
+type = process
+command = /usr/sbin/NetworkManager --no-daemon
+restart = true
+smooth-recovery = true
+depends-on = dbus

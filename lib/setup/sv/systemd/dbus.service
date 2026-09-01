@@ -1,0 +1,10 @@
+[Unit]
+Description=D-Bus system message bus
+
+[Service]
+ExecStartPre=/bin/sh -c 'mkdir -p /run/dbus /var/lib/dbus'
+ExecStart=/usr/bin/dbus-daemon --system --nofork --nopidfile --nosyslog
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

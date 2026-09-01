@@ -48,3 +48,33 @@ created=$(sps_mktemp_dir "$tmp" common)
 [ -d "$created" ]
 
 printf '%s\n' 'common configuration tests passed'
+
+# Rest-of-line compiler flags, march none, and makejobs auto.
+{
+	printf '%s\n' 'makejobs auto'
+	printf '%s\n' 'cflags -O2 -pipe -fno-lto'
+	printf '%s\n' 'cxxflags -O2 -pipe -fno-lto'
+	printf '%s\n' 'march none'
+} > "$config_file"
+unset SPS_MAKEJOBS SPS_CFLAGS SPS_CXXFLAGS SPS_MARCH CFLAGS CXXFLAGS
+SPS_ROOT=$test_root
+SPS_CONFIG=$config_file
+SPS_REPOS_CONFIG=$repos_file
+export SPS_ROOT SPS_CONFIG SPS_REPOS_CONFIG
+sps_load_config
+case $SPS_MAKEJOBS in
+	''|*[!0-9]*|0) printf '%s\n' "makejobs auto produced '$SPS_MAKEJOBS'" >&2; exit 1 ;;
+esac
+[ "$CFLAGS" = '-O2 -pipe -fno-lto' ] || {
+	printf '%s\n' "cflags rest-of-line failed: '$CFLAGS'" >&2
+	exit 1
+}
+[ "$CXXFLAGS" = '-O2 -pipe -fno-lto' ] || {
+	printf '%s\n' "cxxflags rest-of-line failed: '$CXXFLAGS'" >&2
+	exit 1
+}
+case $CFLAGS in
+	*-march=*) printf '%s\n' "march none still added -march: '$CFLAGS'" >&2; exit 1 ;;
+esac
+
+printf '%s\n' 'compiler flag configuration tests passed'

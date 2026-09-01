@@ -278,6 +278,12 @@ grep -q /usr/bin/msgfmt "$project_dir/lib/mkiso/seed-bins" ||
 	fail 'seeded ISO must include msgfmt for alsa-utils translations'
 grep -q /usr/bin/xgettext "$project_dir/lib/mkiso/seed-bins" ||
 	fail 'seeded ISO must include xgettext with the gettext tools'
+grep -q /usr/bin/pod2man "$project_dir/lib/mkiso/seed-bins" ||
+	fail 'seeded ISO must include pod2man for OpenSSL and Perl docs'
+grep -q 'seeded live gcc is missing pod2man' "$mkiso" ||
+	fail 'mkiso must refuse a disc whose host has pod2man but the image does not'
+grep -q sps_print_default_conf "$mkiso" ||
+	fail 'mkiso must write a default sps.conf with compiler flags'
 grep -q mkiso_install_meson "$mkiso" ||
 	fail 'seeded ISO must install mesonbuild next to meson.py'
 grep -q mkiso_copy_python_stdlib "$mkiso" ||

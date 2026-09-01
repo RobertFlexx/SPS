@@ -826,6 +826,14 @@ if ! sps_run_hook post-install; then
     exit 10
 fi
 
+# Enable a mapped service for the init recorded in $SPS_ROOT/etc/sps/init.
+# Stock scripts are copied when the package did not ship this init's file.
+if [ -f "$SPS_LIBDIR/setup/service.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$SPS_LIBDIR/setup/service.sh"
+    setup_service_hook_enable || :
+fi
+
 if [ -n "$sps_old_version" ]; then
     printf '%s: upgraded %s %s-%s -> %s-%s\n' "$sps_prog" "$sps_name" \
         "$sps_old_version" "$sps_old_release" "$sps_version" "$sps_release"

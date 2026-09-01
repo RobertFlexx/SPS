@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="PipeWire multimedia server"
+command="/usr/bin/pipewire"
+command_background="yes"
+pidfile="/run/pipewire.pid"
+
+depend() {
+	need dbus
+	after dbus
+}

@@ -1,0 +1,11 @@
+[Unit]
+Description=PipeWire multimedia server
+After=dbus.service
+Wants=dbus.service
+
+[Service]
+ExecStart=/usr/bin/pipewire
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

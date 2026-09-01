@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="WirePlumber session manager"
+command="/usr/bin/wireplumber"
+command_background="yes"
+pidfile="/run/wireplumber.pid"
+
+depend() {
+	need dbus
+	after dbus
+}

@@ -1,0 +1,11 @@
+[Unit]
+Description=Power profiles daemon
+After=dbus.service
+Wants=dbus.service
+
+[Service]
+ExecStart=/usr/libexec/power-profiles-daemon
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

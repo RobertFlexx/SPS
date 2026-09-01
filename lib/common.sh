@@ -504,6 +504,39 @@ sps_repo_lines()
 	done
 }
 
+# Number of CPUs for makejobs auto. Never prints zero or a non-integer.
+sps_nproc()
+{
+	sps_n=
+	if command -v nproc >/dev/null 2>&1; then
+		sps_n=$(nproc 2>/dev/null) || sps_n=
+	fi
+	if [ -z "$sps_n" ] && command -v getconf >/dev/null 2>&1; then
+		sps_n=$(getconf _NPROCESSORS_ONLN 2>/dev/null) || sps_n=
+	fi
+	case $sps_n in
+		''|*[!0-9]*|0) printf '%s\n' 1 ;;
+		*) printf '%s\n' "$sps_n" ;;
+	esac
+}
+
+# Default sps.conf written onto live images and into a fresh target before
+# the first sget. Flags occupy the rest of the line; see sps.conf(5).
+sps_print_default_conf()
+{
+	printf '%s\n' \
+		'db /var/lib/sps' \
+		'cache /var/cache/sps' \
+		'build /var/tmp/sps' \
+		'repo_root /usr/src/sps' \
+		'makejobs auto' \
+		'cflags -O2 -pipe' \
+		'cxxflags -O2 -pipe' \
+		'march native' \
+		'compression auto' \
+		'preserve etc'
+}
+
 sps_load_config()
 {
 	[ "${SPS_ROOT+x}" = x ] && sps_env_root=1 || sps_env_root=0
@@ -515,6 +548,11 @@ sps_load_config()
 	[ "${SPS_COMPRESSION+x}" = x ] && sps_env_compression=1 || sps_env_compression=0
 	[ "${SPS_ARCH+x}" = x ] && sps_env_arch=1 || sps_env_arch=0
 	[ "${SPS_PRESERVE+x}" = x ] && sps_env_preserve=1 || sps_env_preserve=0
+	[ "${SPS_CFLAGS+x}" = x ] && sps_env_cflags=1 || sps_env_cflags=0
+	[ "${SPS_CXXFLAGS+x}" = x ] && sps_env_cxxflags=1 || sps_env_cxxflags=0
+	[ "${SPS_CPPFLAGS+x}" = x ] && sps_env_cppflags=1 || sps_env_cppflags=0
+	[ "${SPS_LDFLAGS+x}" = x ] && sps_env_ldflags=1 || sps_env_ldflags=0
+	[ "${SPS_MARCH+x}" = x ] && sps_env_march=1 || sps_env_march=0
 
 	SPS_ROOT=${SPS_ROOT:-/}
 	case $SPS_ROOT in
@@ -535,13 +573,18 @@ sps_load_config()
 	sps_cfg_cache=/var/cache/sps
 	sps_cfg_build=/var/tmp/sps
 	sps_cfg_repo_root=/usr/src/sps
-	sps_cfg_makejobs=1
+	sps_cfg_makejobs=auto
 	sps_cfg_compression=auto
 	sps_cfg_arch=$(uname -m 2>/dev/null || printf '%s' unknown)
 	sps_cfg_preserve=etc
+	sps_cfg_cflags='-O2 -pipe'
+	sps_cfg_cxxflags='-O2 -pipe'
+	sps_cfg_cppflags=
+	sps_cfg_ldflags=
+	sps_cfg_march=native
 
 	if [ -r "$SPS_CONFIG" ]; then
-		while IFS=' 	' read -r sps_key sps_value sps_extra; do
+		while IFS=' 	' read -r sps_key sps_value; do
 			case $sps_key in
 				''|'#'*) continue ;;
 				root) [ "$sps_env_root" -eq 1 ] || sps_cfg_root=$sps_value ;;
@@ -553,6 +596,11 @@ sps_load_config()
 				compression) sps_cfg_compression=$sps_value ;;
 				arch) sps_cfg_arch=$sps_value ;;
 				preserve) sps_cfg_preserve=$sps_value ;;
+				cflags) sps_cfg_cflags=$sps_value ;;
+				cxxflags) sps_cfg_cxxflags=$sps_value ;;
+				cppflags) sps_cfg_cppflags=$sps_value ;;
+				ldflags) sps_cfg_ldflags=$sps_value ;;
+				march) sps_cfg_march=$sps_value ;;
 				repo|git|dir) : ;;
 				*) sps_warn "ignoring unknown configuration key '$sps_key' in $SPS_CONFIG" ;;
 			esac
@@ -574,6 +622,9 @@ sps_load_config()
 	[ "$sps_env_preserve" -eq 1 ] || SPS_PRESERVE=$sps_cfg_preserve
 	[ "$SPS_COMPRESSION" = zst ] && SPS_COMPRESSION=zstd
 
+	if [ "$SPS_MAKEJOBS" = auto ]; then
+		SPS_MAKEJOBS=$(sps_nproc)
+	fi
 	case $SPS_MAKEJOBS in ''|*[!0-9]*|0) sps_die "$SPS_EX_USAGE" "makejobs must be a positive integer" ;; esac
 	case $SPS_COMPRESSION in
 		auto|none|gzip|xz|zstd) ;;
@@ -596,4 +647,51 @@ sps_load_config()
 
 	export SPS_ROOT SPS_DB SPS_CACHE SPS_BUILD SPS_REPO_ROOT SPS_CONFIG SPS_REPOS_CONFIG
 	export SPS_MAKEJOBS SPS_COMPRESSION SPS_ARCH SPS_PRESERVE
+
+	if [ "$sps_env_cflags" -eq 1 ]; then
+		CFLAGS=$SPS_CFLAGS
+	else
+		CFLAGS=$sps_cfg_cflags
+	fi
+	if [ "$sps_env_cxxflags" -eq 1 ]; then
+		CXXFLAGS=$SPS_CXXFLAGS
+	else
+		CXXFLAGS=$sps_cfg_cxxflags
+	fi
+	if [ "$sps_env_cppflags" -eq 1 ]; then
+		CPPFLAGS=$SPS_CPPFLAGS
+	else
+		CPPFLAGS=$sps_cfg_cppflags
+	fi
+	if [ "$sps_env_ldflags" -eq 1 ]; then
+		LDFLAGS=$SPS_LDFLAGS
+	else
+		LDFLAGS=$sps_cfg_ldflags
+	fi
+	if [ "$sps_env_march" -eq 1 ]; then
+		SPS_MARCH=$SPS_MARCH
+	else
+		SPS_MARCH=$sps_cfg_march
+	fi
+	case $SPS_MARCH in
+		none|'') ;;
+		*)
+			case $CFLAGS in
+				*-march=*) ;;
+				*) CFLAGS="${CFLAGS:+$CFLAGS }-march=$SPS_MARCH" ;;
+			esac
+			case $CXXFLAGS in
+				*-march=*) ;;
+				*) CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-march=$SPS_MARCH" ;;
+			esac
+			;;
+	esac
+	SPS_CFLAGS=$CFLAGS
+	SPS_CXXFLAGS=$CXXFLAGS
+	SPS_CPPFLAGS=$CPPFLAGS
+	SPS_LDFLAGS=$LDFLAGS
+	export CFLAGS CXXFLAGS SPS_CFLAGS SPS_CXXFLAGS SPS_MARCH
+	[ -n "${CPPFLAGS-}" ] && export CPPFLAGS SPS_CPPFLAGS
+	[ -n "${LDFLAGS-}" ] && export LDFLAGS SPS_LDFLAGS
+	return 0
 }

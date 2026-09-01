@@ -897,6 +897,14 @@ mkiso_verify_compiler()
 				"seeded python is missing the encodings stdlib module"
 		fi
 	fi
+	if [ -e /usr/bin/pod2man ] || [ -L /usr/bin/pod2man ]; then
+		if [ ! -e "$mkiso_live/usr/bin/pod2man" ] &&
+			[ ! -L "$mkiso_live/usr/bin/pod2man" ]
+		then
+			sps_die "$SPS_EX_PACKAGE" \
+				"seeded live gcc is missing pod2man"
+		fi
+	fi
 }
 
 mkiso_verify_plasma()
@@ -1560,15 +1568,7 @@ if [ -f "$mkiso_libdir/udhcpc-script" ]; then
 		"$mkiso_live/etc/sps/udhcpc-script"
 fi
 
-printf '%s\n' \
-	'db /var/lib/sps' \
-	'cache /var/cache/sps' \
-	'build /var/tmp/sps' \
-	'repo_root /usr/src/sps' \
-	"makejobs ${SPS_MAKEJOBS:-$(nproc 2>/dev/null || printf 2)}" \
-	'compression auto' \
-	'preserve etc' \
-	>"$mkiso_live/etc/sps/sps.conf"
+sps_print_default_conf >"$mkiso_live/etc/sps/sps.conf"
 
 mkiso_repos=$mkiso_live/etc/sps/repos.conf
 : >"$mkiso_repos"

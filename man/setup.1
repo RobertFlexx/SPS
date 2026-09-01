@@ -46,17 +46,27 @@ need
 with
 .B --disk .
 .B --init systemd
-or
+,
 .B --init openrc
+,
+.B --init s6
+,
+.B --init runit
+,
+.B --init dinit
+, or
+.B --init shepherd
 selects PID 1;
 .B sget
-will not install both.
+will not install more than one of those families.
 After packages land,
 .B setup
-enables known services (SDDM, dbus, sshd, NetworkManager, and others
-listed in
-.I $SPS_LIBDIR/setup/services )
-for that init. Pass
+copies stock service scripts from
+.I $SPS_LIBDIR/setup/sv
+when a package did not ship a file for the chosen init, then enables
+known services (SDDM, dbus, sshd, NetworkManager, and others listed in
+.I $SPS_LIBDIR/setup/services ).
+Pass
 .B --services no
 to skip enablement.
 Live images prefer systemd. If the build host has no systemd binaries,
@@ -188,19 +198,26 @@ see
 .B --flatpak yes|no
 Install the Flatpak set and attempt to add Flathub after packages land.
 .TP
-.B --init systemd|openrc
+.B --init systemd|openrc|s6|runit|dinit|shepherd|none
 PID 1 on the installed system. Scripts default to none so a fixture
-install does not pull systemd. The interactive screen defaults to
-systemd. The power set does not pull elogind; OpenRC gets elogind from
-.B init-openrc
-so a Plasma install can use systemd without a conflict.
+install does not pull an init. The interactive screen defaults to the
+live image's
+.I /etc/sps/init
+when that file names a known init, otherwise systemd.
+Supervision inits pull eudev and elogind the same way OpenRC does.
+The power set does not pull elogind; systemd gets logind from systemd
+itself so a Plasma install can use systemd without a conflict.
 .TP
 .B --services yes|no
 Enable known services for the chosen init after packages install
-(default yes). Does not start daemons inside a target chroot; first
-boot starts them. Package post-install hooks do the same for later
+(default yes). Missing unit or script files are filled from stock
+copies under
+.IR $SPS_LIBDIR/setup/sv .
+Does not start daemons inside a target chroot; first boot starts them.
+.B pkin
+does the same after every later
 .B sget install
-of extras such as sddm.
+of a mapped package such as sddm.
 .TP
 .B --format yes|no
 Required

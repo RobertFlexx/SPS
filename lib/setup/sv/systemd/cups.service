@@ -1,0 +1,11 @@
+[Unit]
+Description=CUPS printing service
+After=dbus.service
+Wants=dbus.service
+
+[Service]
+ExecStart=/usr/sbin/cupsd -f
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

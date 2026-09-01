@@ -297,6 +297,8 @@ grep -q 'live gcc cannot create executables' "$setup" ||
 	fail 'setup must probe live gcc before sget install'
 grep -q 'live meson cannot run' "$setup" ||
 	fail 'setup must probe live meson before sget install'
+grep -q sps_print_default_conf "$setup" ||
+	fail 'setup must write sps.conf before sget install'
 
 plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init systemd \
 	--disable qol-cli --disable power --disable firmware)
@@ -322,6 +324,19 @@ plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init openrc \
 	--disable qol-cli)
 contains "$plan" 'init-openrc'
 
+plan=$("$setup" --plan --target /mnt --profile minimal --init s6 --disable qol-cli)
+contains "$plan" 'Init:       s6'
+contains "$plan" 'init-s6'
+
+plan=$("$setup" --plan --target /mnt --profile minimal --init runit --disable qol-cli)
+contains "$plan" 'init-runit'
+
+plan=$("$setup" --plan --target /mnt --profile minimal --init dinit --disable qol-cli)
+contains "$plan" 'init-dinit'
+
+plan=$("$setup" --plan --target /mnt --profile minimal --init shepherd --disable qol-cli)
+contains "$plan" 'init-shepherd'
+
 set +e
 "$setup" --plan --target /mnt --profile minimal --init systemd \
 	--disable qol-cli --extra elogind >/dev/null 2>"$tmp/err"
@@ -329,6 +344,20 @@ st=$?
 set -e
 [ "$st" -eq 7 ] || fail "systemd + extra elogind returned $st"
 contains "$(cat "$tmp/err")" 'elogind'
+
+set +e
+"$setup" --plan --target /mnt --profile minimal --init systemd \
+	--disable qol-cli --extra s6 >/dev/null 2>"$tmp/err"
+st=$?
+set -e
+[ "$st" -eq 7 ] || fail "systemd + extra s6 returned $st"
+
+plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init s6 \
+	--disable qol-cli --disable firmware)
+contains "$plan" 'init-s6'
+case $plan in
+	*init-systemd*) fail 'plasma + s6 must not pull init-systemd' ;;
+esac
 
 plan=$("$setup" --plan --target /mnt --profile minimal --init systemd \
 	--disable qol-cli --extra sddm --services no)

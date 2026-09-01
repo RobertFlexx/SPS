@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="CUPS printing service"
+command="/usr/sbin/cupsd"
+command_args="-f"
+command_background="yes"
+pidfile="/run/cupsd.pid"
+
+depend() {
+	need dbus
+	after dbus
+}

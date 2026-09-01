@@ -1,0 +1,8 @@
+#!/bin/sh
+exec 2>&1
+if [ -x /usr/bin/sv ]; then
+	sv start dbus >/dev/null 2>&1 || :
+elif [ -x /usr/bin/s6-svwait ] && [ -d /run/service/dbus ]; then
+	s6-svwait /run/service/dbus >/dev/null 2>&1 || :
+fi
+exec /usr/bin/sddm

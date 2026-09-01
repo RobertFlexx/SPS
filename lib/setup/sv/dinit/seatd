@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/seatd -g video
+restart = true
+smooth-recovery = true

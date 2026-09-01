@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="Power profiles daemon"
+command="/usr/libexec/power-profiles-daemon"
+command_background="yes"
+pidfile="/run/power-profiles-daemon.pid"
+
+depend() {
+	need dbus
+	after dbus
+}

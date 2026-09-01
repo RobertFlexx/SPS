@@ -1,0 +1,11 @@
+[Unit]
+Description=WirePlumber session manager
+After=dbus.service
+Wants=dbus.service
+
+[Service]
+ExecStart=/usr/bin/wireplumber
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

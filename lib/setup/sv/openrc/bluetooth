@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="Bluetooth daemon"
+command="/usr/libexec/bluetooth/bluetoothd"
+command_background="yes"
+pidfile="/run/bluetooth.pid"
+
+depend() {
+	need dbus
+	after dbus
+}

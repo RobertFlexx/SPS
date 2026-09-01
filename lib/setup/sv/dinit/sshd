@@ -1,0 +1,4 @@
+type = process
+command = /usr/sbin/sshd -D
+restart = true
+smooth-recovery = true

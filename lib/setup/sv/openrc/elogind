@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="elogind login manager"
+command="/usr/libexec/elogind"
+command_background="yes"
+pidfile="/run/elogind.pid"
+
+depend() {
+	need dbus
+	after dbus
+}

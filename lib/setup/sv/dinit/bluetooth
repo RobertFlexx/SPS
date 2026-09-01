@@ -1,0 +1,5 @@
+type = process
+command = /usr/libexec/bluetooth/bluetoothd
+restart = true
+smooth-recovery = true
+depends-on = dbus
