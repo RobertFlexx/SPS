@@ -278,6 +278,8 @@ then
 fi
 grep -q 'copying file(1) magic database' "$mkiso" ||
 	fail 'seeded ISO must copy file(1) magic for autoconf'
+grep -q /usr/bin/m4 "$project_dir/lib/mkiso/seed-bins" ||
+	fail 'seeded ISO must include GNU m4 for autoconf'
 grep -q /usr/bin/msgfmt "$project_dir/lib/mkiso/seed-bins" ||
 	fail 'seeded ISO must include msgfmt for alsa-utils translations'
 grep -q /usr/bin/xgettext "$project_dir/lib/mkiso/seed-bins" ||
@@ -361,6 +363,8 @@ grep -q OPENSSL_MODULES "$project_dir/bin/mkpkg" ||
 	fail 'mkpkg must point OpenSSL at SPS_ROOT providers during target builds'
 grep -q CONFIG_SITE "$project_dir/bin/mkpkg" ||
 	fail 'mkpkg must export CONFIG_SITE so autoconf sees SPS_ROOT LDFLAGS'
+grep -q 'SPS_ROOT%/}/usr/bin' "$project_dir/bin/mkpkg" ||
+	fail 'mkpkg must put SPS_ROOT/usr/bin on PATH so autoconf finds m4'
 grep -q 'sps_say "unpacking' "$project_dir/bin/pkin" ||
 	fail 'pkin must log unpacking'
 grep -q sps_verbose_say "$project_dir/bin/pkin" ||

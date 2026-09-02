@@ -318,4 +318,34 @@ EOF
 		fail "runtime probe binary was not staged"
 fi
 
+# Autoconf configure requires GNU m4 on PATH. sget installs m4 into
+# SPS_ROOT first; mkpkg must search that /usr/bin ahead of the live disc.
+mkdir -p "$tmp/root/usr/bin" "$tmp/m4-recipe" "$tmp/m4-out"
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$tmp/root/usr/bin/m4"
+chmod 755 "$tmp/root/usr/bin/m4"
+cat >"$tmp/m4-recipe/recipe" <<'EOF'
+name        target-m4-path-probe
+version     1.0
+release     1
+arch        any
+description Confirms SPS_ROOT/usr/bin is on PATH so autoconf can find m4
+configure   command -v m4 >"$WORK/m4"
+configure   printf '%s\n' "$PATH" >"$WORK/path"
+configure   m4 >/dev/null
+install     mkdir -p "$PKG/usr/share/target-m4-path-probe"
+install     cp "$WORK/m4" "$WORK/path" "$PKG/usr/share/target-m4-path-probe/"
+EOF
+m4_artifact=$(run_mkpkg --no-download --output "$tmp/m4-out" \
+	"$tmp/m4-recipe/recipe") ||
+	fail "target-root m4 PATH probe failed (autoconf needs GNU m4 on PATH)"
+mkdir "$tmp/m4-extract"
+tar -xf "$m4_artifact" -C "$tmp/m4-extract"
+assert_equal "$tmp/root/usr/bin/m4" \
+	"$(cat "$tmp/m4-extract/usr/share/target-m4-path-probe/m4")" \
+	"configure did not find m4 from SPS_ROOT/usr/bin"
+case "$(cat "$tmp/m4-extract/usr/share/target-m4-path-probe/path")" in
+	"$tmp/root/usr/bin:"*|*/run:"$tmp/root/usr/bin:"*) : ;;
+	*) fail "SPS_ROOT/usr/bin was not on PATH ahead of the host" ;;
+esac
+
 printf '%s\n' 'test_build: ok'

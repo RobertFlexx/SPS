@@ -771,12 +771,15 @@ if [ -n "$build_root" ]; then
 	fi
 	say "using build root $build_root"
 elif [ -n "$wrapper_bin" ]; then
-	run_env="PATH=$wrapper_bin:$PATH"
+	run_env="PATH=$wrapper_bin:${SPS_ROOT%/}/usr/bin:$PATH"
 else
 	run_env=
 fi
 
 # Live setup builds into SPS_ROOT (a mounted disk) with the live compiler.
+# Autoconf's configure looks up GNU m4 on PATH. m4 is a runtime depend, so
+# sget installs it into the target before autoconf builds; that bin dir
+# must be on PATH. The live disc also seeds /usr/bin/m4.
 # The live disc copies host /usr/include (so ALSA headers exist) but not
 # host libasound. gcc must search packages pkin already unpacked into the
 # target, not only live /usr. Exporting LDFLAGS is not enough: autoconf
@@ -916,7 +919,7 @@ run_phase()
 			SYSROOT=$build_root
 			export PATH SYSROOT
 		elif [ -n "$wrapper_bin" ]; then
-			PATH=$wrapper_bin:$PATH
+			PATH=$wrapper_bin:${SPS_ROOT%/}/usr/bin:$PATH
 			export PATH
 		fi
 		sh -eu "$phase_file"
