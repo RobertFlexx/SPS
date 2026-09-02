@@ -88,15 +88,17 @@ requested removal set directly requires it.
 .BR -q ", " --quiet
 Hide routine
 .B mkpkg
-status and upstream build output. Package-level
+status, cache decisions, resolver progress, and upstream build output. Package-level
 .B sget
 and
 .B pkin
 lines remain. If a build fails, the captured log is written to stderr.
 .TP
 .BR -v ", " --verbose
-Print resolver decisions such as selected recipes, already-satisfied
-dependencies, and binary cache hits or misses.
+Same as the default chatter, plus extra resolver detail. Progress such as
+selected recipes and cache hits is printed unless
+.B -q
+is used.
 .TP
 .B --plan
 Print package-level actions without building, installing, removing, or changing

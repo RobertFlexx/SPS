@@ -24,7 +24,7 @@ expect_update_failure()
     if "$src" update >"$tmp/failure.out" 2>"$tmp/failure.err"; then
         fail "repository update unexpectedly succeeded: $expected"
     fi
-    contains "$(sed -n '1,30p' "$tmp/failure.err")" "$expected"
+    contains "$(sed -n '1,80p' "$tmp/failure.err")" "$expected"
 }
 
 write_recipe()
@@ -85,8 +85,16 @@ export SPS_ROOT SPS_DB SPS_CACHE SPS_BUILD SPS_REPO_ROOT SPS_CONFIG
 export SPS_REPOS_CONFIG
 
 src=$project_dir/bin/src
-update_output=$("$src" update)
+update_output=$("$src" update 2>"$tmp/update.err")
 contains "$update_output" 'updated 3 repositories, 4 package records'
+contains "$(cat "$tmp/update.err")" 'updating package index'
+contains "$(cat "$tmp/update.err")" "indexing 'core'"
+contains "$(cat "$tmp/update.err")" 'core 1/'
+"$src" -q update >"$tmp/quiet-update.out" 2>"$tmp/quiet-update.err"
+contains "$(cat "$tmp/quiet-update.out")" 'updated 3 repositories, 4 package records'
+case $(cat "$tmp/quiet-update.err") in
+    *indexing*) fail 'quiet src update still printed indexing progress' ;;
+esac
 
 index=$tmp/cache/indexes/packages.index
 [ -r "$index" ] || fail 'aggregate index was not created'

@@ -51,7 +51,7 @@ EOF_USAGE
 
 sget_note()
 {
-    [ "${sget_verbose:-0}" -eq 1 ] || return 0
+    [ "${sget_quiet:-0}" -eq 1 ] && return 0
     printf '%s: %s\n' "$sps_prog" "$*" >&2
 }
 
@@ -322,6 +322,7 @@ sget_install()
                 >>"$sget_work/resolution" || exit $?
         done
     else
+        sget_note "resolving $sget_roots"
         if ! awk -v action=plan -v roots="$sget_roots" \
             -v include_build=1 -v program=sget \
             -v installed="$(sget_installed_names)" \
@@ -389,6 +390,7 @@ sget_install()
     done <"$sget_work/resolution"
 
     sget_mark_count=$(awk 'END { print NR + 0 }' "$sget_work/mark-explicit")
+    sget_note "$sget_count package action(s), $sget_mark_count reason change(s)"
     if [ "$sget_plan" -eq 1 ]; then
         if [ "$sget_upgrade_mode" -eq 1 ]; then
             printf 'Upgrade plan\n\n'
@@ -461,6 +463,7 @@ sget_install()
                         "$sget_version" "$sget_release"
                     ;;
             esac
+            sget_note "checking binary cache for $sget_package"
             sget_cache_base=$SPS_CACHE/packages/$sget_package-$sget_version-$sget_release-$sget_arch.pkg.tar
             sget_artifact=
             for sget_candidate in "$sget_cache_base.zst" "$sget_cache_base.xz" \
@@ -496,7 +499,7 @@ sget_install()
                 esac
             fi
             if [ -z "$sget_artifact" ]; then
-                sget_note "binary cache miss"
+                sget_note "binary cache miss; building $sget_package"
                 sget_note "building $sget_recipe_dir"
                 sget_artifact_file=$sget_work/artifact-$sget_package
                 sget_build_log=$sget_work/build-$sget_package.log

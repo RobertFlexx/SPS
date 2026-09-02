@@ -180,8 +180,7 @@ SPS status messages go to stderr in the form
 Upstream configure, compile, and install commands keep their own stdout and
 stderr. Remote fetches print
 .B mkpkg: fetching
-then use curl or wget progress when stderr is a terminal, and a quieter
-downloader mode when it is not.
+then use curl or wget progress so a download does not look idle.
 .PP
 On success,
 .B mkpkg

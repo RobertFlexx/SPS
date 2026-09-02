@@ -88,6 +88,50 @@ repack()
     tar -C "$repack_stage" -cf "$repack_archive" .
 }
 
+write_meta()
+{
+    write_meta_dir=$1
+    write_meta_name=$2
+    write_meta_version=${3:-1.0}
+    mkdir -p "$write_meta_dir/.SPS"
+    {
+        printf 'format\t1\n'
+        printf 'name\t%s\n' "$write_meta_name"
+        printf 'version\t%s\n' "$write_meta_version"
+        printf 'release\t1\n'
+        printf 'arch\tany\n'
+    } >"$write_meta_dir/.SPS/meta"
+}
+
+pack_stage()
+{
+    pack_dir=$1
+    pack_archive=$2
+    mkdir -p "$pack_dir/.SPS"
+    : >"$pack_dir/.SPS/files.tmp"
+    : >"$pack_dir/.SPS/hashes"
+    (CDPATH= cd "$pack_dir" && find . ! -name . ! -path './.SPS' ! -path './.SPS/*' -print) |
+    sed 's#^\./##' | while IFS= read -r package_entry; do
+        if [ -d "$pack_dir/$package_entry" ] && [ ! -L "$pack_dir/$package_entry" ]; then
+            printf '%s/\n' "$package_entry"
+        else
+            printf '%s\n' "$package_entry"
+        fi
+    done >"$pack_dir/.SPS/files.tmp"
+    LC_ALL=C sort "$pack_dir/.SPS/files.tmp" >"$pack_dir/.SPS/files"
+    rm -f "$pack_dir/.SPS/files.tmp"
+    while IFS= read -r package_entry; do
+        case $package_entry in */) continue ;; esac
+        if [ -f "$pack_dir/$package_entry" ] && [ ! -L "$pack_dir/$package_entry" ]; then
+            printf 'sha256\t%s\t%s\n' \
+                "$(sha256sum "$pack_dir/$package_entry" | awk '{ print $1 }')" \
+                "$package_entry" >>"$pack_dir/.SPS/hashes"
+        fi
+    done <"$pack_dir/.SPS/files"
+    LC_ALL=C sort "$pack_dir/.SPS/hashes" -o "$pack_dir/.SPS/hashes"
+    tar -C "$pack_dir" -cf "$pack_archive" .
+}
+
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sps-test-security.XXXXXX") ||
     fail 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
@@ -283,5 +327,150 @@ printf 'sha256\t%s\tlink/pwn\n' "$pwn_hash" >"$stage/.SPS/hashes"
 tar -C "$stage" -cf "$archive" .SPS link link/pwn
 expect_status 4 "$project_dir/bin/pkin" "$archive"
 [ "$(cat "$outside/pwn")" = sentinel ] || fail 'archive symlink parent escaped extraction staging'
+
+# Usr-merge /lib -> usr/lib is a shared directory. Packages that install
+# udev rules under lib/udev must land in usr/lib without replacing the link.
+fresh_root
+stage=$tmp/stage-udevlib
+mkdir -p "$stage/lib/udev/rules.d" "$root/usr/lib"
+ln -s usr/lib "$root/lib"
+printf '%s\n' 'KERNEL=="test"' >"$stage/lib/udev/rules.d/99-test.rules"
+write_meta "$stage" udevlib
+pack_stage "$stage" "$tmp/udevlib.pkg.tar"
+run_sps "$project_dir/bin/pkin" "$tmp/udevlib.pkg.tar" >/dev/null ||
+    fail 'usr-merge /lib should accept package directory lib/'
+[ -L "$root/lib" ] || fail 'usr-merge /lib was replaced'
+[ "$(readlink "$root/lib")" = usr/lib ] || fail 'usr-merge /lib target changed'
+[ -f "$root/usr/lib/udev/rules.d/99-test.rules" ] ||
+    fail 'udev rule was not installed through usr-merge /lib'
+[ "$(cat "$root/usr/lib/udev/rules.d/99-test.rules")" = 'KERNEL=="test"' ] ||
+    fail 'udev rule payload is wrong'
+grep -q 'lib/udev/rules.d/99-test.rules	udevlib' "$db/owners" ||
+    fail 'udev rule owner was not recorded'
+run_sps "$project_dir/bin/pkcheck" --all >/dev/null ||
+    fail 'pkcheck should accept usr-merge /lib as a shared directory'
+run_sps "$project_dir/bin/pkdel" udevlib >/dev/null ||
+    fail 'pkdel should remove files below usr-merge /lib'
+[ ! -e "$root/usr/lib/udev/rules.d/99-test.rules" ] ||
+    fail 'pkdel left udev rule behind'
+[ -L "$root/lib" ] || fail 'pkdel removed usr-merge /lib'
+
+# filesystem compat /var/run -> ../run is a shared directory, like usr-merge.
+fresh_root
+stage=$tmp/stage-varrun
+mkdir -p "$stage/var/run" "$root/run" "$root/var"
+ln -s ../run "$root/var/run"
+printf '%s\n' pid >"$stage/var/run/daemon.pid"
+write_meta "$stage" varrun
+pack_stage "$stage" "$tmp/varrun.pkg.tar"
+run_sps "$project_dir/bin/pkin" "$tmp/varrun.pkg.tar" >/dev/null ||
+    fail 'compat /var/run should accept package files'
+[ -L "$root/var/run" ] || fail 'compat /var/run was replaced'
+[ -f "$root/run/daemon.pid" ] || fail 'pid file was not installed through /var/run'
+run_sps "$project_dir/bin/pkcheck" --all >/dev/null ||
+    fail 'pkcheck should accept compat /var/run'
+run_sps "$project_dir/bin/pkdel" varrun >/dev/null ||
+    fail 'pkdel should remove files below /var/run'
+[ ! -e "$root/run/daemon.pid" ] || fail 'pkdel left pid file behind'
+[ -L "$root/var/run" ] || fail 'pkdel removed compat /var/run'
+
+# A /lib symlink that is not usr-merge must still be refused.
+fresh_root
+stage=$tmp/stage-badlib
+outside=$tmp/outside-lib
+mkdir -p "$stage/lib/udev" "$outside"
+ln -s "$outside" "$root/lib"
+printf '%s\n' stolen >"$stage/lib/udev/x"
+write_meta "$stage" badlib
+pack_stage "$stage" "$tmp/badlib.pkg.tar"
+expect_status 7 "$project_dir/bin/pkin" "$tmp/badlib.pkg.tar"
+[ ! -f "$outside/udev/x" ] || fail 'non usr-merge /lib redirected payload'
+
+# Live images may replace unowned seed files and busybox applets.
+fresh_root
+mkdir -p "$root/etc/sps" "$root/usr/bin"
+printf '%s\n' live >"$root/etc/sps/live"
+printf '%s\n' seed >"$root/usr/bin/openssl"
+archive=$(make_basic openssl 1.0 usr/bin/openssl)
+run_sps "$project_dir/bin/pkin" "$archive" >/dev/null 2>"$tmp/live-openssl.err" ||
+    fail 'live unowned openssl should be replaced'
+[ "$(cat "$root/usr/bin/openssl")" = 'openssl 1.0 payload' ] ||
+    fail 'live openssl seed was not replaced'
+grep -q 'replacing unowned live file /usr/bin/openssl' "$tmp/live-openssl.err" ||
+    fail 'live replacement diagnostic is missing'
+grep -qx 'usr/bin/openssl	openssl' "$db/owners" ||
+    fail 'replaced live openssl was not owned'
+
+# Without the live marker, a different unowned file is still a conflict.
+fresh_root
+archive=$(make_basic occupied 1.0)
+mkdir -p "$root/usr/bin"
+printf '%s\n' administrator >"$root/usr/bin/occupied"
+expect_status 7 "$project_dir/bin/pkin" "$archive"
+[ "$(cat "$root/usr/bin/occupied")" = administrator ] ||
+    fail 'unowned collision was overwritten without a live marker'
+
+# Busybox-style applet symlink is claimed by the real package on a live image.
+fresh_root
+mkdir -p "$root/etc/sps" "$root/usr/bin"
+printf '%s\n' live >"$root/etc/sps/live"
+ln -s busybox "$root/usr/bin/clear"
+ln -s busybox "$root/usr/bin/tset"
+archive=$(make_basic ncurses 1.0 usr/bin/clear)
+run_sps "$project_dir/bin/pkin" "$archive" >/dev/null ||
+    fail 'live busybox applet should be replaced'
+[ -f "$root/usr/bin/clear" ] && [ ! -L "$root/usr/bin/clear" ] ||
+    fail 'live busybox clear was not replaced with a file'
+[ "$(cat "$root/usr/bin/clear")" = 'ncurses 1.0 payload' ] ||
+    fail 'live clear payload is wrong'
+
+# Unowned preserved etc/ files are kept on a live image; the package still
+# takes ownership so openssl-style /etc/ssl can install.
+fresh_root
+mkdir -p "$root/etc/sps" "$root/etc"
+printf '%s\n' live >"$root/etc/sps/live"
+printf '%s\n' local >"$root/etc/foo"
+archive=$(make_basic conffile 1.0 etc/foo)
+run_sps "$project_dir/bin/pkin" "$archive" >/dev/null 2>"$tmp/live-etc.err" ||
+    fail 'live unowned preserved etc/foo should install without replacing'
+[ "$(cat "$root/etc/foo")" = local ] || fail 'live replace clobbered a preserved file'
+[ -f "$root/etc/foo.sps-new" ] || fail 'live preserved install did not write .sps-new'
+[ "$(cat "$root/etc/foo.sps-new")" = 'conffile 1.0 payload' ] ||
+    fail 'live preserved .sps-new payload is wrong'
+grep -qx 'etc/foo	conffile' "$db/owners" ||
+    fail 'kept live preserved file was not owned'
+grep -q 'keeping unowned live preserved file /etc/foo' "$tmp/live-etc.err" ||
+    fail 'live preserved keep diagnostic is missing'
+
+# Without the live marker, a different unowned etc/ file is still a conflict.
+fresh_root
+mkdir -p "$root/etc"
+printf '%s\n' local >"$root/etc/foo"
+archive=$(make_basic conffile 1.0 etc/foo)
+expect_status 7 "$project_dir/bin/pkin" "$archive"
+[ "$(cat "$root/etc/foo")" = local ] || fail 'unowned etc/ file was overwritten'
+
+# A different usr-merge /bin target stays a conflict even on a live image.
+fresh_root
+mkdir -p "$root/etc/sps" "$root/usr/bin" "$root/usr/sbin" \
+    "$tmp/stage-livebin/usr/bin"
+printf '%s\n' live >"$root/etc/sps/live"
+ln -s usr/bin "$tmp/stage-livebin/bin"
+ln -s usr/sbin "$root/bin"
+printf '%s\n' tool >"$tmp/stage-livebin/usr/bin/tool"
+write_meta "$tmp/stage-livebin" livebin
+pack_stage "$tmp/stage-livebin" "$tmp/livebin.pkg.tar"
+expect_status 7 "$project_dir/bin/pkin" "$tmp/livebin.pkg.tar"
+[ "$(readlink "$root/bin")" = usr/sbin ] || fail 'live replace changed usr-merge /bin'
+
+# Live PID 1 and the shell are not claimed by an unowned replacement.
+fresh_root
+mkdir -p "$root/etc/sps" "$root/usr/bin"
+printf '%s\n' live >"$root/etc/sps/live"
+ln -s busybox "$root/usr/bin/sh"
+archive=$(make_basic dash 1.0 usr/bin/sh)
+expect_status 7 "$project_dir/bin/pkin" "$archive"
+[ -L "$root/usr/bin/sh" ] || fail 'live replace claimed /usr/bin/sh'
+[ "$(readlink "$root/usr/bin/sh")" = busybox ] || fail 'live /usr/bin/sh target changed'
 
 printf '%s\n' 'test_security: ok'

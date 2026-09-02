@@ -233,4 +233,79 @@ SPS_LIBDIR=$project_dir/lib \
     "$project_dir/bin/pkcheck" --database | grep -qx 'database: ok' ||
     fail 'database did not validate after shared-directory removal'
 
+# Upgrading a package that drops a shared directory must not rmdir it when
+# another installed package still lists that directory in its manifest.
+up_root=$tmp/upgrade-root
+up_db=$tmp/upgrade-db
+up_cache=$tmp/upgrade-cache
+up_build=$tmp/upgrade-build
+mkdir -p "$up_root" "$up_cache" "$up_build" \
+    "$tmp/up-stage-base/.SPS" "$tmp/up-stage-base/usr/share" \
+    "$tmp/up-stage-base/etc" \
+    "$tmp/up-stage-app1/.SPS" "$tmp/up-stage-app1/usr/share/app" \
+    "$tmp/up-stage-app2/.SPS" "$tmp/up-stage-app2/usr/bin"
+printf '%s\n' 'NAME="SPS"' >"$tmp/up-stage-base/etc/os-release"
+printf '%s\n' 'payload' >"$tmp/up-stage-app1/usr/share/app/data"
+printf '%s\n' 'tool' >"$tmp/up-stage-app2/usr/bin/shareapp"
+{
+    printf 'format\t1\n'
+    printf 'name\tsharebase\nversion\t1\nrelease\t1\narch\tany\ndescription\tbase hierarchy\n'
+} >"$tmp/up-stage-base/.SPS/meta"
+{
+    printf 'format\t1\n'
+    printf 'name\tshareapp\nversion\t1\nrelease\t1\narch\tany\ndescription\tapp v1\n'
+} >"$tmp/up-stage-app1/.SPS/meta"
+{
+    printf 'format\t1\n'
+    printf 'name\tshareapp\nversion\t2\nrelease\t1\narch\tany\ndescription\tapp v2\n'
+} >"$tmp/up-stage-app2/.SPS/meta"
+for up_stage in "$tmp/up-stage-base" "$tmp/up-stage-app1" "$tmp/up-stage-app2"; do
+    (
+        CDPATH= cd "$up_stage" &&
+        find . -type d -print | awk '
+            $0 != "." && $0 !~ /^\.\/\.SPS($|\/)/ { sub(/^\.\//, ""); print $0 "/" }'
+        find . ! -type d -print | awk '
+            $0 !~ /^\.\/\.SPS($|\/)/ { sub(/^\.\//, ""); print }'
+    ) | LC_ALL=C sort >"$up_stage/.SPS/files"
+    : >"$up_stage/.SPS/hashes"
+    while IFS= read -r up_entry || [ -n "$up_entry" ]; do
+        case $up_entry in */) continue ;; esac
+        [ -f "$up_stage/$up_entry" ] &&
+            printf 'sha256\t%s\t%s\n' \
+                "$(sha256sum "$up_stage/$up_entry" | awk '{ print $1 }')" \
+                "$up_entry" >>"$up_stage/.SPS/hashes"
+    done <"$up_stage/.SPS/files"
+done
+tar -C "$tmp/up-stage-base" -cf "$tmp/up-base.pkg.tar" .
+tar -C "$tmp/up-stage-app1" -cf "$tmp/up-app1.pkg.tar" .
+tar -C "$tmp/up-stage-app2" -cf "$tmp/up-app2.pkg.tar" .
+SPS_ROOT=$up_root SPS_DB=$up_db SPS_CACHE=$up_cache \
+SPS_BUILD=$up_build SPS_CONFIG=/dev/null SPS_REPOS_CONFIG=/dev/null \
+SPS_LIBDIR=$project_dir/lib \
+    "$project_dir/bin/pkin" --dependency "$tmp/up-base.pkg.tar" >/dev/null ||
+    fail 'upgrade-shared base package failed to install'
+SPS_ROOT=$up_root SPS_DB=$up_db SPS_CACHE=$up_cache \
+SPS_BUILD=$up_build SPS_CONFIG=/dev/null SPS_REPOS_CONFIG=/dev/null \
+SPS_LIBDIR=$project_dir/lib \
+    "$project_dir/bin/pkin" "$tmp/up-app1.pkg.tar" >/dev/null ||
+    fail 'upgrade-shared app v1 failed to install'
+SPS_ROOT=$up_root SPS_DB=$up_db SPS_CACHE=$up_cache \
+SPS_BUILD=$up_build SPS_CONFIG=/dev/null SPS_REPOS_CONFIG=/dev/null \
+SPS_LIBDIR=$project_dir/lib \
+    "$project_dir/bin/pkin" "$tmp/up-app2.pkg.tar" >/dev/null ||
+    fail 'upgrade-shared app v2 failed to install'
+[ -f "$up_root/usr/bin/shareapp" ] ||
+    fail 'upgraded app payload was not installed'
+[ ! -e "$up_root/usr/share/app" ] ||
+    fail 'exclusive app directory was not pruned on upgrade'
+[ -d "$up_root/usr/share" ] ||
+    fail 'upgrade deleted a shared directory still claimed by another package'
+[ -d "$up_root/usr" ] ||
+    fail 'upgrade deleted a base directory still claimed by another package'
+SPS_ROOT=$up_root SPS_DB=$up_db SPS_CACHE=$up_cache \
+SPS_BUILD=$up_build SPS_CONFIG=/dev/null SPS_REPOS_CONFIG=/dev/null \
+SPS_LIBDIR=$project_dir/lib \
+    "$project_dir/bin/pkcheck" --database | grep -qx 'database: ok' ||
+    fail 'database did not validate after shared-directory upgrade'
+
 printf '%s\n' 'test_packages: ok'

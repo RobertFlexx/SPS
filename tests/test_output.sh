@@ -178,8 +178,8 @@ PATH="$tmp/fakebin:$PATH" run_env "$mkpkg" --artifact-file "$tmp/out/fetch-resul
 contains "$(cat "$tmp/fetch.stderr")" 'mkpkg: fetching payload.dat'
 contains "$(cat "$tmp/fetch.stderr")" 'mkpkg: checksum ok'
 contains "$(cat "$CURL_LOG")" '-fL'
-contains "$(cat "$CURL_LOG")" '-sS'
-omits "$(cat "$CURL_LOG")" ' -# '
+contains "$(cat "$CURL_LOG")" '--progress-bar'
+omits "$(cat "$CURL_LOG")" ' -sS'
 [ "$(sed -n '1p' "$tmp/out/fetch-result")" = \
 	"$tmp/out/fetchpkg-1.0-1-any.pkg.tar" ] ||
 	fail 'fetched package did not publish its artifact path'

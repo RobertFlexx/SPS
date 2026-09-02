@@ -78,3 +78,27 @@ case $CFLAGS in
 esac
 
 printf '%s\n' 'compiler flag configuration tests passed'
+
+mkdir -p "$test_root/usr/bin" "$test_root/usr/lib" "$test_root/run" "$test_root/var"
+ln -sf usr/lib "$test_root/lib"
+ln -sf usr/bin "$test_root/bin"
+ln -s ../run "$test_root/var/run"
+sps_is_usr_merge_dir lib
+sps_is_usr_merge_dir bin
+sps_is_shared_dir_link lib
+sps_is_shared_dir_link var/run
+! sps_is_usr_merge_dir var/run
+! sps_is_usr_merge_dir usr/lib
+! sps_is_usr_merge_dir lib64
+ln -sf /tmp "$test_root/sbin"
+! sps_is_usr_merge_dir sbin
+! sps_is_shared_dir_link sbin
+rm -f "$test_root/sbin"
+printf '%s\n' live >"$test_root/etc/sps/live"
+sps_is_live_bootstrap
+rm -f "$test_root/etc/sps/live"
+! sps_is_live_bootstrap
+sps_is_live_critical_path usr/bin/sh
+! sps_is_live_critical_path usr/bin/openssl
+
+printf '%s\n' 'usr-merge and live helper tests passed'

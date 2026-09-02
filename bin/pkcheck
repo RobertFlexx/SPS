@@ -225,7 +225,8 @@ sps_check_files()
                 sps_target_path "$sps_path"
                 case $sps_entry in
                     */)
-                        if [ ! -d "$sps_target" ] || [ -L "$sps_target" ]; then
+                        if [ ! -d "$sps_target" ] ||
+                           { [ -L "$sps_target" ] && ! sps_is_shared_dir_link "$sps_path"; }; then
                             printf 'missing /%s %s\n' "$sps_path" "$sps_name"
                             sps_fs_bad=1
                         fi

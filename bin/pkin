@@ -76,10 +76,11 @@ sps_safe_parents()
         fi
         sps_target_path "$sps_prefix"
         if [ -L "$sps_target" ]; then
-            printf '%s: unsafe symlink in target path: /%s\n' "$sps_prog" "$sps_prefix" >&2
-            return 1
-        fi
-        if sps_exists "$sps_target" && [ ! -d "$sps_target" ]; then
+            if ! sps_is_shared_dir_link "$sps_prefix"; then
+                printf '%s: unsafe symlink in target path: /%s\n' "$sps_prog" "$sps_prefix" >&2
+                return 1
+            fi
+        elif sps_exists "$sps_target" && [ ! -d "$sps_target" ]; then
             printf '%s: non-directory in target path: /%s\n' "$sps_prog" "$sps_prefix" >&2
             return 1
         fi
@@ -380,6 +381,7 @@ if sps_exists "$SPS_DB/installed"; then
 else
     mkdir "$SPS_DB/installed" || sps_fail 8 "cannot create installed database"
 fi
+sps_installed=$SPS_DB/installed
 for sps_db_file in owners world history; do
     if sps_exists "$SPS_DB/$sps_db_file"; then
         [ -f "$SPS_DB/$sps_db_file" ] && [ ! -L "$SPS_DB/$sps_db_file" ] ||
@@ -526,11 +528,110 @@ sps_payload_matches_existing()
     return 1
 }
 
+# Live images seed host copies and busybox applets that later packages own.
+# Replace an unowned leaf there; keep ordinary systems strict.
+sps_may_replace_unowned()
+{
+    sps_repl_path=$1
+    sps_repl_target=$2
+    sps_repl_source=$sps_stage/$sps_repl_path
+    sps_is_live_bootstrap || return 1
+    sps_is_preserved_path "$sps_repl_path" && return 1
+    sps_is_live_critical_path "$sps_repl_path" && return 1
+    # Never claim the four usr-merge names this way. Identical links are
+    # adopted earlier; a different target remains a conflict.
+    case ${sps_repl_path#/} in
+        bin|sbin|lib|lib64) return 1 ;;
+    esac
+    if [ -d "$sps_repl_target" ] && [ ! -L "$sps_repl_target" ]; then
+        return 1
+    fi
+    if [ -d "$sps_repl_source" ] && [ ! -L "$sps_repl_source" ]; then
+        return 1
+    fi
+    { [ -f "$sps_repl_target" ] || [ -L "$sps_repl_target" ]; } || return 1
+    [ -f "$sps_repl_source" ] || [ -L "$sps_repl_source" ]
+}
+
+# Live discs seed /etc (openssl.cnf, CA certs). Those paths are preserved,
+# so they cannot be replaced; they also must not block the install.
+# Keep the running copy, take ownership, and write .sps-new when the
+# packaged default differs. Owned preserved files still use the upgrade path.
+sps_keep_live_unowned_preserved()
+{
+    sps_keep_path=$1
+    sps_keep_target=$2
+    sps_is_live_bootstrap || return 1
+    sps_is_preserved_path "$sps_keep_path" || return 1
+    if [ -d "$sps_keep_target" ] && [ ! -L "$sps_keep_target" ]; then
+        return 1
+    fi
+    sps_exists "$sps_keep_target" || return 1
+    if [ -d "$sps_old_record" ] && [ -f "$sps_old_record/hashes" ] &&
+       awk -F "$sps_tab" -v path="$sps_keep_path" \
+           '$3 == path { found=1 } END { exit !found }' \
+           "$sps_old_record/hashes"
+    then
+        return 1
+    fi
+    return 0
+}
+
+# Write a packaged default beside a kept local file.
+sps_install_sps_new()
+{
+    sps_new_target=$sps_target.sps-new
+    if [ -e "$sps_new_target" ] || [ -L "$sps_new_target" ]; then
+        if [ -f "$sps_new_target" ] && [ ! -L "$sps_new_target" ] &&
+           [ "$(sps_sha256 "$sps_new_target" 2>/dev/null || :)" = "$sps_new_digest" ]; then
+            sps_warn "/$sps_path is locally modified; matching .sps-new already exists"
+            return 0
+        fi
+        sps_new_target=$sps_target.sps-new.$sps_version-$sps_release
+    fi
+    sps_new_parent=${sps_new_target%/*}
+    sps_file_tmp=$(mktemp "$sps_new_parent/.sps-file.XXXXXX") ||
+        sps_fail 8 "cannot stage preserved update for /$sps_path"
+    if ! cp -p "$sps_source" "$sps_file_tmp"; then
+        rm -f "$sps_file_tmp"
+        sps_fail 8 "cannot stage preserved update for /$sps_path"
+    fi
+    if sps_is_root; then
+        sps_file_mode=
+        if [ -u "$sps_source" ] || [ -g "$sps_source" ]; then
+            sps_file_mode=$(sps_mode_of "$sps_source") ||
+                sps_fail 4 "cannot determine file mode for /$sps_path"
+        fi
+        sps_normalize_owner "$sps_file_tmp" ||
+            sps_fail 8 "cannot normalize owner of /$sps_path"
+        if [ -n "$sps_file_mode" ]; then
+            chmod "$sps_file_mode" "$sps_file_tmp" ||
+                sps_fail 8 "cannot restore mode on /$sps_path"
+        fi
+    fi
+    mv -f "$sps_file_tmp" "$sps_new_target" || {
+        rm -f "$sps_file_tmp"
+        sps_fail 8 "cannot write preserved update for /$sps_path"
+    }
+    sps_warn "/$sps_path is locally modified; kept it and wrote ${sps_new_target#${SPS_ROOT%/}}"
+}
+
 while IFS= read -r sps_path || [ -n "$sps_path" ]; do
     sps_target_path "$sps_path"
     if sps_exists "$sps_target"; then
         if sps_payload_matches_existing "$sps_path" "$sps_target"; then
             continue
+        fi
+        if sps_may_replace_unowned "$sps_path" "$sps_target"; then
+            sps_say "replacing unowned live file /$sps_path"
+            continue
+        fi
+        if sps_keep_live_unowned_preserved "$sps_path" "$sps_target"; then
+            sps_say "keeping unowned live preserved file /$sps_path"
+            continue
+        fi
+        if sps_is_preserved_path "$sps_path"; then
+            sps_fail 7 "/$sps_path exists, is not owned, and is under a preserved prefix"
         fi
         sps_fail 7 "/$sps_path exists and is not owned by an installed package"
     fi
@@ -543,7 +644,8 @@ while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
     case $sps_entry in
         */)
             if sps_exists "$sps_target" &&
-               { [ ! -d "$sps_target" ] || [ -L "$sps_target" ]; }; then
+               { [ ! -d "$sps_target" ] || [ -L "$sps_target" ]; } &&
+               ! sps_is_shared_dir_link "$sps_path"; then
                 sps_fail 7 "/$sps_path exists and is not a directory"
             fi
             ;;
@@ -593,6 +695,19 @@ while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
     [ -n "$sps_parent" ] || sps_parent=/
     mkdir -p "$sps_parent" || sps_fail 8 "cannot create parent of /$sps_path"
     sps_verbose_say "/$sps_path"
+    if sps_keep_live_unowned_preserved "$sps_path" "$sps_target"; then
+        if [ -f "$sps_source" ] && [ ! -L "$sps_source" ] &&
+           [ -f "$sps_target" ] && [ ! -L "$sps_target" ]; then
+            sps_new_digest=$(sps_sha256 "$sps_source") ||
+                sps_fail 6 "cannot hash new protected file /$sps_path"
+            sps_cur_digest=$(sps_sha256 "$sps_target") ||
+                sps_fail 6 "cannot hash existing protected file /$sps_path"
+            if [ "$sps_new_digest" != "$sps_cur_digest" ]; then
+                sps_install_sps_new
+            fi
+        fi
+        continue
+    fi
     if [ -L "$sps_source" ]; then
         sps_link_tmp=$(sps_mktemp_dir "$sps_parent" link) ||
             sps_fail 8 "cannot stage symlink /$sps_path"
@@ -615,41 +730,7 @@ while IFS= read -r sps_entry || [ -n "$sps_entry" ]; do
                 sps_warn "/$sps_path is locally modified; packaged default is unchanged, keeping local file"
                 continue
             fi
-            sps_new_target=$sps_target.sps-new
-            if [ -e "$sps_new_target" ] || [ -L "$sps_new_target" ]; then
-                if [ -f "$sps_new_target" ] && [ ! -L "$sps_new_target" ] &&
-                   [ "$(sps_sha256 "$sps_new_target" 2>/dev/null || :)" = "$sps_new_digest" ]; then
-                    sps_warn "/$sps_path is locally modified; matching .sps-new already exists"
-                    continue
-                fi
-                sps_new_target=$sps_target.sps-new.$sps_version-$sps_release
-            fi
-            sps_new_parent=${sps_new_target%/*}
-            sps_file_tmp=$(mktemp "$sps_new_parent/.sps-file.XXXXXX") ||
-                sps_fail 8 "cannot stage preserved update for /$sps_path"
-            if ! cp -p "$sps_source" "$sps_file_tmp"; then
-                rm -f "$sps_file_tmp"
-                sps_fail 8 "cannot stage preserved update for /$sps_path"
-            fi
-            if sps_is_root; then
-                # chown can clear setuid/setgid, so remember the mode only for those files.
-                sps_file_mode=
-                if [ -u "$sps_source" ] || [ -g "$sps_source" ]; then
-                    sps_file_mode=$(sps_mode_of "$sps_source") ||
-                        sps_fail 4 "cannot determine file mode for /$sps_path"
-                fi
-                sps_normalize_owner "$sps_file_tmp" ||
-                    sps_fail 8 "cannot normalize owner of /$sps_path"
-                if [ -n "$sps_file_mode" ]; then
-                    chmod "$sps_file_mode" "$sps_file_tmp" ||
-                        sps_fail 8 "cannot restore mode on /$sps_path"
-                fi
-            fi
-            mv -f "$sps_file_tmp" "$sps_new_target" || {
-                rm -f "$sps_file_tmp"
-                sps_fail 8 "cannot write preserved update for /$sps_path"
-            }
-            sps_warn "/$sps_path is locally modified; kept it and wrote ${sps_new_target#${SPS_ROOT%/}}"
+            sps_install_sps_new
             continue
         fi
 
@@ -727,7 +808,9 @@ if [ -d "$sps_old_record" ]; then
                 ' "$sps_stage/.SPS/files"; then
                     sps_safe_parents "$sps_path" || continue
                     sps_target_path "$sps_path"
-                    rmdir "$sps_target" 2>/dev/null || :
+                    if [ -d "$sps_target" ] && [ ! -L "$sps_target" ]; then
+                        rmdir "$sps_target" 2>/dev/null || :
+                    fi
                 fi
                 ;;
         esac

@@ -113,7 +113,7 @@ make_recipe "$tmp/repo/broken" broken 1.0 'depend unavailable'
 if "$src" update > "$tmp/broken.out" 2> "$tmp/broken.err"; then
     fail 'repository with a missing dependency unexpectedly indexed'
 fi
-contains "$(sed -n '1,20p' "$tmp/broken.err")" "dependency 'unavailable'"
+contains "$(sed -n '1,80p' "$tmp/broken.err")" "dependency 'unavailable'"
 [ "$(cksum "$index")" = "$old_index" ] ||
     fail 'missing dependency replaced the previous repository index'
 rm -rf "$tmp/repo/broken"
@@ -124,7 +124,7 @@ make_recipe "$tmp/repo/cycle-b" cycle-b 1.0 'depend cycle-a'
 if "$src" update > "$tmp/cycle.out" 2> "$tmp/cycle.err"; then
     fail 'repository dependency cycle unexpectedly indexed'
 fi
-contains "$(sed -n '1,20p' "$tmp/cycle.err")" 'dependency cycle:'
+contains "$(sed -n '1,80p' "$tmp/cycle.err")" 'dependency cycle:'
 [ "$(cksum "$index")" = "$old_index" ] ||
     fail 'dependency cycle replaced the previous repository index'
 rm -rf "$tmp/repo/cycle-a" "$tmp/repo/cycle-b"
@@ -252,7 +252,7 @@ expect_stale_definition()
         > "$tmp/stale-$stale_label.out" 2> "$tmp/stale-$stale_label.err"; then
         fail "sget reused or built an artifact after a stale $stale_label change"
     fi
-    contains "$(sed -n '1,20p' "$tmp/stale-$stale_label.err")" \
+    contains "$(sed -n '1,80p' "$tmp/stale-$stale_label.err")" \
         'changed since indexing'
     [ "$(wc -l < "$TEST_LOG" | awk '{ print $1 }')" = "$old_log_lines" ] ||
         fail "mkpkg or pkin ran after stale $stale_label detection"

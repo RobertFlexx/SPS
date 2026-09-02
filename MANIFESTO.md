@@ -173,11 +173,20 @@ Managed files have one package owner. Before installation, `pkin` checks both
 the owner index and the target filesystem.
 
 If an unowned file already exists where a package wants to install one, that is
-a conflict. SPS does not silently take it over.
+a conflict. SPS does not silently take it over on an ordinary system.
+
+Live images are the exception. Files copied onto the disc for bootstrap, and
+busybox applets that a later package owns, are replaced when `$SPS_ROOT/etc/sps/live`
+is present. The packaged file becomes the owned copy. Configuration under
+`etc` is kept as-is, the package takes ownership, and a differing packaged
+default is written beside it as `.sps-new`. The live shell and init are not
+replaced.
 
 Directories are shared. They are kept out of the exclusive owner index, and an
 existing shared directory is not re-owned or chmodded just because a new
-package lists it.
+package lists it. Usr-merge links (`/bin`, `/sbin`, `/lib`, `/lib64` pointing
+at the matching `usr/*` directory) count as shared directories, so a package
+may install `/lib/udev` without replacing `/lib`.
 
 When `pkin` runs as root, newly installed payload files and new package
 directories are normalized to uid/gid 0 while keeping their packaged modes.

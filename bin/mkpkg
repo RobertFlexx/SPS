@@ -519,20 +519,10 @@ download_http()
 {
 	download_url=$1
 	download_dest=$2
-	# Progress belongs to the downloader. Use a TTY progress display when
-	# stderr is a terminal; otherwise stay quiet enough for log files.
 	if command -v curl >/dev/null 2>&1; then
-		if [ -t 2 ]; then
-			curl -fL -# -o "$download_dest" "$download_url"
-		else
-			curl -fL -sS -o "$download_dest" "$download_url"
-		fi
+		curl -fL --progress-bar -o "$download_dest" "$download_url"
 	elif command -v wget >/dev/null 2>&1; then
-		if [ -t 2 ]; then
-			wget -O "$download_dest" "$download_url"
-		else
-			wget -q -O "$download_dest" "$download_url"
-		fi
+		wget -O "$download_dest" "$download_url"
 	else
 		die_status 9 "cannot download $download_url: curl or wget is required"
 	fi

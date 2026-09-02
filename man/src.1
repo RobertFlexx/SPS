@@ -3,7 +3,7 @@
 src \- update and query SPS source repository indexes
 .SH SYNOPSIS
 .nf
-src update
+src [-q|--quiet] update
 src check RECIPE... [--deps]
 src search PATTERN [--raw]
 src show PACKAGE [--raw]
@@ -27,6 +27,10 @@ and the selected dependency graph, and atomically replace the local package
 index. Invalid input leaves the previous index in place. Recipe-only packages
 are hashed without a temporary directory; a repository is parsed in one AWK
 process rather than one process per recipe.
+Progress is written to stderr for each repository, each recipe hash, Git
+clone/fetch, and index validation so a long update does not look idle.
+.B -q
+keeps only the final summary line on stdout.
 .TP
 .BI check " recipe ..."
 Validate each recipe with the same parser used by
@@ -77,6 +81,12 @@ or an implicit checkout. A clean tracking branch is fast-forwarded only when
 safe. Detached heads and branches without an origin upstream remain pinned;
 locally ahead branches remain unchanged; divergent branches are refused.
 Git prompts are disabled so a missing network fails instead of hanging.
+.SH OPTIONS
+.TP
+.BR -q ", " --quiet
+With
+.B update ,
+hide per-repository and per-recipe progress. The summary line still prints.
 .SH FILES
 .TP
 .B /etc/sps/sps.conf

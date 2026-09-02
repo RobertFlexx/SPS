@@ -44,6 +44,37 @@ are copied when the package did not ship a file for that init.
 When run as uid 0, new payload files and package-created directories are
 normalized to uid/gid 0 while keeping their packaged modes. Existing shared
 directories keep their current ownership and mode.
+Usr-merge directory symlinks
+.BR /bin ,
+.BR /sbin ,
+.BR /lib ,
+and
+.BR /lib64
+that point at the matching
+.I usr/*
+directory are treated as shared directories, so a package may install files
+below
+.B /lib
+without replacing the link.
+.SH CONFLICTS
+An unowned path that already matches the payload (same regular-file digest or
+same symlink target) is adopted.
+A different unowned file is a conflict, except on a live image
+.RI ( $SPS_ROOT/etc/sps/live ),
+where
+.B pkin
+replaces unowned regular files and symlinks so live-seeded copies
+(for example
+.B /usr/bin/openssl
+and busybox applets) can be claimed.
+Paths under
+.B SPS_PRESERVE
+are not overwritten this way. On a live image an unowned preserved file is
+kept, the package takes ownership, and a differing packaged default is written
+beside it as
+.BR .sps-new .
+The live shell and init, and the usr-merge names themselves are not replaced
+this way.
 .SH DATABASE
 Installed records live below
 .BR $SPS_DB/installed .

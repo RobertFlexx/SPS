@@ -59,8 +59,11 @@ sps_safe_parents()
             sps_prefix=$sps_component
         fi
         sps_target_path "$sps_prefix"
-        if [ -L "$sps_target" ] ||
-           { sps_exists "$sps_target" && [ ! -d "$sps_target" ]; }; then
+        if [ -L "$sps_target" ] && ! sps_is_shared_dir_link "$sps_prefix"; then
+            printf '%s: refusing unsafe target path /%s\n' "$sps_prog" "$sps_prefix" >&2
+            return 1
+        fi
+        if sps_exists "$sps_target" && [ ! -d "$sps_target" ]; then
             printf '%s: refusing unsafe target path /%s\n' "$sps_prog" "$sps_prefix" >&2
             return 1
         fi

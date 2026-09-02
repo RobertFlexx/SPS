@@ -370,6 +370,57 @@ sps_is_preserved_path()
 	return 1
 }
 
+# True when $1 is a conservative in-root directory symlink that packages
+# may share: usr-merge names, plus filesystem compat links var/run and
+# var/lock. Absolute links, unexpected targets, and any other name fail.
+sps_is_shared_dir_link()
+{
+	sps_share_rel=${1#/}
+	sps_share_rel=${sps_share_rel%/}
+	sps_share_path=$(sps_root_path "/$sps_share_rel")
+	[ -L "$sps_share_path" ] || return 1
+	[ -d "$sps_share_path" ] || return 1
+	sps_share_target=$(readlink "$sps_share_path") || return 1
+	sps_share_target=${sps_share_target%/}
+	case $sps_share_rel in
+		bin) [ "$sps_share_target" = usr/bin ] || return 1 ;;
+		sbin) [ "$sps_share_target" = usr/sbin ] || return 1 ;;
+		lib) [ "$sps_share_target" = usr/lib ] || return 1 ;;
+		lib64) [ "$sps_share_target" = usr/lib64 ] || return 1 ;;
+		var/run) [ "$sps_share_target" = ../run ] || return 1 ;;
+		var/lock) [ "$sps_share_target" = ../run/lock ] || return 1 ;;
+		*) return 1 ;;
+	esac
+	return 0
+}
+
+# True when $1 is a top-level usr-merge directory symlink.
+sps_is_usr_merge_dir()
+{
+	case ${1#/} in
+		bin|sbin|lib|lib64) sps_is_shared_dir_link "$1" ;;
+		*) return 1 ;;
+	esac
+}
+
+# Live images write /etc/sps/live. Only the target root is consulted so a
+# host live marker cannot change pkin policy for a chroot or test root.
+sps_is_live_bootstrap()
+{
+	[ -f "$(sps_root_path /etc/sps/live)" ]
+}
+
+# Replacing these on a live image would break the running disc.
+sps_is_live_critical_path()
+{
+	case ${1#/} in
+		bin/sh|usr/bin/sh|sbin/init|usr/sbin/init|\
+		bin/busybox|usr/bin/busybox|sbin/busybox|usr/sbin/busybox)
+			return 0 ;;
+	esac
+	return 1
+}
+
 # Cache the uid check. pkin calls this for many payload entries.
 sps_is_root()
 {

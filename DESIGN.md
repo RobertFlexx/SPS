@@ -256,12 +256,27 @@ index and the target filesystem before writing a payload entry.
 An existing unowned file is a conflict unless it is already identical to the
 payload: the same symlink target, or a regular file with the same SHA-256
 digest. Identical paths are adopted so a live image can install `filesystem`
-over usr-merge links it already created. A different target or digest still
-fails.
+over usr-merge links it already created.
 
-Directories are shared and are not stored in the exclusive owner index.
-Existing shared directories are not re-owned or chmodded just because another
-package contains the same directory entry.
+A different digest still fails on an ordinary system. On a live image
+(`$SPS_ROOT/etc/sps/live`), `pkin` replaces an unowned regular file or
+symlink with the packaged leaf so host copies such as `/usr/bin/openssl`
+and busybox applets such as `/usr/bin/clear` can be claimed by their
+packages. Paths under `SPS_PRESERVE` are not overwritten this way. On a live
+image, an unowned preserved file (typically host-seeded `/etc/ssl`) is kept
+as-is, the package takes ownership, and a differing packaged default is
+written beside it as `.sps-new`. The live shell and init (`bin/sh`,
+`sbin/init`, `busybox`), and the usr-merge names `bin`, `sbin`, `lib`,
+and `lib64` are not replaced this way. A different usr-merge symlink
+target remains a conflict.
+
+Shared directories include real directories and conservative in-root
+directory symlinks: usr-merge `bin`, `sbin`, `lib`, and `lib64` when they
+point at the matching `usr/*` directory, and filesystem compat links
+`var/run` -> `../run` and `var/lock` -> `../run/lock`. A package may install
+files below `/lib` or `/var/run` without replacing those links. Existing
+shared directories are not re-owned or chmodded just because another package
+contains the same directory entry.
 
 When installation runs as uid 0, newly installed regular payload files and new
 package directories are normalized to uid/gid 0 while retaining their packaged

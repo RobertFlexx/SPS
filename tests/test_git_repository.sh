@@ -29,7 +29,7 @@ expect_update_failure()
     if "$src" update >"$tmp/failure.out" 2>"$tmp/failure.err"; then
         fail "Git update unexpectedly succeeded: $expected"
     fi
-    contains "$(sed -n '1,40p' "$tmp/failure.err")" "$expected"
+    contains "$(sed -n '1,80p' "$tmp/failure.err")" "$expected"
 }
 
 write_seed_recipe()

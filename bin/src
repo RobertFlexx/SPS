@@ -21,15 +21,23 @@ sps_index=$sps_index_dir/packages.index
 sps_tab=$(printf '\tX')
 sps_tab=${sps_tab%X}
 
+src_quiet=0
+
 src_usage()
 {
-    printf '%s\n' 'usage: src update'
+    printf '%s\n' 'usage: src [-q|--quiet] update'
     printf '%s\n' '       src check RECIPE... [--deps]'
     printf '%s\n' '       src search PATTERN [--raw]'
     printf '%s\n' '       src show PACKAGE [--raw]'
     printf '%s\n' '       src which PACKAGE'
     printf '%s\n' '       src list [--raw]'
     printf '%s\n' '       src status [--raw]'
+}
+
+src_progress()
+{
+    [ "${src_quiet:-0}" -eq 0 ] || return 0
+    printf '%s: %s\n' "$sps_prog" "$*" >&2
 }
 
 src_need_index()
@@ -90,9 +98,12 @@ src_sync_git()
 		src_clone_work=$(sps_mktemp_dir "$src_git_parent" \
 			"clone-$src_git_name")
 		src_clone_checkout=$src_clone_work/repository
+		src_progress "cloning '$src_git_name'"
 		# Depth 1 is enough for recipes. Later fetches stay full so
 		# fast-forward and divergence checks keep working.
-		if ! git clone --depth 1 --single-branch -- \
+		# --progress keeps clone/fetch from looking hung when stderr
+		# is not a terminal (setup, logs, scripted live installs).
+		if ! git clone --depth 1 --single-branch --progress -- \
 			"$src_git_source" "$src_clone_checkout"; then
 			sps_die "$SPS_EX_NETWORK" \
 				"cannot clone repository '$src_git_name'"
@@ -136,7 +147,8 @@ src_sync_git()
 			"repository '$src_git_name' has local modifications; refusing to update $src_git_checkout"
 	fi
 
-	if ! git -C "$src_git_checkout" fetch origin; then
+	src_progress "fetching '$src_git_name'"
+	if ! git -C "$src_git_checkout" fetch --progress origin; then
 		sps_die "$SPS_EX_NETWORK" \
 			"cannot fetch repository '$src_git_name'"
 	fi
@@ -170,10 +182,12 @@ src_sync_git()
 		sps_die "$SPS_EX_PACKAGE" \
 			"cannot read upstream for repository '$src_git_name'"
 	if [ "$src_git_head" = "$src_git_upstream_head" ]; then
+		src_progress "repository '$src_git_name' is up to date"
 		return 0
 	fi
 	if git -C "$src_git_checkout" merge-base --is-ancestor \
 		"$src_git_head" "$src_git_upstream_head"; then
+		src_progress "fast-forwarding '$src_git_name'"
 		if ! git -C "$src_git_checkout" merge --ff-only \
 			"$src_git_upstream" >&2; then
 			sps_die "$SPS_EX_CONFLICT" \
@@ -193,11 +207,19 @@ src_sync_git()
 
 src_update()
 {
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            -q|--quiet) src_quiet=1; shift ;;
+            -v|--verbose) src_quiet=0; shift ;;
+            *) break ;;
+        esac
+    done
     [ "$#" -eq 0 ] || {
         src_usage >&2
         exit "$SPS_EX_USAGE"
     }
 
+	src_progress "updating package index"
 	sps_mkdir "$sps_index_dir"
 	src_work=
 	src_clone_work=
@@ -233,6 +255,7 @@ src_update()
 	      src_repo_source src_repo_path src_repo_priority src_repo_order
 	do
 		[ -n "$src_repo_name" ] || continue
+		src_progress "repository '$src_repo_name' ($src_repo_kind)"
 		case $src_repo_kind in
 			git) src_sync_git "$src_repo_name" "$src_repo_source" "$src_repo_path" ;;
 			dir) ;;
@@ -257,6 +280,7 @@ src_update()
             break
         }
 
+		src_progress "scanning recipes in '$src_repo_name'"
 		if ! find "$src_repo_absolute" \
 			\( -type d \( -name .git -o -name files -o -name patches -o \
 				-name hooks \) -prune \) -o \
@@ -281,6 +305,8 @@ src_update()
             break
         }
         src_repo_packages=0
+        src_recipe_total=$(awk 'END { print NR + 0 }' "$src_work/recipes")
+        src_progress "indexing '$src_repo_name' ($src_recipe_total recipes)"
         while IFS= read -r src_recipe || [ -n "$src_recipe" ]
         do
             [ -n "$src_recipe" ] || continue
@@ -318,10 +344,14 @@ src_update()
                 break
             }
             src_repo_packages=$((src_repo_packages + 1))
+            src_recipe_label=${src_recipe%/*}
+            src_recipe_label=${src_recipe_label##*/}
+            src_progress "$src_repo_name $src_repo_packages/$src_recipe_total $src_recipe_label"
         done < "$src_work/recipes"
 
         [ "$src_failed" -eq 0 ] || break
         if [ "$src_repo_packages" -gt 0 ]; then
+            src_progress "parsing recipes in '$src_repo_name'"
             if ! awk -v recipe_repo="$src_repo_name" \
                 -v recipe_priority="$src_repo_priority" \
                 -v recipe_digest_map="$src_work/digests" \
@@ -341,11 +371,13 @@ src_update()
         sps_die "$SPS_EX_PACKAGE" \
             "repository update failed; previous index was preserved"
     fi
+	src_progress "validating index"
 	if ! awk -v action=validate -v program=src \
 		-f "$SPS_LIBDIR/index.awk" "$src_work/packages.index"; then
         sps_die "$SPS_EX_PACKAGE" \
 			"generated repository index is malformed"
 	fi
+	src_progress "validating dependency graph"
 	if ! awk -v action=validate -v include_build=1 -v program=src \
 		-f "$SPS_LIBDIR/version.awk" -f "$SPS_LIBDIR/deps.awk" \
 		"$src_work/packages.index"; then
@@ -545,6 +577,23 @@ src_check()
 
     printf 'checked %d recipe(s)\n' "$src_check_count"
 }
+
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -q|--quiet) src_quiet=1; shift ;;
+        -v|--verbose) src_quiet=0; shift ;;
+        -h|--help)
+            src_usage
+            exit 0
+            ;;
+        --) shift; break ;;
+        -*)
+            src_usage >&2
+            exit "$SPS_EX_USAGE"
+            ;;
+        *) break ;;
+    esac
+done
 
 case ${1-} in
     update)
