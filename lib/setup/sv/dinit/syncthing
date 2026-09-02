@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/syncthing serve --no-browser --home=/var/lib/syncthing
+restart = true
+smooth-recovery = true

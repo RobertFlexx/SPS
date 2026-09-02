@@ -1,0 +1,9 @@
+#!/sbin/openrc-run
+description="nftables packet filter"
+command="/usr/sbin/nft"
+command_args="-f /etc/nftables.conf"
+command_background="no"
+
+depend() {
+    need localmount
+}

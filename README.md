@@ -190,8 +190,7 @@ checklist (`--extra`) plus locale and login-shell screens.
 The installer writes hostname, timezone, keymap, and a first user into the
 target, then copies bundled live recipe trees (when present), runs
 `src update`, and `sget install`. Guided partitioning is optional and waits
-until the last confirmation. Choose systemd, OpenRC, s6, runit, dinit, or
-Shepherd as PID 1 (`--init`); those packages conflict. `grub-install` still needs
+until the last confirmation. Choose systemd, OpenRC, s6, runit, dinit, Shepherd, or SysV as PID 1 (`--init`); those packages conflict. `grub-install` still needs
 `--install-bootloader` and `--disk`.
 
 ## SPS Linux live ISO

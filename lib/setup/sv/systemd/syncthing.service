@@ -1,0 +1,10 @@
+[Unit]
+Description=Syncthing file synchronization
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/syncthing serve --no-browser --home=/var/lib/syncthing
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

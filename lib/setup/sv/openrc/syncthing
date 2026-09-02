@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+description="Syncthing file synchronization"
+command="/usr/bin/syncthing"
+command_args="serve --no-browser --home=/var/lib/syncthing"
+command_background="yes"
+pidfile="/run/syncthing.pid"
+
+depend() {
+    use net
+    after net
+}
+
+start_pre() {
+	install -d -m 0755 /var/lib/syncthing || :
+}

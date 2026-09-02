@@ -9,7 +9,15 @@
 
 setup_service_known_inits()
 {
-	printf '%s\n' systemd openrc s6 runit dinit shepherd
+	printf '%s\n' systemd openrc s6 runit dinit shepherd sysvinit
+}
+
+setup_service_is_known_init()
+{
+	case $1 in
+		systemd|openrc|s6|runit|dinit|shepherd|sysvinit) return 0 ;;
+	esac
+	return 1
 }
 
 setup_service_map_file()
@@ -87,16 +95,69 @@ setup_service_abs()
 	fi
 }
 
-setup_service_init_of()
+setup_service_set_init()
 {
+	# Init name from a landed init-* metapackage in the target.
 	setup_svc_root=$(setup_service_root "$1")
 	if [ -z "$setup_svc_root" ]; then
-		setup_svc_initf=/etc/sps/init
+		setup_svc_setdir=/usr/share/sps/sets
 	else
-		setup_svc_initf=$setup_svc_root/etc/sps/init
+		setup_svc_setdir=$setup_svc_root/usr/share/sps/sets
 	fi
+	[ -d "$setup_svc_setdir" ] || return 1
+	setup_svc_found=
+	setup_svc_n=0
+	for setup_svc_name in systemd openrc s6 runit dinit shepherd sysvinit
+	do
+		[ -f "$setup_svc_setdir/init-$setup_svc_name" ] || continue
+		setup_svc_n=$((setup_svc_n + 1))
+		setup_svc_found=$setup_svc_name
+	done
+	[ "$setup_svc_n" -eq 1 ] || return 1
+	printf '%s\n' "$setup_svc_found"
+}
+
+setup_service_init_from_sbin()
+{
+	# Target /sbin/init only. Busybox live PID 1 is not a choice.
+	setup_svc_initbin=$(setup_service_abs "$1" /sbin/init)
+	[ -e "$setup_svc_initbin" ] || return 1
+	setup_svc_real=$(readlink -f "$setup_svc_initbin" 2>/dev/null) ||
+		setup_svc_real=$setup_svc_initbin
+	case $setup_svc_real in
+		*systemd*) printf '%s\n' systemd; return 0 ;;
+		*openrc*) printf '%s\n' openrc; return 0 ;;
+		*runit*) printf '%s\n' runit; return 0 ;;
+		*s6*) printf '%s\n' s6; return 0 ;;
+		*dinit*) printf '%s\n' dinit; return 0 ;;
+		*shepherd*) printf '%s\n' shepherd; return 0 ;;
+		*busybox*) return 1 ;;
+	esac
+	printf '%s\n' sysvinit
+	return 0
+}
+
+setup_service_init_of()
+{
+	# Target init. Never use host PID 1 when SPS_ROOT is a disk.
+	setup_svc_pkg_init=$(setup_service_set_init "$1") || setup_svc_pkg_init=
+	if [ -n "$setup_svc_pkg_init" ]; then
+		printf '%s\n' "$setup_svc_pkg_init"
+		return 0
+	fi
+	setup_svc_initf=$(setup_service_abs "$1" /etc/sps/init)
+	setup_svc_file_init=
 	if [ -f "$setup_svc_initf" ]; then
-		sed -n '1p' "$setup_svc_initf"
+		setup_svc_file_init=$(sed -n '1p' "$setup_svc_initf")
+	fi
+	if setup_service_is_known_init "$setup_svc_file_init"; then
+		printf '%s\n' "$setup_svc_file_init"
+		return 0
+	fi
+	setup_svc_bin_init=$(setup_service_init_from_sbin "$1") ||
+		setup_svc_bin_init=
+	if [ -n "$setup_svc_bin_init" ]; then
+		printf '%s\n' "$setup_svc_bin_init"
 		return 0
 	fi
 	printf '%s\n' none
@@ -221,6 +282,12 @@ setup_service_ensure_scripts()
 					"/etc/shepherd.d/$setup_svc_name.scm")" \
 				644 "$setup_svc_stock/$setup_svc_name.scm" || :
 			;;
+		sysvinit)
+			setup_service_copy_file \
+				"$(setup_service_abs "$setup_svc_root" \
+					"/etc/rc.d/init.d/$setup_svc_name")" \
+				755 "$setup_svc_stock/$setup_svc_name" || :
+			;;
 	esac
 	return 0
 }
@@ -331,6 +398,45 @@ setup_service_enable_shepherd()
 	return 0
 }
 
+setup_service_enable_sysvinit()
+{
+	setup_svc_rc=$2
+	setup_svc_level=${3:-default}
+	[ -n "$setup_svc_rc" ] || return 1
+	setup_svc_script=$(setup_service_abs "$1" \
+		"/etc/rc.d/init.d/$setup_svc_rc")
+	setup_svc_rel=/etc/rc.d/init.d/$setup_svc_rc
+	if [ ! -f "$setup_svc_script" ]; then
+		setup_svc_script=$(setup_service_abs "$1" \
+			"/etc/init.d/$setup_svc_rc")
+		setup_svc_rel=/etc/init.d/$setup_svc_rc
+	fi
+	[ -f "$setup_svc_script" ] || return 1
+	setup_svc_prio=50
+	if [ "$setup_svc_rc" = sddm ]; then
+		setup_svc_prio=80
+	fi
+	if [ "$setup_svc_level" = sysinit ]; then
+		setup_svc_d=$(setup_service_abs "$1" /etc/rc.d/rcS.d)
+		mkdir -p "$setup_svc_d" || return 1
+		ln -sf "$setup_svc_rel" "$setup_svc_d/S20$setup_svc_rc"
+		return 0
+	fi
+	for setup_svc_rl in 2 3 4 5; do
+		setup_svc_d=$(setup_service_abs "$1" /etc/rc.d/rc${setup_svc_rl}.d)
+		mkdir -p "$setup_svc_d" || return 1
+		ln -sf "$setup_svc_rel" \
+			"$setup_svc_d/S${setup_svc_prio}$setup_svc_rc"
+	done
+	for setup_svc_rl in 0 1 6; do
+		setup_svc_d=$(setup_service_abs "$1" /etc/rc.d/rc${setup_svc_rl}.d)
+		mkdir -p "$setup_svc_d" || return 1
+		ln -sf "$setup_svc_rel" \
+			"$setup_svc_d/K${setup_svc_prio}$setup_svc_rc"
+	done
+	return 0
+}
+
 setup_service_is_live_root()
 {
 	setup_svc_root=$(setup_service_root "$1")
@@ -364,6 +470,23 @@ setup_service_pid1()
 		s6-svscan|s6-linux-init*) printf '%s\n' s6; return 0 ;;
 		dinit) printf '%s\n' dinit; return 0 ;;
 		shepherd) printf '%s\n' shepherd; return 0 ;;
+		init)
+			if [ -r /proc/1/exe ]; then
+				setup_svc_exe=$(readlink -f /proc/1/exe 2>/dev/null) ||
+					setup_svc_exe=
+				case $setup_svc_exe in
+					*systemd*) printf '%s\n' systemd; return 0 ;;
+					*busybox*) ;;
+					*)
+						if [ -e /run/initctl ] || [ -p /dev/initctl ]
+						then
+							printf '%s\n' sysvinit
+							return 0
+						fi
+						;;
+				esac
+			fi
+			;;
 	esac
 	case $setup_svc_cmd in
 		*systemd*) printf '%s\n' systemd; return 0 ;;
@@ -373,6 +496,10 @@ setup_service_pid1()
 		*dinit*) printf '%s\n' dinit; return 0 ;;
 		*shepherd*) printf '%s\n' shepherd; return 0 ;;
 	esac
+	if [ -e /run/initctl ] || [ -p /dev/initctl ]; then
+		printf '%s\n' sysvinit
+		return 0
+	fi
 	if [ -d /run/runit ]; then
 		printf '%s\n' runit
 		return 0
@@ -438,6 +565,14 @@ setup_service_maybe_start()
 			[ -n "$setup_svc_rc" ] || return 0
 			if command -v herd >/dev/null 2>&1; then
 				herd start "$setup_svc_rc" 2>/dev/null || :
+			fi
+			;;
+		sysvinit)
+			[ -n "$setup_svc_rc" ] || return 0
+			if [ -x /etc/rc.d/init.d/"$setup_svc_rc" ]; then
+				/etc/rc.d/init.d/"$setup_svc_rc" start 2>/dev/null || :
+			elif [ -x /etc/init.d/"$setup_svc_rc" ]; then
+				/etc/init.d/"$setup_svc_rc" start 2>/dev/null || :
 			fi
 			;;
 	esac
@@ -512,6 +647,14 @@ setup_service_enable_one()
 				setup_svc_did=1
 			fi
 			;;
+		sysvinit)
+			if [ -n "$setup_svc_rc" ] &&
+			   setup_service_enable_sysvinit "$setup_svc_root" \
+				"$setup_svc_rc" "$setup_svc_level"
+			then
+				setup_svc_did=1
+			fi
+			;;
 		*)
 			return 1
 			;;
@@ -555,7 +698,7 @@ setup_service_hook_enable()
 	setup_svc_root=${SPS_ROOT:-/}
 	setup_svc_init=$(setup_service_init_of "$setup_svc_root")
 	case $setup_svc_init in
-		systemd|openrc|s6|runit|dinit|shepherd) ;;
+		systemd|openrc|s6|runit|dinit|shepherd|sysvinit) ;;
 		*) return 0 ;;
 	esac
 	setup_service_enable_one "$setup_svc_root" "$setup_svc_init" \

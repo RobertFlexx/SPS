@@ -1,0 +1,42 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          dbus
+# Required-Start:    $remote_fs
+# Required-Stop:     $remote_fs
+# Default-Start:     S
+# Default-Stop:      
+# Short-Description: D-Bus system message bus
+### END INIT INFO
+
+if [ -f /etc/rc.d/init.d/functions ]; then
+	. /etc/rc.d/init.d/functions
+elif [ -f /etc/init.d/functions ]; then
+	. /etc/init.d/functions
+fi
+
+NAME=dbus
+DAEMON="/usr/bin/dbus-daemon"
+DAEMON_ARGS="--system --nofork --nopidfile --nosyslog"
+PIDFILE="/run/dbus.pid"
+USER=""
+
+start() {
+	mkdir -p /run/dbus /var/lib/dbus
+	start_daemon -p "$PIDFILE" ${USER:+-c "$USER"} "$DAEMON" $DAEMON_ARGS
+}
+
+stop() {
+	killproc -p "$PIDFILE" "$DAEMON"
+}
+
+status() {
+	pidofproc -p "$PIDFILE" "$DAEMON"
+}
+
+case $1 in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; start ;;
+	status) status ;;
+	*) printf '%s\n' "Usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
+esac

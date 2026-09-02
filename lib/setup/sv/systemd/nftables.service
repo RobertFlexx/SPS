@@ -1,0 +1,10 @@
+[Unit]
+Description=nftables packet filter
+
+[Service]
+ExecStart=/usr/sbin/nft -f /etc/nftables.conf
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

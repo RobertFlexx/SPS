@@ -6,5 +6,6 @@ command_background="yes"
 pidfile="/run/dhcpcd.pid"
 
 depend() {
-	provide net
+    use net
+    after net
 }

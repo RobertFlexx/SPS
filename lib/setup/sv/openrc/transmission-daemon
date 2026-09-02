@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="Transmission BitTorrent daemon"
+command="/usr/bin/transmission-daemon"
+command_args="-f --log-level=error"
+command_background="yes"
+pidfile="/run/transmission-daemon.pid"
+
+depend() {
+    use net
+    after net
+}

@@ -1,4 +1,3 @@
-type = process
+type = script
 command = /usr/libexec/lxc/lxc-net start
-restart = true
-smooth-recovery = true
+restart = false

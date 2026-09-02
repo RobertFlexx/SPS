@@ -1,7 +1,6 @@
 [Unit]
-Description=WirePlumber session manager
-After=dbus.service
-Wants=dbus.service
+Description=PipeWire session manager
+After=network.target dbus.service
 
 [Service]
 ExecStart=/usr/bin/wireplumber

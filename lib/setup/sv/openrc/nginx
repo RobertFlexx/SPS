@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="nginx HTTP server"
+command="/usr/bin/nginx"
+command_args="-g daemon off;"
+command_background="yes"
+pidfile="/run/nginx.pid"
+
+depend() {
+    use net
+    after net
+}

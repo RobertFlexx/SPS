@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/transmission-daemon -f --log-level=error
+restart = true
+smooth-recovery = true

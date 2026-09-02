@@ -1,0 +1,10 @@
+[Unit]
+Description=chrony NTP daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/chronyd -d
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

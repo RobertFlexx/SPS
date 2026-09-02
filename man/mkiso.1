@@ -66,9 +66,22 @@ or
 .TP
 .BI --init " name"
 .B systemd
-or
-.B openrc .
-Default systemd.
+,
+.B openrc
+,
+.B s6
+,
+.B runit
+,
+.B dinit
+,
+.B shepherd
+, or
+.B sysvinit .
+This is the default
+.I /etc/sps/init
+on the disc. Live PID 1 stays busybox unless the build host has systemd
+or OpenRC binaries. Default systemd.
 .TP
 .BI --busybox " file"
 Static busybox used for the initramfs and live

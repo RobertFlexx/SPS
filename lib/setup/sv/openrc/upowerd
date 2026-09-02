@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="UPower power management"
+command="/usr/libexec/upowerd"
+command_args=""
+command_background="yes"
+pidfile="/run/upowerd.pid"
+
+depend() {
+    need dbus
+    after dbus
+}

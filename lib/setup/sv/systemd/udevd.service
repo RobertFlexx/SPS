@@ -1,0 +1,9 @@
+[Unit]
+Description=eudev device manager
+
+[Service]
+ExecStart=/usr/sbin/udevd
+Restart=on-failure
+
+[Install]
+WantedBy=sysinit.target

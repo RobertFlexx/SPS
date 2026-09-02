@@ -1,0 +1,10 @@
+[Unit]
+Description=nginx HTTP server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/nginx -g 'daemon off;'
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,22 +1,48 @@
-# package  systemd-unit  wanted-by  openrc-name  openrc-runlevel
-# "-" means this init has no file for that package.
+# package  systemd-unit  wanted-by  rc-name  runlevel
+# Scripts for every init live in lib/setup/sv and are also shipped
+# in the daemon recipe (systemd, OpenRC, runit, s6, dinit,
+# Shepherd, SysV). pkin enables the detected target init.
 dbus	dbus.service	multi-user.target	dbus	sysinit
+eudev	udevd.service	sysinit.target	udevd	sysinit
+udevd	udevd.service	sysinit.target	udevd	sysinit
+elogind	elogind.service	multi-user.target	elogind	sysinit
 sddm	sddm.service	graphical.target	sddm	default
 networkmanager	NetworkManager.service	multi-user.target	NetworkManager	default
+NetworkManager	NetworkManager.service	multi-user.target	NetworkManager	default
 openssh	sshd.service	multi-user.target	sshd	default
+sshd	sshd.service	multi-user.target	sshd	default
 cups	cups.service	multi-user.target	cupsd	default
+cupsd	cups.service	multi-user.target	cupsd	default
 bluez	bluetooth.service	multi-user.target	bluetooth	default
+bluetooth	bluetooth.service	multi-user.target	bluetooth	default
 iwd	iwd.service	multi-user.target	iwd	default
 dhcpcd	dhcpcd.service	multi-user.target	dhcpcd	default
 seatd	seatd.service	multi-user.target	seatd	default
-elogind	elogind.service	multi-user.target	elogind	sysinit
 power-profiles-daemon	power-profiles-daemon.service	multi-user.target	power-profiles-daemon	default
-bluetooth	bluetooth.service	multi-user.target	bluetooth	default
-sshd	sshd.service	multi-user.target	sshd	default
-cupsd	cups.service	multi-user.target	cupsd	default
-NetworkManager	NetworkManager.service	multi-user.target	NetworkManager	default
 pipewire	pipewire.service	default.target	pipewire	default
 wireplumber	wireplumber.service	default.target	wireplumber	default
+polkit	polkit.service	multi-user.target	polkitd	sysinit
+polkitd	polkit.service	multi-user.target	polkitd	sysinit
+cronie	crond.service	multi-user.target	crond	default
+crond	crond.service	multi-user.target	crond	default
+at	atd.service	multi-user.target	atd	default
+atd	atd.service	multi-user.target	atd	default
+chrony	chronyd.service	multi-user.target	chronyd	default
+chronyd	chronyd.service	multi-user.target	chronyd	default
+haveged	haveged.service	multi-user.target	haveged	sysinit
+nginx	nginx.service	multi-user.target	nginx	default
+caddy	caddy.service	multi-user.target	caddy	default
+redis	redis.service	multi-user.target	redis	default
+syncthing	syncthing.service	multi-user.target	syncthing	default
+wpa_supplicant	wpa_supplicant.service	multi-user.target	wpa_supplicant	default
+tlp	tlp.service	multi-user.target	tlp	default
+smartmontools	smartd.service	multi-user.target	smartd	default
+smartd	smartd.service	multi-user.target	smartd	default
+upower	upower.service	multi-user.target	upowerd	default
+upowerd	upower.service	multi-user.target	upowerd	default
+transmission	transmission-daemon.service	multi-user.target	transmission-daemon	default
+transmission-daemon	transmission-daemon.service	multi-user.target	transmission-daemon	default
+nftables	nftables.service	multi-user.target	nftables	sysinit
 fail2ban	fail2ban.service	multi-user.target	fail2ban	default
 unbound	unbound.service	multi-user.target	unbound	default
 dnsmasq	dnsmasq.service	multi-user.target	dnsmasq	default

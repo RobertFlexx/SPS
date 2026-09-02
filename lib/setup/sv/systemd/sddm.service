@@ -1,7 +1,6 @@
 [Unit]
 Description=Simple Desktop Display Manager
-After=dbus.service
-Wants=dbus.service
+After=network.target dbus.service
 
 [Service]
 ExecStart=/usr/bin/sddm

@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/caddy run
+restart = true
+smooth-recovery = true

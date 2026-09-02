@@ -1,0 +1,10 @@
+[Unit]
+Description=UPower power management
+After=network.target dbus.service
+
+[Service]
+ExecStart=/usr/libexec/upowerd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

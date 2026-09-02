@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+install -d -m 0755 /var/lib/syncthing || :
+exec /usr/bin/syncthing serve --no-browser --home=/var/lib/syncthing

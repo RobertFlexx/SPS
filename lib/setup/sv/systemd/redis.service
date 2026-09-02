@@ -1,0 +1,10 @@
+[Unit]
+Description=Redis data store
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/redis-server --daemonize no
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

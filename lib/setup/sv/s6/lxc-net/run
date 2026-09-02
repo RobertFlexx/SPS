@@ -1,3 +1,4 @@
 #!/bin/sh
 exec 2>&1
-exec /usr/libexec/lxc/lxc-net start
+/usr/libexec/lxc/lxc-net start
+exec pause

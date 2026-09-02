@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/nginx -g 'daemon off;'
+restart = true
+smooth-recovery = true

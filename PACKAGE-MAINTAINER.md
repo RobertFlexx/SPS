@@ -315,14 +315,25 @@ retained modified protected files and any state created by lifecycle hooks.
 ## Init scripts for daemons
 
 Mapped daemons live in `lib/setup/services`. After `pkin`, SPS enables the
-service for the init named in `/etc/sps/init`. Supported inits are `systemd`,
-`openrc`, `s6`, `runit`, `dinit`, and `shepherd`.
+service for the init named in `/etc/sps/init` (or inferred from the
+landed `init-*` package). Supported inits are `systemd`, `openrc`,
+`s6`, `runit`, `dinit`, `shepherd`, and `sysvinit`.
 
-A package should ship a systemd unit under `$PKG/usr/lib/systemd/system` and
-an OpenRC script under `$PKG/etc/init.d` (see `seatd`, `openssh`, and the
-database/network daemons in extra). When the chosen init has no file in the
-package, `pkin` copies a stock script from `lib/setup/sv/<init>/` and then
-enables it. Add a stock file for every supported init whenever you introduce a
+A daemon recipe ships a file for every init into that init's directory:
+
+```text
+$PKG/usr/lib/systemd/system/NAME.service
+$PKG/etc/init.d/NAME
+$PKG/etc/sv/NAME/run
+$PKG/etc/s6/sv/NAME/run
+$PKG/etc/dinit.d/NAME
+$PKG/etc/shepherd.d/NAME.scm
+$PKG/etc/rc.d/init.d/NAME
+```
+
+`pkin` enables only the detected target init. Stock copies in
+`lib/setup/sv/<init>/` fill a gap when an older package omitted a file.
+Add a stock file for every supported init whenever you introduce a
 new daemon:
 
 ```text
@@ -332,10 +343,11 @@ lib/setup/sv/runit/NAME/run
 lib/setup/sv/s6/NAME/run
 lib/setup/sv/dinit/NAME
 lib/setup/sv/shepherd/NAME.scm
+lib/setup/sv/sysvinit/NAME
 ```
 
 `tools/write-stock-services.py` regenerates those stock files from its service
-table and installs the systemd plus OpenRC copies next to extra recipes.
+table and installs copies next to core and extra recipes.
 
 ## Rolling upgrades (`tools/upgrade-recipes`)
 

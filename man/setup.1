@@ -54,17 +54,20 @@ with
 .B --init runit
 ,
 .B --init dinit
-, or
+,
 .B --init shepherd
+, or
+.B --init sysvinit
 selects PID 1;
 .B sget
 will not install more than one of those families.
 After packages land,
 .B setup
-copies stock service scripts from
+enables the scripts each daemon package already installed for that init
+(stock copies from
 .I $SPS_LIBDIR/setup/sv
-when a package did not ship a file for the chosen init, then enables
-known services (SDDM, dbus, sshd, NetworkManager, and others listed in
+fill a gap). Known services include SDDM, dbus, sshd, NetworkManager,
+and others listed in
 .I $SPS_LIBDIR/setup/services ).
 Pass
 .B --services no
@@ -198,13 +201,13 @@ see
 .B --flatpak yes|no
 Install the Flatpak set and attempt to add Flathub after packages land.
 .TP
-.B --init systemd|openrc|s6|runit|dinit|shepherd|none
+.B --init systemd|openrc|s6|runit|dinit|shepherd|sysvinit|none
 PID 1 on the installed system. Scripts default to none so a fixture
 install does not pull an init. The interactive screen defaults to the
 live image's
 .I /etc/sps/init
 when that file names a known init, otherwise systemd.
-Supervision inits pull eudev and elogind the same way OpenRC does.
+Supervision inits and SysV pull eudev and elogind the same way OpenRC does.
 The power set does not pull elogind; systemd gets logind from systemd
 itself so a Plasma install can use systemd without a conflict.
 .TP

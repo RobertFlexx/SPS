@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/redis-server --daemonize no
+restart = true
+smooth-recovery = true

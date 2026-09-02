@@ -1,5 +1,6 @@
 [Unit]
 Description=DHCP client daemon
+After=network.target
 
 [Service]
 ExecStart=/usr/sbin/dhcpcd --nobackground

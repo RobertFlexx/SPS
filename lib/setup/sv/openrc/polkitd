@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="polkit authorization manager"
+command="/usr/libexec/polkitd"
+command_args="--no-debug"
+command_background="yes"
+pidfile="/run/polkitd.pid"
+
+depend() {
+    need dbus
+    after dbus
+}

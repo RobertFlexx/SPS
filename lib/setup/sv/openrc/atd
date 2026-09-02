@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="at job scheduler"
+command="/usr/sbin/atd"
+command_args="-f"
+command_background="yes"
+pidfile="/run/atd.pid"
+
+depend() {
+    use net
+    after net
+}

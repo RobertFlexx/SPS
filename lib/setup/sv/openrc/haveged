@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="haveged entropy daemon"
+command="/usr/sbin/haveged"
+command_args="-w 1024 -F"
+command_background="yes"
+pidfile="/run/haveged.pid"
+
+depend() {
+    need localmount
+}

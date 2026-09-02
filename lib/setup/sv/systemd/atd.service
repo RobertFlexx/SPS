@@ -1,0 +1,10 @@
+[Unit]
+Description=at job scheduler
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/atd -f
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

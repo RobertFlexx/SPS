@@ -3,7 +3,7 @@
  (list (service
         '(wireplumber)
         #:requirement '(dbus)
-        #:documentation "WirePlumber session manager"
+        #:documentation "PipeWire session manager"
         #:start (make-forkexec-constructor '("/usr/bin/wireplumber"))
         #:stop (make-kill-destructor)
         #:respawn? #t)))

@@ -118,6 +118,26 @@ setup_service_enable_one "$root2" runit openssh >/dev/null ||
 grep -q '/opt/custom/sshd' "$root2/etc/sv/sshd/run" ||
 	fail 'stock runit script overwrote a package-shipped run file'
 
+enabled=$(setup_service_enable_one "$root2" sysvinit sshd) ||
+	fail 'sysvinit enable of sshd from stock scripts failed'
+[ -f "$root2/etc/rc.d/init.d/sshd" ] ||
+	fail 'stock sysvinit sshd was not copied'
+[ -L "$root2/etc/rc.d/rc3.d/S50sshd" ] ||
+	fail 'sysvinit sshd was not linked into rc3.d'
+
+# Detected init follows the landed init-* package, not a stale marker
+# and never the host PID 1.
+root3=$tmp/detect
+mkdir -p "$root3/usr/share/sps/sets" "$root3/etc/sps"
+printf '%s\n' none >"$root3/etc/sps/init"
+printf '%s\n' sysvinit >"$root3/usr/share/sps/sets/init-sysvinit"
+got=$(setup_service_init_of "$root3") || fail 'init_of failed'
+[ "$got" = sysvinit ] || fail "init_of ignored init-sysvinit set file: $got"
+
+printf '%s\n' systemd >"$root3/etc/sps/init"
+got=$(setup_service_init_of "$root3") || fail 'init_of package vs file'
+[ "$got" = sysvinit ] || fail "landed init-* must win over stale /etc/sps/init: $got"
+
 if grep -q '^package[[:space:]]*elogind' "$project_dir/lib/setup/sets/power.set"
 then
 	fail 'power set must not pull elogind (conflicts with systemd)'

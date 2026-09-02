@@ -1,7 +1,6 @@
 [Unit]
 Description=Bluetooth daemon
-After=dbus.service
-Wants=dbus.service
+After=network.target dbus.service
 
 [Service]
 ExecStart=/usr/libexec/bluetooth/bluetoothd

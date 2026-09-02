@@ -1,7 +1,6 @@
 [Unit]
 Description=PipeWire multimedia server
-After=dbus.service
-Wants=dbus.service
+After=network.target dbus.service
 
 [Service]
 ExecStart=/usr/bin/pipewire

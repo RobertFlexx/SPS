@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="Redis data store"
+command="/usr/bin/redis-server"
+command_args="--daemonize no"
+command_background="yes"
+pidfile="/run/redis.pid"
+
+depend() {
+    use net
+    after net
+}

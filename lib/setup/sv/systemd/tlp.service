@@ -1,0 +1,11 @@
+[Unit]
+Description=TLP laptop power management
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/tlp init start
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

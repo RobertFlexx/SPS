@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="TLP laptop power management"
+command="/usr/sbin/tlp"
+command_args="init start"
+command_background="no"
+
+depend() {
+    use net
+    after net
+}

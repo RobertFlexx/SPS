@@ -1,0 +1,10 @@
+[Unit]
+Description=wpa_supplicant Wi-Fi client
+After=network.target dbus.service
+
+[Service]
+ExecStart=/usr/sbin/wpa_supplicant -u -s
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=polkit authorization manager
+After=dbus.service
+
+[Service]
+ExecStart=/usr/libexec/polkitd --no-debug
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

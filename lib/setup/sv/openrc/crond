@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="cron daemon"
+command="/usr/sbin/crond"
+command_args="-n"
+command_background="yes"
+pidfile="/run/crond.pid"
+
+depend() {
+    use net
+    after net
+}

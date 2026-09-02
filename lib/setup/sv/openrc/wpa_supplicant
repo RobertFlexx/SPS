@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="wpa_supplicant Wi-Fi client"
+command="/usr/sbin/wpa_supplicant"
+command_args="-u -s"
+command_background="yes"
+pidfile="/run/wpa_supplicant.pid"
+
+depend() {
+    need dbus
+    after dbus
+}

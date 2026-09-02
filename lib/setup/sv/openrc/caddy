@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="Caddy HTTP server"
+command="/usr/bin/caddy"
+command_args="run"
+command_background="yes"
+pidfile="/run/caddy.pid"
+
+depend() {
+    use net
+    after net
+}

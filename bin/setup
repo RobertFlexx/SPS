@@ -75,7 +75,7 @@ options:
   --kernel NAME             none, linux, linux-desktop, or custom
   --kernel-config FILE      .config for --kernel custom
   --drivers auto|none       map lspci/cpu to packages (microcode, nouveau, iwd)
-  --init systemd|openrc|s6|runit|dinit|shepherd|none
+  --init systemd|openrc|s6|runit|dinit|shepherd|sysvinit|none
                             PID 1 on the installed system (default: none in
                             scripts; live /etc/sps/init or systemd on the
                             interactive screen)
@@ -115,42 +115,49 @@ setup_pkg_conflicts_init()
 	case $setup_ci in
 		systemd)
 			case $setup_cp in
-				elogind|eudev|openrc|init-openrc|s6|s6-linux-init|init-s6|runit|init-runit|dinit|init-dinit|shepherd|init-shepherd)
+				elogind|eudev|openrc|init-openrc|s6|s6-linux-init|init-s6|runit|init-runit|dinit|init-dinit|shepherd|init-shepherd|sysvinit|init-sysvinit)
 					return 0
 					;;
 			esac
 			;;
 		openrc)
 			case $setup_cp in
-				systemd|init-systemd|s6|s6-linux-init|init-s6|runit|init-runit|dinit|init-dinit|shepherd|init-shepherd)
+				systemd|init-systemd|s6|s6-linux-init|init-s6|runit|init-runit|dinit|init-dinit|shepherd|init-shepherd|sysvinit|init-sysvinit)
 					return 0
 					;;
 			esac
 			;;
 		s6)
 			case $setup_cp in
-				systemd|init-systemd|openrc|init-openrc|runit|init-runit|dinit|init-dinit|shepherd|init-shepherd)
+				systemd|init-systemd|openrc|init-openrc|runit|init-runit|dinit|init-dinit|shepherd|init-shepherd|sysvinit|init-sysvinit)
 					return 0
 					;;
 			esac
 			;;
 		runit)
 			case $setup_cp in
-				systemd|init-systemd|openrc|init-openrc|s6|s6-linux-init|init-s6|dinit|init-dinit|shepherd|init-shepherd)
+				systemd|init-systemd|openrc|init-openrc|s6|s6-linux-init|init-s6|dinit|init-dinit|shepherd|init-shepherd|sysvinit|init-sysvinit)
 					return 0
 					;;
 			esac
 			;;
 		dinit)
 			case $setup_cp in
-				systemd|init-systemd|openrc|init-openrc|s6|s6-linux-init|init-s6|runit|init-runit|shepherd|init-shepherd)
+				systemd|init-systemd|openrc|init-openrc|s6|s6-linux-init|init-s6|runit|init-runit|shepherd|init-shepherd|sysvinit|init-sysvinit)
 					return 0
 					;;
 			esac
 			;;
 		shepherd)
 			case $setup_cp in
-				systemd|init-systemd|openrc|init-openrc|s6|s6-linux-init|init-s6|runit|init-runit|dinit|init-dinit)
+				systemd|init-systemd|openrc|init-openrc|s6|s6-linux-init|init-s6|runit|init-runit|dinit|init-dinit|sysvinit|init-sysvinit)
+					return 0
+					;;
+			esac
+			;;
+		sysvinit)
+			case $setup_cp in
+				systemd|init-systemd|openrc|init-openrc|s6|s6-linux-init|init-s6|runit|init-runit|dinit|init-dinit|shepherd|init-shepherd)
 					return 0
 					;;
 			esac
@@ -1022,20 +1029,21 @@ setup_ask_init()
 	if [ -f /etc/sps/init ]; then
 		setup_live_init=$(sed -n '1p' /etc/sps/init)
 		case $setup_live_init in
-			systemd|openrc|s6|runit|dinit|shepherd)
+			systemd|openrc|s6|runit|dinit|shepherd|sysvinit)
 				setup_init_default=$setup_live_init
 				;;
 		esac
 	fi
 	setup_init=$(setup_dialog --title "Init system" --default-item "$setup_init_default" \
-		--menu "PID 1 on the installed system. These packages conflict; sget will refuse more than one. Supervision inits (s6, runit, dinit, Shepherd) pull eudev and elogind the same way OpenRC does. setup copies stock service scripts for the chosen init when a package did not ship its own." \
-		20 76 8 \
+		--menu "PID 1 on the installed system. These packages conflict; sget will refuse more than one. Non-systemd inits pull eudev and elogind. Daemon packages ship scripts for every init into the right directories; setup enables the detected init." \
+		22 76 9 \
 		systemd "systemd (udev, logind, the default)" \
 		openrc "OpenRC plus eudev and elogind" \
 		s6 "s6 plus eudev and elogind" \
 		runit "runit plus eudev and elogind" \
 		dinit "dinit plus eudev and elogind" \
-		shepherd "GNU Shepherd plus eudev, elogind, and Guile") ||
+		shepherd "GNU Shepherd plus eudev, elogind, and Guile" \
+		sysvinit "SysV init plus eudev and elogind") ||
 		setup_fail "$SPS_EX_USAGE" "cancelled"
 }
 
@@ -1360,8 +1368,8 @@ case $setup_drivers in
 	*) setup_fail "$SPS_EX_USAGE" "drivers must be auto or none" ;;
 esac
 case $setup_init in
-	none|systemd|openrc|s6|runit|dinit|shepherd) ;;
-	*) setup_fail "$SPS_EX_USAGE" "init must be systemd, openrc, s6, runit, dinit, shepherd, or none" ;;
+	none|systemd|openrc|s6|runit|dinit|shepherd|sysvinit) ;;
+	*) setup_fail "$SPS_EX_USAGE" "init must be systemd, openrc, s6, runit, dinit, shepherd, sysvinit, or none" ;;
 esac
 case $setup_services in
 	yes|no) ;;
@@ -1556,6 +1564,7 @@ case $setup_init in
 	runit) setup_add_pkg init-runit ;;
 	dinit) setup_add_pkg init-dinit ;;
 	shepherd) setup_add_pkg init-shepherd ;;
+	sysvinit) setup_add_pkg init-sysvinit ;;
 esac
 
 if [ "$setup_drivers" = auto ]; then
@@ -1651,7 +1660,7 @@ setup_summary()
 	if [ "$setup_init" = none ] &&
 	   grep -Eq '^(sddm|plasma-desktop|plasma-full)$' "$setup_pkg_file"
 	then
-		printf '\nNote: init is none; SDDM/Plasma will not start at boot. Choose systemd, OpenRC, s6, runit, dinit, or Shepherd.\n'
+		printf '\nNote: init is none; SDDM/Plasma will not start at boot. Choose systemd, OpenRC, s6, runit, dinit, Shepherd, or SysV.\n'
 	fi
 	if [ "$setup_kernel" = none ]; then
 		case $setup_partition in
@@ -1853,13 +1862,17 @@ After the packages land:
             they do not collide with busybox.
   shepherd  PID 1 is GNU Shepherd. Services are Scheme files in
             /etc/shepherd.d. This pulls Guile and Fibers.
+  sysvinit  PID 1 is /sbin/init. Boot scripts live in /etc/rc.d.
+            Enable with a symlink in /etc/rc.d/rc3.d (and friends).
+            eudev and elogind come with init-sysvinit.
   none      no init package was requested. Busybox can still provide
             an init applet if you copy it to /sbin/init yourself.
 
-setup copies stock service scripts for the chosen init when a package
-did not ship one, then enables known services (SDDM, dbus, sshd,
-NetworkManager, ...). See /root/sps-services.txt. Pass --services no
-to skip that. Later sget install of a mapped package enables it too.
+setup enables known services for the init recorded in /etc/sps/init
+(and the landed init-* package). Daemon packages ship scripts for
+every init into the directories that init expects. Pass --services no
+to skip enablement. Later sget install of a mapped package enables
+it too.
 EOF
 
 	cat >"$setup_root/root/sps-network.txt" <<EOF
@@ -2094,7 +2107,7 @@ if [ "$setup_services" = yes ] &&
    command -v setup_service_enable_present >/dev/null 2>&1
 then
 	case $setup_init in
-		systemd|openrc|s6|runit|dinit|shepherd)
+		systemd|openrc|s6|runit|dinit|shepherd|sysvinit)
 			printf '%s: enabling services after user configuration, init %s\n' \
 				"$sps_prog" "$setup_init" >&2
 			setup_svc_list=$(setup_service_enable_present \
@@ -2103,7 +2116,8 @@ then
 				printf '%s\n' \
 					"Init: $setup_init" \
 					"setup enables known services that were installed." \
-					"Missing unit/script files are filled from stock copies" \
+					"Daemon packages already contain scripts for this init." \
+					"Missing files are filled from stock copies" \
 					"in $SPS_LIBDIR/setup/sv/$setup_init." \
 					"It does not start daemons inside a target chroot." \
 					""
@@ -2122,7 +2136,7 @@ then
 Init is ${setup_init:-none}. setup did not enable services.
 
 To have SDDM, sshd, NetworkManager, and similar start at boot, rerun
-setup with --init systemd, openrc, s6, runit, dinit, or shepherd, or
+setup with --init systemd, openrc, s6, runit, dinit, shepherd, or sysvinit, or
 enable them yourself.
 EOF
 			;;

@@ -343,6 +343,10 @@ contains "$plan" 'init-dinit'
 plan=$("$setup" --plan --target /mnt --profile minimal --init shepherd --disable qol-cli)
 contains "$plan" 'init-shepherd'
 
+plan=$("$setup" --plan --target /mnt --profile minimal --init sysvinit --disable qol-cli)
+contains "$plan" 'Init:       sysvinit'
+contains "$plan" 'init-sysvinit'
+
 set +e
 "$setup" --plan --target /mnt --profile minimal --init systemd \
 	--disable qol-cli --extra elogind >/dev/null 2>"$tmp/err"
@@ -363,6 +367,13 @@ plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init s6 \
 contains "$plan" 'init-s6'
 case $plan in
 	*init-systemd*) fail 'plasma + s6 must not pull init-systemd' ;;
+esac
+
+plan=$("$setup" --plan --target /mnt --profile plasma-desktop --init sysvinit \
+	--disable qol-cli --disable firmware)
+contains "$plan" 'init-sysvinit'
+case $plan in
+	*init-systemd*) fail 'plasma + sysvinit must not pull init-systemd' ;;
 esac
 
 plan=$("$setup" --plan --target /mnt --profile minimal --init systemd \

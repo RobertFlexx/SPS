@@ -4,3 +4,8 @@ command="/usr/bin/seatd"
 command_args="-g video"
 command_background="yes"
 pidfile="/run/seatd.pid"
+
+depend() {
+    use net
+    after net
+}

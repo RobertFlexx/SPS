@@ -1,0 +1,5 @@
+type = process
+command = /usr/libexec/polkitd --no-debug
+restart = true
+smooth-recovery = true
+depends-on = dbus

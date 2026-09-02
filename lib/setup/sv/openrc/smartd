@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="S.M.A.R.T. disk monitoring"
+command="/usr/sbin/smartd"
+command_args="-n"
+command_background="yes"
+pidfile="/run/smartd.pid"
+
+depend() {
+    use net
+    after net
+}

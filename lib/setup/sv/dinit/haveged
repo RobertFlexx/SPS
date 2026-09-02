@@ -1,0 +1,4 @@
+type = process
+command = /usr/sbin/haveged -w 1024 -F
+restart = true
+smooth-recovery = true

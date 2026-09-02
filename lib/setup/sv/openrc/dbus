@@ -6,8 +6,7 @@ command_background="yes"
 pidfile="/run/dbus.pid"
 
 depend() {
-	need localmount
-	provide dbus
+    need localmount
 }
 
 start_pre() {

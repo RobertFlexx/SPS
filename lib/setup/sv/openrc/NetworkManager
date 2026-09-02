@@ -6,7 +6,6 @@ command_background="yes"
 pidfile="/run/NetworkManager.pid"
 
 depend() {
-	need dbus
-	after dbus
-	provide net
+    need dbus
+    after dbus
 }

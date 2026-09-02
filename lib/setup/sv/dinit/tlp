@@ -1,0 +1,3 @@
+type = script
+command = /usr/sbin/tlp init start
+restart = false

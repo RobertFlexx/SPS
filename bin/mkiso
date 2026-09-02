@@ -185,8 +185,8 @@ case $mkiso_session in
 	*) sps_die "$SPS_EX_USAGE" "session must be tty or plasma" ;;
 esac
 case $mkiso_init in
-	systemd|openrc) ;;
-	*) sps_die "$SPS_EX_USAGE" "init must be systemd or openrc" ;;
+	systemd|openrc|s6|runit|dinit|shepherd|sysvinit) ;;
+	*) sps_die "$SPS_EX_USAGE" "init must be systemd, openrc, s6, runit, dinit, shepherd, or sysvinit" ;;
 esac
 
 mkiso_cleanup()

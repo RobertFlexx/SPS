@@ -37,7 +37,8 @@ After a successful post-install,
 .B pkin
 enables a mapped service for the init recorded in
 .I $SPS_ROOT/etc/sps/init
-(systemd, OpenRC, s6, runit, dinit, or Shepherd). Stock scripts under
+(systemd, OpenRC, s6, runit, dinit, Shepherd, or SysV). Daemon packages
+ship a script for every init into that init's directory. Stock scripts under
 .I $SPS_LIBDIR/setup/sv
 are copied when the package did not ship a file for that init.
 .SH OWNERSHIP

@@ -1,0 +1,44 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          nfs-server
+# Required-Start:    $remote_fs
+# Required-Stop:     $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: NFS server
+### END INIT INFO
+
+if [ -f /etc/rc.d/init.d/functions ]; then
+	. /etc/rc.d/init.d/functions
+elif [ -f /etc/init.d/functions ]; then
+	. /etc/init.d/functions
+fi
+
+NAME=nfs-server
+DAEMON="/usr/sbin/rpc.mountd"
+DAEMON_ARGS="-F"
+PIDFILE="/run/nfs-server.pid"
+USER=""
+
+start() {
+	if command -v exportfs >/dev/null 2>&1; then exportfs -ra || :; fi
+	if command -v rpc.statd >/dev/null 2>&1; then rpc.statd --no-notify || :; fi
+	if command -v rpc.nfsd >/dev/null 2>&1; then rpc.nfsd 8 || :; fi
+	start_daemon -p "$PIDFILE" ${USER:+-c "$USER"} "$DAEMON" $DAEMON_ARGS
+}
+
+stop() {
+	killproc -p "$PIDFILE" "$DAEMON"
+}
+
+status() {
+	pidofproc -p "$PIDFILE" "$DAEMON"
+}
+
+case $1 in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; start ;;
+	status) status ;;
+	*) printf '%s\n' "Usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
+esac

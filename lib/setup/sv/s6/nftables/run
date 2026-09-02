@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+/usr/sbin/nft -f /etc/nftables.conf
+exec pause

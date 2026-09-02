@@ -1,0 +1,10 @@
+[Unit]
+Description=Caddy HTTP server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/caddy run
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

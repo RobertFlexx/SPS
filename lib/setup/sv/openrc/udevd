@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="eudev device manager"
+command="/usr/sbin/udevd"
+command_args=""
+command_background="yes"
+pidfile="/run/udevd.pid"
+
+depend() {
+    need localmount
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=cron daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/crond -n
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

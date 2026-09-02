@@ -1,0 +1,10 @@
+[Unit]
+Description=S.M.A.R.T. disk monitoring
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/smartd -n
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

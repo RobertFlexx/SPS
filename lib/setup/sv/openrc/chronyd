@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="chrony NTP daemon"
+command="/usr/sbin/chronyd"
+command_args="-d"
+command_background="yes"
+pidfile="/run/chronyd.pid"
+
+depend() {
+    use net
+    after net
+}

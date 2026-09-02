@@ -23,6 +23,7 @@ while read -r pkg unit _wanted rc _level; do
 	[ -f "$sv/s6/$rc/run" ] || fail "missing s6 stock $rc/run ($pkg)"
 	[ -f "$sv/dinit/$rc" ] || fail "missing dinit stock $rc ($pkg)"
 	[ -f "$sv/shepherd/$rc.scm" ] || fail "missing shepherd stock $rc.scm ($pkg)"
+	[ -f "$sv/sysvinit/$rc" ] || fail "missing sysvinit stock $rc ($pkg)"
 	count=$((count + 1))
 done <"$map"
 

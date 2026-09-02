@@ -1,7 +1,6 @@
 [Unit]
 Description=elogind login manager
 After=dbus.service
-Wants=dbus.service
 
 [Service]
 ExecStart=/usr/libexec/elogind
