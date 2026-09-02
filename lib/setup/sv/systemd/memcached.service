@@ -1,0 +1,10 @@
+[Unit]
+Description=memcached object cache
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/memcached -u nobody
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="connection tracking daemon"
+command="/usr/sbin/conntrackd"
+command_args="-C /etc/conntrackd/conntrackd.conf"
+command_background="yes"
+pidfile="/run/conntrackd.pid"
+
+depend() {
+    use net
+    after net
+}

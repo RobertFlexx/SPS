@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+install -d -m 0755 /run/postgresql /var/lib/postgres/data || :
+exec /usr/bin/postgres -D /var/lib/postgres/data

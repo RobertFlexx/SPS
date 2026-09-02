@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="distributed C/C++ compilation daemon"
+command="/usr/bin/distccd"
+command_args="--no-detach --allow 127.0.0.1 --log-stderr"
+command_background="yes"
+pidfile="/run/distccd.pid"
+
+depend() {
+    use net
+    after net
+}

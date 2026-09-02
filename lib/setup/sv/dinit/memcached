@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/memcached -u nobody
+restart = true
+smooth-recovery = true

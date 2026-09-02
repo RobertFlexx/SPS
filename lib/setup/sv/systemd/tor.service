@@ -1,0 +1,10 @@
+[Unit]
+Description=Tor anonymity daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/tor --RunAsDaemon 0
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Valkey data store
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/valkey-server --daemonize no --bind 127.0.0.1
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

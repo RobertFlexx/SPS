@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/tinyproxy -d
+restart = true
+smooth-recovery = true

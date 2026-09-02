@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+install -d -m 0750 /run/mysqld /var/lib/mysql || :
+exec /usr/sbin/mariadbd --datadir=/var/lib/mysql

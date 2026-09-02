@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/valkey-server --daemonize no --bind 127.0.0.1
+restart = true
+smooth-recovery = true

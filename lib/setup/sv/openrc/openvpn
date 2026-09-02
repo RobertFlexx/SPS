@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="OpenVPN server"
+command="/usr/sbin/openvpn"
+command_args="--config /etc/openvpn/server.conf"
+command_background="yes"
+pidfile="/run/openvpn.pid"
+
+depend() {
+    use net
+    after net
+}

@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="HAProxy load balancer"
+command="/usr/sbin/haproxy"
+command_args="-f /etc/haproxy/haproxy.cfg -db"
+command_background="yes"
+pidfile="/run/haproxy.pid"
+
+depend() {
+    use net
+    after net
+}

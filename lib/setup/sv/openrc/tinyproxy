@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="Tinyproxy HTTP proxy"
+command="/usr/bin/tinyproxy"
+command_args="-d"
+command_background="yes"
+pidfile="/run/tinyproxy.pid"
+
+depend() {
+    use net
+    after net
+}

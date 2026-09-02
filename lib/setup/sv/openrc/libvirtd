@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="libvirt virtualization daemon"
+command="/usr/sbin/libvirtd"
+command_args=""
+command_background="yes"
+pidfile="/run/libvirtd.pid"
+
+depend() {
+    need dbus
+    after dbus
+}

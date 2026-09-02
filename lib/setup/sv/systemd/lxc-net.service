@@ -1,0 +1,11 @@
+[Unit]
+Description=LXC bridge networking
+After=network.target
+
+[Service]
+ExecStart=/usr/libexec/lxc/lxc-net start
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

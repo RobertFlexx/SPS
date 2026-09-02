@@ -1,0 +1,10 @@
+[Unit]
+Description=Tinyproxy HTTP proxy
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/tinyproxy -d
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+description="MariaDB database server"
+command="/usr/sbin/mariadbd"
+command_args="--datadir=/var/lib/mysql"
+command_background="yes"
+pidfile="/run/mariadbd.pid"
+command_user="mysql"
+
+depend() {
+    use net
+    after net
+}
+
+start_pre() {
+	install -d -m 0750 /run/mysqld /var/lib/mysql || :
+}

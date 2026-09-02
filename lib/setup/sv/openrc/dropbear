@@ -1,0 +1,18 @@
+#!/sbin/openrc-run
+description="Dropbear SSH server"
+command="/usr/sbin/dropbear"
+command_args="-F -E"
+command_background="yes"
+pidfile="/run/dropbear.pid"
+
+depend() {
+    use net
+    after net
+}
+
+start_pre() {
+	if command -v dropbearkey >/dev/null 2>&1; then
+	  mkdir -p /etc/dropbear
+	  [ -f /etc/dropbear/dropbear_rsa_host_key ] || dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key >/dev/null
+	fi
+}

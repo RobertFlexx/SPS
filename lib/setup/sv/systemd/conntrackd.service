@@ -1,0 +1,10 @@
+[Unit]
+Description=connection tracking daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/conntrackd -C /etc/conntrackd/conntrackd.conf
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

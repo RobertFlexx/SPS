@@ -1,0 +1,4 @@
+type = process
+command = /usr/sbin/lighttpd -D -f /etc/lighttpd/lighttpd.conf
+restart = true
+smooth-recovery = true

@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/fail2ban-server -xf --logtarget=stdout
+restart = true
+smooth-recovery = true

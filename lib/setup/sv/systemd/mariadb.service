@@ -1,0 +1,11 @@
+[Unit]
+Description=MariaDB database server
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/mariadbd --datadir=/var/lib/mysql
+Restart=on-failure
+User=mysql
+
+[Install]
+WantedBy=multi-user.target

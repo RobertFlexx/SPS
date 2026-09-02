@@ -52,6 +52,10 @@ SPS is a set of tools rather than one large front end:
   style). Optional; other projects using SPS do not need it.
 - `mkiso` builds an SPS Linux live ISO (systemd by default; busybox init if
   systemd is not on the build host) you can flash and boot into `setup`.
+- `tools/upgrade-recipes` is a maintainer command, not a runtime package tool.
+  It walks core and extra recipes, finds the newest stable upstream, rewrites
+  version/source/hash, and records newly required libraries. See
+  [PACKAGE-MAINTAINER.md](PACKAGE-MAINTAINER.md).
 
 The split matters. `pkin` does not search repositories. `pkdel` does not solve
 dependencies. `src` does not install anything. `sget` ties the lower-level tools

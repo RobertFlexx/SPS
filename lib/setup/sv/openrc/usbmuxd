@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="iOS USB multiplexing daemon"
+command="/usr/sbin/usbmuxd"
+command_args="-f"
+command_background="yes"
+pidfile="/run/usbmuxd.pid"
+
+depend() {
+    use net
+    after net
+}

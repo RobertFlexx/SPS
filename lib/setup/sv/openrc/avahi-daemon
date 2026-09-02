@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="Avahi mDNS/DNS-SD daemon"
+command="/usr/sbin/avahi-daemon"
+command_args="--no-chroot"
+command_background="yes"
+pidfile="/run/avahi-daemon.pid"
+
+depend() {
+    need dbus
+    after dbus
+}

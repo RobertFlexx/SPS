@@ -1,0 +1,11 @@
+[Unit]
+Description=PostgreSQL database server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/postgres -D /var/lib/postgres/data
+Restart=on-failure
+User=postgres
+
+[Install]
+WantedBy=multi-user.target

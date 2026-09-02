@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="validating recursive DNS resolver"
+command="/usr/sbin/unbound"
+command_args="-d"
+command_background="yes"
+pidfile="/run/unbound.pid"
+
+depend() {
+    use net
+    after net
+}

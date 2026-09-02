@@ -1,0 +1,10 @@
+[Unit]
+Description=libvirt virtualization daemon
+After=network.target dbus.service
+
+[Service]
+ExecStart=/usr/sbin/libvirtd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

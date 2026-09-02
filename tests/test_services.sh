@@ -97,6 +97,18 @@ enabled=$(setup_service_enable_one "$root2" shepherd sshd) ||
 [ -f "$root2/etc/shepherd.d/sshd.scm" ] ||
 	fail 'stock shepherd sshd.scm was not copied'
 
+enabled=$(setup_service_enable_one "$root2" runit postgresql) ||
+	fail 'runit enable of postgresql from stock scripts failed'
+[ -f "$root2/etc/sv/postgresql/run" ] ||
+	fail 'stock runit postgresql/run was not copied'
+[ -L "$root2/etc/runit/runsvdir/default/postgresql" ] ||
+	fail 'runit postgresql was not linked into runsvdir/default'
+
+enabled=$(setup_service_enable_one "$root2" dinit unbound) ||
+	fail 'dinit enable of unbound from stock scripts failed'
+[ -f "$root2/etc/dinit.d/unbound" ] ||
+	fail 'stock dinit unbound was not copied'
+
 # Do not overwrite a package-shipped run script.
 mkdir -p "$root2/etc/sv/sshd"
 printf '%s\n' '#!/bin/sh' 'exec /opt/custom/sshd' >"$root2/etc/sv/sshd/run"

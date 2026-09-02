@@ -1,0 +1,10 @@
+[Unit]
+Description=lighttpd web server
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/lighttpd -D -f /etc/lighttpd/lighttpd.conf
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

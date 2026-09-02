@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/tor --RunAsDaemon 0
+restart = true
+smooth-recovery = true

@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="DNS and DHCP server"
+command="/usr/sbin/dnsmasq"
+command_args="-k"
+command_background="yes"
+pidfile="/run/dnsmasq.pid"
+
+depend() {
+    use net
+    after net
+}

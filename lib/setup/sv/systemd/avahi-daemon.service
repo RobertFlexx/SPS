@@ -1,0 +1,10 @@
+[Unit]
+Description=Avahi mDNS/DNS-SD daemon
+After=network.target dbus.service
+
+[Service]
+ExecStart=/usr/sbin/avahi-daemon --no-chroot
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

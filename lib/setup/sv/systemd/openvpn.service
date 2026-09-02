@@ -1,0 +1,10 @@
+[Unit]
+Description=OpenVPN server
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/openvpn --config /etc/openvpn/server.conf
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

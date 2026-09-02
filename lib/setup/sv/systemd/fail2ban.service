@@ -1,0 +1,10 @@
+[Unit]
+Description=fail2ban authentication ban daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/fail2ban-server -xf --logtarget=stdout
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

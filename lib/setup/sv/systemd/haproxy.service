@@ -1,0 +1,10 @@
+[Unit]
+Description=HAProxy load balancer
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/haproxy -f /etc/haproxy/haproxy.cfg -db
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

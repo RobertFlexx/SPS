@@ -1,0 +1,5 @@
+type = process
+command = /usr/sbin/avahi-daemon --no-chroot
+restart = true
+smooth-recovery = true
+depends-on = dbus

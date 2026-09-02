@@ -1,0 +1,10 @@
+[Unit]
+Description=validating recursive DNS resolver
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/unbound -d
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

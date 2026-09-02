@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="lighttpd web server"
+command="/usr/sbin/lighttpd"
+command_args="-D -f /etc/lighttpd/lighttpd.conf"
+command_background="yes"
+pidfile="/run/lighttpd.pid"
+
+depend() {
+    use net
+    after net
+}

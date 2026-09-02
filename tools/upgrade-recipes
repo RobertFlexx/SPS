@@ -1,0 +1,1154 @@
+#!/usr/bin/env python3
+"""Upgrade SPS recipe trees to the newest upstream stable release.
+
+Maintainers run one command against core and extra. The tool detects the
+current source, finds the newest non-prerelease upstream, rewrites
+version/source/hash, resets release to 1, and scans the new tarball for
+libraries the recipe does not yet declare. Names that already exist in the
+trees are added as depend or builddep. Names that do not exist are reported,
+and with --scaffold-missing a conservative extra recipe is drafted when a
+source URL can be resolved.
+
+Default is a dry-run plan. Pass --apply to write recipes.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import ssl
+import sys
+import tarfile
+import tempfile
+import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+UA = "sps-upgrade-recipes/1.0 (+https://github.com/RobertFlexx/SPS)"
+CACHE = Path(os.environ.get("SPS_UPGRADE_CACHE", str(Path.home() / ".cache" / "sps-upgrade")))
+GITHUB_API = "https://api.github.com"
+REPOLOGY = "https://repology.org/api/v1/project/{}"
+
+PRE_RE = re.compile(
+    r"(?:^|[.\-_])(?:alpha|beta|rc|pre|preview|dev|git|snapshot|nightly|test)(?:\d|$)|"
+    r"(?:alpha|beta|rc)\d",
+    re.I,
+)
+GNOME_EVEN = {
+    "gtk", "gtk4", "glib", "pango", "gdk-pixbuf", "atk", "at-spi2-core",
+    "libadwaita", "libsoup", "gtksourceview", "vte", "gexiv2",
+}
+
+# pkg-config / cmake / meson names -> SPS package names
+PC_MAP = {
+    "libssl": "openssl", "libcrypto": "openssl", "openssl": "openssl",
+    "zlib": "zlib", "libz": "zlib", "liblzma": "xz", "libzstd": "zstd",
+    "libbz2": "bzip2", "bzip2": "bzip2", "libpcre2-8": "pcre2", "libpcre": "pcre",
+    "libpng": "libpng", "libpng16": "libpng", "libjpeg": "libjpeg-turbo",
+    "libturbojpeg": "libjpeg-turbo", "libtiff-4": "tiff", "libwebp": "libwebp",
+    "freetype2": "freetype", "harfbuzz": "harfbuzz", "graphite2": "graphite2",
+    "fontconfig": "fontconfig", "cairo": "cairo", "pango": "pango",
+    "pangocairo": "pango", "gdk-pixbuf-2.0": "gdk-pixbuf",
+    "gtk+-3.0": "gtk3", "gtk4": "gtk4", "libadwaita-1": "libadwaita",
+    "glib-2.0": "glib", "gio-2.0": "glib", "gobject-2.0": "glib",
+    "gmodule-2.0": "glib", "gthread-2.0": "glib",
+    "libxml-2.0": "libxml2", "libxslt": "libxslt", "icu-uc": "icu",
+    "icu-i18n": "icu", "sqlite3": "sqlite", "libcurl": "curl",
+    "libarchive": "libarchive", "expat": "expat", "libevent": "libevent",
+    "ncurses": "ncurses", "ncursesw": "ncurses", "readline": "readline",
+    "uuid": "util-linux", "mount": "util-linux", "blkid": "util-linux",
+    "libudev": "systemd", "libelf": "elfutils", "libdw": "elfutils",
+    "libcap": "libcap", "libcap-ng": "libcap-ng", "libseccomp": "libseccomp",
+    "dbus-1": "dbus", "libsystemd": "systemd", "libpulse": "pulseaudio",
+    "alsa": "alsa-lib", "alsa-lib": "alsa-lib",
+    "x11": "libx11", "xext": "libxext", "xrandr": "libxrandr",
+    "xinerama": "libxinerama", "xfixes": "libxfixes", "xi": "libxi",
+    "xkbcommon": "libxkbcommon", "wayland-client": "wayland",
+    "wayland-server": "wayland", "wayland-cursor": "wayland",
+    "wayland-egl": "wayland", "egl": "mesa", "glesv2": "mesa",
+    "gbm": "mesa", "dri": "mesa", "libdrm": "libdrm",
+    "vulkan": "vulkan-loader", "epoxy": "libepoxy",
+    "pixman-1": "pixman", "lcms2": "lcms2", "libass": "libass",
+    "libavcodec": "ffmpeg", "libavformat": "ffmpeg", "libavutil": "ffmpeg",
+    "libswscale": "ffmpeg", "libswresample": "ffmpeg",
+    "opus": "opus", "vorbis": "libvorbis", "ogg": "libogg",
+    "flac": "flac", "sndfile": "libsndfile", "samplerate": "libsamplerate",
+    "fftw3": "fftw", "fftw3f": "fftw", "libopenjp2": "openjpeg",
+    "Qt6Core": "qt6-qtbase", "Qt6Gui": "qt6-qtbase", "Qt6Widgets": "qt6-qtbase",
+    "Qt6Network": "qt6-qtbase", "Qt6Qml": "qt6-qtdeclarative",
+    "Qt6Quick": "qt6-qtdeclarative", "Qt6Svg": "qt6-qtsvg",
+    "Qt6WebEngineCore": "qt6-qtwebengine", "libplacebo": "libplacebo",
+    "libva": "libva", "vpx": "libvpx", "dav1d": "dav1d",
+    "x264": "x264", "x265": "x265", "aom": "aom", "SvtAv1Enc": "svt-av1",
+    "libbrotlidec": "brotli", "libbrotlienc": "brotli",
+    "libnghttp2": "nghttp2", "libidn2": "libidn2", "libpsl": "libpsl",
+    "gnutls": "gnutls", "nss": "nss", "nspr": "nspr",
+    "libgit2": "libgit2", "yaml-0.1": "libyaml", "libyaml": "libyaml",
+    "json-c": "json-c", "fmt": "fmt", "spdlog": "spdlog",
+    "protobuf": "protobuf", "re2": "re2", "snappy": "snappy",
+    "libssh": "libssh", "libssh2": "libssh2",
+    "fuse3": "fuse3", "fuse": "fuse", "libacl": "acl", "libattr": "attr",
+    "python-3.13": "python", "python3": "python", "lua": "lua",
+    "luajit": "luajit", "ruby": "ruby", "libpopt": "popt",
+    "libnl-3.0": "libnl", "libnl-genl-3.0": "libnl",
+    "libtirpc": "libtirpc", "libyajl": "yajl", "yajl": "yajl",
+    "libvirt": "libvirt", "libslirp": "libslirp",
+    "spice-server": "spice", "spice-protocol": "spice-protocol",
+    "gl": "mesa", "glew": "glew", "sdl2": "sdl2", "SDL2": "sdl2",
+    "sdl3": "sdl3", "gmp": "gmp", "mpfr": "mpfr", "mpc": "mpc",
+    "isl": "isl", "libffi": "libffi", "libtasn1": "libtasn1",
+    "nettle": "nettle", "hogweed": "nettle", "libidn": "libidn",
+    "jansson": "jansson", "libmicrohttpd": "libmicrohttpd",
+    "lmdb": "lmdb", "gdbm": "gdbm", "libaio": "libaio",
+    "liburing": "liburing", "jemalloc": "jemalloc",
+    "boost": "boost", "icu-io": "icu",
+}
+
+SKIP_DEPS = {
+    "threads", "thread", "dl", "dlib", "m", "rt", "pthread", "c", "stdc++",
+    "gcc", "gomp", "atomic", "iconv", "intl", "ws2_32", "ole32", "shell32",
+    "user32", "advapi32", "kernel32", "ntdll", "android", "log",
+    "CoreFoundation", "Foundation", "cocoa", "objc", "resolv",
+    "execinfo", "util", "kvm", "procstat", "inotify",
+}
+
+HOST_TOOLS = {
+    "cmake", "ninja", "meson", "pkgconf", "pkg-config", "python", "python3",
+    "perl", "bison", "flex", "gperf", "gawk", "m4", "autoconf", "automake",
+    "libtool", "gettext", "intltool", "patch", "make", "gcc", "g++", "cc",
+    "c++", "rustc", "cargo", "go", "nasm", "yasm",
+}
+
+# Packages upgraded together. First existing member supplies the version.
+PIN_GROUPS = [
+    re.compile(r"^qt6-qt"),
+    re.compile(r"^kf6-"),
+    re.compile(r"^plasma-"),
+    re.compile(r"^gst-"),
+]
+
+NO_AUTO = {
+    "linux", "linux-desktop", "linux-firmware", "splux-base", "filesystem",
+    "daily-drive", "qol-cli", "workstation-extra", "qt6", "kf6", "clang",
+}
+
+
+class HttpError(RuntimeError):
+    pass
+
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def http_get(url: str, timeout: int = 30, binary: bool = False, accept: str = ""):
+    headers = {"User-Agent": UA}
+    if accept:
+        headers["Accept"] = accept
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token and "api.github.com" in url:
+        headers["Authorization"] = f"Bearer {token}"
+    req = Request(url, headers=headers)
+    ctx = ssl.create_default_context()
+    try:
+        with urlopen(req, timeout=timeout, context=ctx) as resp:
+            data = resp.read()
+            if binary:
+                return data
+            return data.decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        raise HttpError(f"{url}: HTTP {exc.code}") from exc
+    except URLError as exc:
+        raise HttpError(f"{url}: {exc.reason}") from exc
+
+
+def version_tokens(version: str) -> list[tuple[str, str]]:
+    tokens = []
+    i = 0
+    v = version or ""
+    while i < len(v):
+        c = v[i]
+        if c == "~":
+            tokens.append(("tilde", c))
+            i += 1
+        elif c.isdigit():
+            j = i
+            while j < len(v) and v[j].isdigit():
+                j += 1
+            tokens.append(("number", v[i:j]))
+            i = j
+        elif c.isalpha():
+            j = i
+            while j < len(v) and v[j].isalpha():
+                j += 1
+            tokens.append(("text", v[i:j].lower()))
+            i = j
+        else:
+            i += 1
+    return tokens
+
+
+def version_compare(left: str, right: str) -> int:
+    lt, rt = version_tokens(left), version_tokens(right)
+    n = max(len(lt), len(rt))
+    for i in range(n):
+        if i >= len(lt):
+            rest = rt[i:]
+            if rest and rest[0][0] == "tilde":
+                return 1
+            return -1 if rest else 0
+        if i >= len(rt):
+            rest = lt[i:]
+            if rest and rest[0][0] == "tilde":
+                return -1
+            return 1 if rest else 0
+        (lt_t, lt_v), (rt_t, rt_v) = lt[i], rt[i]
+        if lt_t == "tilde" or rt_t == "tilde":
+            if lt_t == rt_t:
+                continue
+            return -1 if lt_t == "tilde" else 1
+        if lt_t == "number" and rt_t == "number":
+            a, b = lt_v.lstrip("0") or "0", rt_v.lstrip("0") or "0"
+            if len(a) != len(b):
+                return -1 if len(a) < len(b) else 1
+            if a != b:
+                return -1 if a < b else 1
+            continue
+        if lt_t != rt_t:
+            return -1 if lt_t == "number" else 1
+        if lt_v != rt_v:
+            return -1 if lt_v < rt_v else 1
+    return 0
+
+
+def version_newer(candidate: str, current: str) -> bool:
+    return version_compare(candidate, current) > 0
+
+
+def is_prerelease(version: str) -> bool:
+    if not version:
+        return True
+    if PRE_RE.search(version):
+        return True
+    return False
+
+
+def gnome_stable(name: str, version: str) -> bool:
+    key = name.lower().replace("gtk4", "gtk")
+    if key not in GNOME_EVEN and name.lower() not in GNOME_EVEN:
+        return True
+    parts = re.findall(r"\d+", version)
+    if len(parts) < 2:
+        return True
+    return int(parts[1]) % 2 == 0
+
+
+def parse_recipe(path: Path) -> dict:
+    rec = {
+        "path": path,
+        "name": "",
+        "version": "",
+        "release": "1",
+        "arch": "",
+        "description": "",
+        "source": [],
+        "hash": [],
+        "depend": [],
+        "builddep": [],
+        "optional": [],
+        "conflict": [],
+        "prepare": [],
+        "configure": [],
+        "build": [],
+        "install": [],
+        "raw": path.read_text(encoding="utf-8"),
+    }
+    key = None
+    buf = []
+    for line in rec["raw"].splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if line.endswith("\\"):
+            piece = line[:-1]
+            if key is None:
+                parts = piece.split(None, 1)
+                if len(parts) != 2:
+                    continue
+                key, val = parts[0], parts[1]
+                buf = [val]
+            else:
+                buf.append(piece.strip())
+            continue
+        if key is not None:
+            buf.append(line.strip())
+            rec.setdefault(key, [])
+            if key in rec and isinstance(rec[key], list):
+                rec[key].append(" ".join(buf).strip())
+            key = None
+            buf = []
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        k, v = parts[0], parts[1]
+        if k in ("name", "version", "release", "arch", "description"):
+            rec[k] = v
+        elif k in rec and isinstance(rec[k], list):
+            rec[k].append(v)
+    rec["names"] = rec["name"]
+    return rec
+
+
+def recipe_has_source(rec: dict) -> bool:
+    return bool(rec.get("source"))
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def cache_path(url: str) -> Path:
+    CACHE.mkdir(parents=True, exist_ok=True)
+    name = hashlib.sha256(url.encode()).hexdigest()[:20] + "-" + url.rstrip("/").split("/")[-1][:80]
+    return CACHE / name
+
+
+def download(url: str) -> Path:
+    dest = cache_path(url)
+    if dest.exists() and dest.stat().st_size > 0:
+        return dest
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    data = http_get(url, timeout=120, binary=True)
+    tmp.write_bytes(data)
+    tmp.replace(dest)
+    return dest
+
+
+def strip_tag(tag: str) -> str:
+    tag = tag.strip()
+    tag = re.sub(r"^(refs/tags/)", "", tag)
+    tag = re.sub(r"^(v|V|release-|Release-|version-|VERSION-)", "", tag)
+    tag = re.sub(r"^(llvmorg-)", "", tag)
+    return tag.lstrip("v")
+
+
+def github_repo(url: str) -> tuple[str, str] | None:
+    m = re.search(r"github\.com/([^/]+)/([^/]+)", url)
+    if not m:
+        return None
+    owner, repo = m.group(1), m.group(2)
+    repo = re.sub(r"\.git$", "", repo)
+    return owner, repo
+
+
+def latest_github(owner: str, repo: str) -> str | None:
+    try:
+        body = http_get(
+            f"{GITHUB_API}/repos/{owner}/{repo}/releases/latest",
+            accept="application/vnd.github+json",
+        )
+        data = json.loads(body)
+        tag = data.get("tag_name") or ""
+        if data.get("prerelease") or data.get("draft"):
+            tag = ""
+        ver = strip_tag(tag)
+        if ver and not is_prerelease(ver):
+            return ver
+    except (HttpError, json.JSONDecodeError, TypeError):
+        pass
+    try:
+        body = http_get(
+            f"{GITHUB_API}/repos/{owner}/{repo}/tags?per_page=30",
+            accept="application/vnd.github+json",
+        )
+        tags = json.loads(body)
+        best = None
+        for item in tags:
+            ver = strip_tag(item.get("name") or "")
+            if not ver or is_prerelease(ver):
+                continue
+            if best is None or version_newer(ver, best):
+                best = ver
+        return best
+    except (HttpError, json.JSONDecodeError, TypeError):
+        return None
+
+
+def latest_repology(name: str) -> str | None:
+    try:
+        body = http_get(REPOLOGY.format(name), timeout=40)
+        rows = json.loads(body)
+    except (HttpError, json.JSONDecodeError):
+        return None
+    best = None
+    for row in rows:
+        if row.get("status") not in {"newest", "unique"}:
+            continue
+        ver = str(row.get("version") or "")
+        if not ver or is_prerelease(ver):
+            continue
+        if not gnome_stable(name, ver):
+            continue
+        if best is None or version_newer(ver, best):
+            best = ver
+    return best
+
+
+def latest_gnome(url: str, name: str) -> str | None:
+    m = re.search(r"download\.gnome\.org/sources/([^/]+)/", url)
+    module = m.group(1) if m else name
+    try:
+        body = http_get(f"https://download.gnome.org/sources/{module}/cache.json")
+        data = json.loads(body)
+    except (HttpError, json.JSONDecodeError):
+        return None
+    versions = []
+    if isinstance(data, list) and len(data) >= 2 and isinstance(data[1], dict):
+        pkgmap = data[1].get(module) or data[1].get(name) or {}
+        for series, items in pkgmap.items():
+            if not gnome_stable(module, series + ".0"):
+                continue
+            if isinstance(items, list):
+                versions.extend(str(x) for x in items)
+    best = None
+    for ver in versions:
+        if is_prerelease(ver):
+            continue
+        if not gnome_stable(module, ver):
+            continue
+        if best is None or version_newer(ver, best):
+            best = ver
+    return best
+
+
+def latest_gnu(url: str, name: str) -> str | None:
+    parsed = urlparse(url)
+    directory = url.rsplit("/", 1)[0] + "/"
+    try:
+        body = http_get(directory)
+    except HttpError:
+        return None
+    versions = re.findall(
+        rf"href=\"{re.escape(name)}-([0-9][0-9A-Za-z.+~_-]*)\.(?:tar\.(?:gz|xz|bz2|lz)|tgz)\"",
+        body,
+    )
+    best = None
+    for ver in versions:
+        if is_prerelease(ver):
+            continue
+        if best is None or version_newer(ver, best):
+            best = ver
+    return best
+
+
+def latest_qemu() -> str | None:
+    try:
+        body = http_get("https://download.qemu.org/")
+    except HttpError:
+        return None
+    versions = re.findall(r"href=\"qemu-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.xz\"", body)
+    best = None
+    for ver in versions:
+        if best is None or version_newer(ver, best):
+            best = ver
+    return best
+
+
+def latest_pypi(name: str) -> str | None:
+    try:
+        body = http_get(f"https://pypi.org/pypi/{name}/json")
+        data = json.loads(body)
+        ver = data.get("info", {}).get("version")
+        if ver and not is_prerelease(ver):
+            return ver
+    except (HttpError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def detect_latest(rec: dict) -> str | None:
+    name = rec["name"]
+    url = rec["source"][0] if rec["source"] else ""
+    found: list[str] = []
+
+    if "download.qemu.org" in url or name == "qemu":
+        v = latest_qemu()
+        if v:
+            found.append(v)
+    if "download.gnome.org" in url:
+        v = latest_gnome(url, name)
+        if v:
+            found.append(v)
+    if "ftp.gnu.org" in url or "ftpmirror.gnu.org" in url:
+        v = latest_gnu(url, name)
+        if v:
+            found.append(v)
+    gh = github_repo(url)
+    if gh:
+        v = latest_github(*gh)
+        if v:
+            found.append(v)
+    if "pypi.org" in url or "files.pythonhosted.org" in url:
+        v = latest_pypi(name)
+        if v:
+            found.append(v)
+
+    v = latest_repology(name)
+    if v:
+        found.append(v)
+
+    best = None
+    for ver in found:
+        if is_prerelease(ver):
+            continue
+        if not gnome_stable(name, ver):
+            continue
+        if best is None or version_newer(ver, best):
+            best = ver
+    return best
+
+
+def _series(version: str) -> str:
+    parts = version.split(".")
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+        return f"{parts[0]}.{parts[1]}"
+    return version
+
+
+def rewrite_url(url: str, old: str, new: str) -> str:
+    if not old or old == new:
+        return url
+    updated = url
+    variants = [
+        (old, new),
+        (old.replace(".", "_"), new.replace(".", "_")),
+        (old.replace(".", "-"), new.replace(".", "-")),
+        (old.replace(".", ""), new.replace(".", "")),
+    ]
+    for a, b in variants:
+        if a and a in updated:
+            updated = updated.replace(a, b)
+            break
+    old_s, new_s = _series(old), _series(new)
+    if old_s != new_s and f"/{old_s}/" in updated:
+        updated = updated.replace(f"/{old_s}/", f"/{new_s}/")
+    return updated
+
+
+def extract_archive(archive: Path, dest: Path) -> Path:
+    dest.mkdir(parents=True, exist_ok=True)
+    name = archive.name.lower()
+    if name.endswith(".zip"):
+        with zipfile.ZipFile(archive) as zf:
+            zf.extractall(dest)
+    else:
+        with tarfile.open(archive, "r:*") as tf:
+            try:
+                tf.extractall(dest, filter="data")
+            except TypeError:
+                tf.extractall(dest)
+    children = [p for p in dest.iterdir() if p.name not in {".", ".."}]
+    if len(children) == 1 and children[0].is_dir():
+        return children[0]
+    return dest
+
+
+MESON_DEP = re.compile(
+    r"""dependency\(\s*['\"]([^'\"]+)['\"]([^)]*)\)""",
+    re.M,
+)
+CMAKE_PKG = re.compile(
+    r"""find_package\(\s*([A-Za-z0-9_+.-]+)[^)]*REQUIRED""",
+    re.M,
+)
+CMAKE_PC = re.compile(
+    r"""pkg_check_modules\(\s*[A-Za-z0-9_]+\s+(?:REQUIRED\s+)?([A-Za-z0-9_+\-.]+)""",
+    re.I,
+)
+AUTOCONF_PC = re.compile(
+    r"""PKG_CHECK_MODULES\(\s*\[[^\]]+\]\s*,\s*\[([^\]>=]+)""",
+)
+PC_REQUIRES = re.compile(
+    r"^(?:Requires(?:\.private)?):\s*(.+)$",
+    re.M | re.I,
+)
+
+
+def scan_build_files(root: Path) -> tuple[set[str], set[str]]:
+    """Return (runtime-ish names, build-ish names) as pkg-config/cmake ids."""
+    runtime: set[str] = set()
+    build: set[str] = set()
+    files: list[Path] = []
+    for pat in ("meson.build", "CMakeLists.txt", "configure.ac", "configure.in"):
+        files.extend(root.rglob(pat))
+    files.extend(root.rglob("*.pc.in"))
+    files.extend(root.rglob("*.pc"))
+    seen = 0
+    for path in files:
+        if seen > 80:
+            break
+        try:
+            if path.stat().st_size > 2_000_000:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        seen += 1
+        name = path.name
+        if name in {"meson.build", "meson_options.txt"}:
+            for match in MESON_DEP.finditer(text):
+                pc, rest = match.group(1), match.group(2)
+                if re.search(r"required\s*:\s*false", rest, re.I):
+                    continue
+                runtime.add(pc)
+        elif name == "CMakeLists.txt":
+            for match in CMAKE_PKG.finditer(text):
+                runtime.add(match.group(1))
+            for match in CMAKE_PC.finditer(text):
+                runtime.add(match.group(1).split()[0])
+        elif name in {"configure.ac", "configure.in"}:
+            for match in AUTOCONF_PC.finditer(text):
+                runtime.add(match.group(1).strip().split()[0])
+        elif name.endswith(".pc") or name.endswith(".pc.in"):
+            for match in PC_REQUIRES.finditer(text):
+                for tok in re.split(r"[ ,]+", match.group(1)):
+                    tok = re.sub(r"[<>=].*$", "", tok).strip()
+                    if tok:
+                        runtime.add(tok)
+    return runtime, build
+
+
+def map_dep(raw: str, known: dict[str, Path]) -> str | None:
+    raw = raw.strip()
+    if not raw or raw in SKIP_DEPS:
+        return None
+    if raw in PC_MAP:
+        mapped = PC_MAP[raw]
+        return mapped if mapped in known else mapped
+    lower = raw.lower()
+    if lower in known:
+        return lower
+    if raw in known:
+        return raw
+    slug = lower.replace("_", "-")
+    if slug in known:
+        return slug
+    if slug.startswith("lib") and slug[3:] in known:
+        return slug[3:]
+    if not slug.startswith("lib") and f"lib{slug}" in known:
+        return f"lib{slug}"
+    # gtk+-3.0 -> gtk3 already in map; qt6 bits
+    m = re.match(r"qt6(.+)", slug)
+    if m:
+        cand = "qt6-qt" + m.group(1).lower()
+        if cand in known:
+            return cand
+    return None
+
+
+def load_tree_names(trees: list[Path]) -> dict[str, Path]:
+    names: dict[str, Path] = {}
+    for tree in trees:
+        for recipe in tree.rglob("recipe"):
+            rec = parse_recipe(recipe)
+            if rec["name"]:
+                names[rec["name"]] = recipe
+    return names
+
+
+def rewrite_recipe(rec: dict, new_ver: str, new_urls: list[str], new_hashes: list[str],
+                   extra_depend: list[str], extra_builddep: list[str]) -> str:
+    old_ver = rec["version"]
+    lines = rec["raw"].splitlines()
+    out: list[str] = []
+    hash_i = 0
+    source_i = 0
+    seen_depend = False
+    inserted_deps = False
+    have_depend = set(rec["depend"])
+    have_build = set(rec["builddep"])
+
+    def flush_new_deps(dest: list[str]) -> None:
+        nonlocal inserted_deps
+        if inserted_deps:
+            return
+        for name in extra_depend:
+            if name not in have_depend:
+                dest.append(f"depend      {name}")
+                have_depend.add(name)
+        for name in extra_builddep:
+            if name not in have_build:
+                dest.append(f"builddep    {name}")
+                have_build.add(name)
+        inserted_deps = True
+
+    for line in lines:
+        if line.startswith("version"):
+            out.append(f"version     {new_ver}")
+            continue
+        if line.startswith("release"):
+            out.append("release     1")
+            continue
+        if line.startswith("source"):
+            if source_i < len(new_urls):
+                out.append(f"source      {new_urls[source_i]}")
+                source_i += 1
+            else:
+                out.append(rewrite_url(line, old_ver, new_ver) if old_ver else line)
+            continue
+        if line.startswith("hash"):
+            if hash_i < len(new_hashes):
+                out.append(f"hash        sha256:{new_hashes[hash_i]}")
+                hash_i += 1
+            else:
+                out.append(line)
+            continue
+        if line.startswith("depend"):
+            seen_depend = True
+            out.append(line)
+            continue
+        if seen_depend and not line.startswith(("depend", "builddep", "optional", "conflict")):
+            flush_new_deps(out)
+            seen_depend = False
+        if old_ver and old_ver in line and line.startswith(("prepare", "configure", "build", "install")):
+            out.append(line.replace(old_ver, new_ver))
+            continue
+        out.append(line)
+    flush_new_deps(out)
+    text = "\n".join(out)
+    if not text.endswith("\n"):
+        text += "\n"
+    return text
+
+
+def scaffold_recipe(tree: Path, name: str, version: str, url: str, digest: str,
+                    depend: list[str]) -> Path:
+    category = "libs"
+    dest = tree / category / name
+    dest.mkdir(parents=True, exist_ok=True)
+    deps = "\n".join(f"depend      {d}" for d in (["filesystem"] + depend))
+    body = (
+        f"name        {name}\n"
+        f"version     {version}\n"
+        f"release     1\n"
+        f"description {name}: auto-scaffolded runtime dependency\n"
+        f"\n"
+        f"source      {url}\n"
+        f"hash        sha256:{digest}\n"
+        f"\n"
+        f"{deps}\n"
+        f"\n"
+        f"configure   ./configure --prefix=/usr --libdir=/usr/lib64 --disable-static\n"
+        f"build       make -j\"$MAKEJOBS\"\n"
+        f"install     make install DESTDIR=\"$PKG\"\n"
+    )
+    recipe = dest / "recipe"
+    recipe.write_text(body, encoding="utf-8")
+    return recipe
+
+
+def guess_scaffold_url(name: str, version: str) -> str | None:
+    # Common GitHub-style; last resort only.
+    try:
+        body = http_get(
+            f"{GITHUB_API}/search/repositories?q={name}+in:name&per_page=3",
+            accept="application/vnd.github+json",
+        )
+        data = json.loads(body)
+        items = data.get("items") or []
+        for item in items:
+            if item.get("name", "").lower() != name.lower():
+                continue
+            full = item.get("full_name")
+            if not full:
+                continue
+            return f"https://github.com/{full}/archive/refs/tags/v{version}.tar.gz"
+    except (HttpError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def pin_group_key(name: str) -> int | None:
+    for i, rx in enumerate(PIN_GROUPS):
+        if rx.search(name):
+            return i
+    return None
+
+
+class PlanItem:
+    def __init__(self, rec: dict):
+        self.rec = rec
+        self.name = rec["name"]
+        self.old = rec["version"]
+        self.new = rec["version"]
+        self.urls: list[str] = list(rec["source"])
+        self.hashes: list[str] = []
+        self.add_depend: list[str] = []
+        self.add_builddep: list[str] = []
+        self.missing: list[str] = []
+        self.status = "current"
+        self.detail = ""
+        self.group: int | None = pin_group_key(self.name)
+
+
+def collect_recipes(trees: list[Path], only: set[str] | None) -> list[dict]:
+    recs = []
+    for tree in trees:
+        for recipe in sorted(tree.rglob("recipe")):
+            rec = parse_recipe(recipe)
+            if not rec["name"]:
+                continue
+            if only and rec["name"] not in only:
+                continue
+            recs.append(rec)
+    return recs
+
+
+def probe_one(rec: dict, include_kernel: bool) -> PlanItem:
+    item = PlanItem(rec)
+    name = rec["name"]
+    if name in NO_AUTO and name not in {"qt6"}:
+        item.status = "skip"
+        item.detail = "metapackage or distro glue"
+        return item
+    if not include_kernel and name in {"linux", "linux-desktop", "linux-firmware"}:
+        item.status = "skip"
+        item.detail = "kernel/firmware (pass --include-kernel)"
+        return item
+    if not recipe_has_source(rec):
+        item.status = "skip"
+        item.detail = "no upstream source"
+        return item
+    try:
+        latest = detect_latest(rec)
+    except HttpError as exc:
+        item.status = "error"
+        item.detail = str(exc)
+        return item
+    if not latest:
+        item.status = "unknown"
+        item.detail = "could not detect a newer stable"
+        return item
+    if not version_newer(latest, rec["version"]):
+        item.status = "current"
+        item.new = rec["version"]
+        return item
+    item.new = latest
+    item.status = "update"
+    item.urls = [rewrite_url(u, rec["version"], latest) for u in rec["source"]]
+    return item
+
+
+def apply_pin_groups(items: list[PlanItem]) -> None:
+    by_group: dict[int, list[PlanItem]] = {}
+    for item in items:
+        if item.group is None:
+            continue
+        by_group.setdefault(item.group, []).append(item)
+    for members in by_group.values():
+        best = None
+        for item in members:
+            if item.status in {"update", "current"}:
+                if best is None or version_newer(item.new, best):
+                    best = item.new
+        if not best:
+            continue
+        for item in members:
+            if item.status in {"skip", "error"}:
+                continue
+            if item.old != best:
+                item.new = best
+                item.status = "update"
+                item.urls = [rewrite_url(u, item.old, best) for u in item.rec["source"]]
+                item.detail = "pinned with sibling modules"
+
+
+def inspect_new_deps(item: PlanItem, known: dict[str, Path]) -> None:
+    if item.status != "update" or not item.urls:
+        return
+    url = item.urls[0]
+    try:
+        archive = download(url)
+        item.hashes = [sha256_file(archive)]
+        for extra in item.urls[1:]:
+            item.hashes.append(sha256_file(download(extra)))
+    except (HttpError, OSError) as exc:
+        item.status = "error"
+        item.detail = f"download failed: {exc}"
+        return
+    runtime, _build = set(), set()
+    try:
+        with tempfile.TemporaryDirectory(prefix="sps-upg-") as tmp:
+            root = extract_archive(archive, Path(tmp) / "src")
+            runtime, _build = scan_build_files(root)
+    except (tarfile.TarError, zipfile.BadZipFile, OSError) as exc:
+        item.detail = (item.detail + f" (scan skipped: {exc})").strip()
+        return
+    have = set()
+    for spec in item.rec["depend"] + item.rec["builddep"]:
+        have.add(re.split(r"[<>=]", spec, 1)[0])
+    for raw in sorted(runtime):
+        mapped = map_dep(raw, known)
+        if mapped is None:
+            if raw.lower() in SKIP_DEPS or raw in HOST_TOOLS:
+                continue
+            item.missing.append(raw)
+            continue
+        if mapped in have or mapped == item.name or mapped in HOST_TOOLS:
+            continue
+        if mapped not in known:
+            item.missing.append(mapped)
+            continue
+        item.add_depend.append(mapped)
+        have.add(mapped)
+
+
+def write_item(item: PlanItem) -> None:
+    text = rewrite_recipe(
+        item.rec, item.new, item.urls, item.hashes,
+        item.add_depend, item.add_builddep,
+    )
+    item.rec["path"].write_text(text, encoding="utf-8")
+
+
+def format_plan(items: list[PlanItem]) -> str:
+    lines = []
+    counts = {}
+    for item in items:
+        counts[item.status] = counts.get(item.status, 0) + 1
+        if item.status == "current":
+            continue
+        extra = ""
+        if item.add_depend:
+            extra += f"  +depend {', '.join(item.add_depend)}"
+        if item.missing:
+            extra += f"  missing {', '.join(item.missing)}"
+        if item.detail:
+            extra += f"  ({item.detail})"
+        if item.status == "update":
+            lines.append(f"UPDATE  {item.name:28} {item.old} -> {item.new}{extra}")
+        elif item.status == "skip":
+            lines.append(f"SKIP    {item.name:28} {item.detail}")
+        elif item.status == "unknown":
+            lines.append(f"UNKNOWN {item.name:28} {item.old} {item.detail}")
+        else:
+            lines.append(f"ERROR   {item.name:28} {item.detail}")
+    summary = " ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+    lines.append(f"summary {summary}")
+    return "\n".join(lines) + "\n"
+
+
+def selftest() -> int:
+    assert version_compare("1.2.3", "1.2.3") == 0
+    assert version_compare("1.2.10", "1.2.9") > 0
+    assert version_compare("2.0", "1.9.9") > 0
+    assert version_compare("1.0~rc1", "1.0") < 0
+    assert is_prerelease("1.2.3-rc1")
+    assert not is_prerelease("1.2.3")
+    assert gnome_stable("gtk", "4.22.4")
+    assert not gnome_stable("gtk", "4.23.1")
+    url = rewrite_url(
+        "https://download.gnome.org/sources/gtk/4.18/gtk-4.18.6.tar.xz",
+        "4.18.6", "4.22.4",
+    )
+    assert "4.22.4" in url and "4.18.6" not in url
+    # series directory also rewritten
+    assert "/4.22/" in url or "4.22.4" in url
+    raw = map_dep("libssl", {"openssl": Path(".")})
+    assert raw == "openssl"
+    meson = "dependency('libpng', required: true)\ndependency('threads')\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp)
+        (p / "meson.build").write_text(meson, encoding="utf-8")
+        runtime, _ = scan_build_files(p)
+        assert "libpng" in runtime
+        assert "threads" in runtime
+    rec_text = (
+        "name        demo\n"
+        "version     1.0\n"
+        "release     3\n"
+        "description demo: test\n"
+        "\n"
+        "source      https://example.org/demo-1.0.tar.gz\n"
+        "hash        sha256:" + ("a" * 64) + "\n"
+        "\n"
+        "depend      filesystem\n"
+        "install     make install DESTDIR=\"$PKG\"\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        recipe = Path(tmp) / "recipe"
+        recipe.write_text(rec_text, encoding="utf-8")
+        rec = parse_recipe(recipe)
+        assert rec["name"] == "demo"
+        new = rewrite_recipe(rec, "1.1", ["https://example.org/demo-1.1.tar.gz"],
+                             ["b" * 64], ["zlib"], [])
+        assert "version     1.1" in new
+        assert "release     1" in new
+        assert "depend      zlib" in new
+        assert "demo-1.1.tar.gz" in new
+    print("selftest ok")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Upgrade SPS recipes to the newest upstream stable release.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  tools/upgrade-recipes --trees /usr/src/sps/core:/usr/src/sps/extra\n"
+            "  tools/upgrade-recipes --trees $PWD/../sps-core:$PWD/../sps-extra --apply\n"
+            "  tools/upgrade-recipes --trees extra --only gtk4,qemu,llvm --apply\n"
+        ),
+    )
+    ap.add_argument("--trees", default="",
+                    help="colon-separated recipe trees (core:extra)")
+    ap.add_argument("--apply", action="store_true",
+                    help="write recipe changes (default is a plan only)")
+    ap.add_argument("--scan-deps", action="store_true",
+                    help="download new tarballs and scan for undeclared dependencies "
+                         "(implied by --apply)")
+    ap.add_argument("--no-scan-deps", action="store_true",
+                    help="do not download tarballs or scan dependencies")
+    ap.add_argument("--only", default="",
+                    help="comma-separated package names")
+    ap.add_argument("--jobs", type=int, default=8,
+                    help="parallel upstream probes (default 8)")
+    ap.add_argument("--include-kernel", action="store_true",
+                    help="allow linux and firmware recipes")
+    ap.add_argument("--scaffold-missing", action="store_true",
+                    help="draft extra recipes for newly required unpackaged deps")
+    ap.add_argument("--json", action="store_true",
+                    help="print machine-readable plan")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run offline unit checks and exit")
+    args = ap.parse_args(argv)
+
+    if args.selftest:
+        return selftest()
+
+    trees = [Path(p) for p in args.trees.split(":") if p]
+    if not trees:
+        env = os.environ.get("SPS_RECIPE_TREES", "")
+        trees = [Path(p) for p in env.split(":") if p]
+    if not trees:
+        ap.error("pass --trees CORE:EXTRA (or set SPS_RECIPE_TREES)")
+
+    for tree in trees:
+        if not tree.is_dir():
+            ap.error(f"recipe tree is not a directory: {tree}")
+
+    only = {x.strip() for x in args.only.split(",") if x.strip()} or None
+    recs = collect_recipes(trees, only)
+    if not recs:
+        log("no recipes found")
+        return 1
+
+    log(f"scanning {len(recs)} recipes in {len(trees)} tree(s)")
+    items: list[PlanItem] = []
+    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+        futs = {pool.submit(probe_one, rec, args.include_kernel): rec for rec in recs}
+        for fut in as_completed(futs):
+            item = fut.result()
+            items.append(item)
+            if item.status == "update":
+                log(f"plan  {item.name} {item.old} -> {item.new}")
+    items.sort(key=lambda i: i.name)
+    apply_pin_groups(items)
+
+    known = load_tree_names(trees)
+    extra_tree = trees[-1]
+    updates = [i for i in items if i.status == "update"]
+    do_scan = (args.apply or args.scan_deps) and not args.no_scan_deps
+    if do_scan:
+        for item in updates:
+            log(f"fetch {item.name} {item.new}")
+            inspect_new_deps(item, known)
+            for miss in list(item.missing):
+                mapped = map_dep(miss, known) or miss
+                if mapped in known:
+                    if mapped not in item.add_depend:
+                        item.add_depend.append(mapped)
+                    item.missing.remove(miss)
+                    continue
+                if not args.scaffold_missing:
+                    continue
+                latest = latest_repology(mapped) or item.new
+                url = guess_scaffold_url(mapped, latest)
+                if not url:
+                    continue
+                try:
+                    archive = download(url)
+                    digest = sha256_file(archive)
+                except (HttpError, OSError):
+                    continue
+                path = scaffold_recipe(extra_tree, mapped, latest, url, digest, [])
+                known[mapped] = path
+                item.add_depend.append(mapped)
+                item.missing.remove(miss)
+                log(f"scaffold {mapped} -> {path}")
+    elif args.apply:
+        for item in updates:
+            log(f"fetch {item.name} {item.new}")
+            if not item.urls:
+                item.status = "error"
+                item.detail = "no source URL"
+                continue
+            try:
+                item.hashes = [sha256_file(download(u)) for u in item.urls]
+            except (HttpError, OSError) as exc:
+                item.status = "error"
+                item.detail = f"download failed: {exc}"
+
+    if args.json:
+        payload = []
+        for item in items:
+            payload.append({
+                "name": item.name,
+                "status": item.status,
+                "old": item.old,
+                "new": item.new,
+                "urls": item.urls,
+                "add_depend": item.add_depend,
+                "missing": item.missing,
+                "detail": item.detail,
+            })
+        print(json.dumps(payload, indent=2))
+    else:
+        sys.stdout.write(format_plan(items))
+
+    if not args.apply:
+        return 0 if not any(i.status == "error" for i in items) else 2
+
+    written = 0
+    for item in items:
+        if item.status != "update":
+            continue
+        if not item.hashes:
+            log(f"skip write {item.name}: no hash")
+            continue
+        write_item(item)
+        written += 1
+        log(f"wrote {item.rec['path']}")
+    log(f"applied {written} recipe update(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(130)

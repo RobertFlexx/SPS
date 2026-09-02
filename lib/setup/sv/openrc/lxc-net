@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+description="LXC bridge networking"
+command="/usr/libexec/lxc/lxc-net"
+command_args="start"
+command_background="no"
+
+depend() {
+    use net
+    after net
+}

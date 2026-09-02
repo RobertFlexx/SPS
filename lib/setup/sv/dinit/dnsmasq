@@ -1,0 +1,4 @@
+type = process
+command = /usr/sbin/dnsmasq -k
+restart = true
+smooth-recovery = true

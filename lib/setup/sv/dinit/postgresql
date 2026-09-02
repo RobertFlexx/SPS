@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/postgres -D /var/lib/postgres/data
+restart = true
+smooth-recovery = true

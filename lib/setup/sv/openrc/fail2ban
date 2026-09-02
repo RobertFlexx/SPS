@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="fail2ban authentication ban daemon"
+command="/usr/bin/fail2ban-server"
+command_args="-xf --logtarget=stdout"
+command_background="yes"
+pidfile="/run/fail2ban.pid"
+
+depend() {
+    use net
+    after net
+}

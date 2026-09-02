@@ -1,0 +1,3 @@
+#!/bin/sh
+exec 2>&1
+exec /usr/bin/distccd --no-detach --allow 127.0.0.1 --log-stderr

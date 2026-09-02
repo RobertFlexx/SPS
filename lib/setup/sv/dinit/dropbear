@@ -1,0 +1,4 @@
+type = process
+command = /usr/sbin/dropbear -F -E
+restart = true
+smooth-recovery = true

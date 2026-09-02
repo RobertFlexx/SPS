@@ -1,0 +1,10 @@
+[Unit]
+Description=NFS server
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/rpc.mountd -F
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

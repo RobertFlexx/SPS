@@ -1,0 +1,4 @@
+type = process
+command = /usr/sbin/haproxy -f /etc/haproxy/haproxy.cfg -db
+restart = true
+smooth-recovery = true

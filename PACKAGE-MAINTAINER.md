@@ -311,3 +311,79 @@ dependencies and runtime linkage.
 relationships. Also inspect modes, ownership, symlink targets, installed paths,
 and the resulting archive manually. After removal, account for intentionally
 retained modified protected files and any state created by lifecycle hooks.
+
+## Init scripts for daemons
+
+Mapped daemons live in `lib/setup/services`. After `pkin`, SPS enables the
+service for the init named in `/etc/sps/init`. Supported inits are `systemd`,
+`openrc`, `s6`, `runit`, `dinit`, and `shepherd`.
+
+A package should ship a systemd unit under `$PKG/usr/lib/systemd/system` and
+an OpenRC script under `$PKG/etc/init.d` (see `seatd`, `openssh`, and the
+database/network daemons in extra). When the chosen init has no file in the
+package, `pkin` copies a stock script from `lib/setup/sv/<init>/` and then
+enables it. Add a stock file for every supported init whenever you introduce a
+new daemon:
+
+```text
+lib/setup/sv/systemd/NAME.service
+lib/setup/sv/openrc/NAME
+lib/setup/sv/runit/NAME/run
+lib/setup/sv/s6/NAME/run
+lib/setup/sv/dinit/NAME
+lib/setup/sv/shepherd/NAME.scm
+```
+
+`tools/write-stock-services.py` regenerates those stock files from its service
+table and installs the systemd plus OpenRC copies next to extra recipes.
+
+## Rolling upgrades (`tools/upgrade-recipes`)
+
+Splux is a rolling distro. Maintainers bump every recipe with a real upstream
+tarball by running one command against the core and extra trees:
+
+```sh
+python3 tools/upgrade-recipes \
+    --trees /usr/src/sps/core:/usr/src/sps/extra
+```
+
+That prints a plan. It does not write files. To apply it:
+
+```sh
+python3 tools/upgrade-recipes \
+    --trees /usr/src/sps/core:/usr/src/sps/extra \
+    --apply
+```
+
+`--apply` downloads each newer tarball, writes a real SHA-256, sets `release`
+to 1, and rewrites `source` URLs. It then unpacks the new source and scans
+Meson, CMake, Autoconf, and pkg-config files for libraries the recipe does not
+declare. Names that already exist in the trees are appended as `depend`. Names
+that do not exist are listed as `missing`. Pass `--scaffold-missing` to draft a
+conservative extra recipe when a source URL can be resolved.
+
+Other useful switches:
+
+```text
+--only gtk4,qemu,llvm     limit the run
+--jobs 12                 parallel upstream probes
+--scan-deps               download and scan on a dry-run
+--no-scan-deps            skip tarball work (version plan only)
+--include-kernel          allow linux and firmware recipes
+--json                    machine-readable plan
+--selftest                offline checks
+```
+
+Qt, KDE Frameworks, Plasma, and GStreamer modules are pinned together so one
+sibling cannot race ahead of the rest. GNOME even-minor libraries (gtk, glib,
+libadwaita, ...) skip odd development series. Tags containing alpha, beta, rc,
+or git are ignored. Kernel and firmware recipes stay pinned unless you pass
+`--include-kernel`.
+
+Set `SPS_RECIPE_TREES` instead of `--trees` if you prefer. Set `GITHUB_TOKEN`
+if GitHub rate-limits the probe. Downloaded tarballs are cached under
+`~/.cache/sps-upgrade` (override with `SPS_UPGRADE_CACHE`).
+
+Run `src update` in the recipe trees after a successful apply, then build the
+packages that moved.
+

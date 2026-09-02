@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="Tor anonymity daemon"
+command="/usr/bin/tor"
+command_args="--RunAsDaemon 0"
+command_background="yes"
+pidfile="/run/tor.pid"
+
+depend() {
+    use net
+    after net
+}

@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="Valkey data store"
+command="/usr/bin/valkey-server"
+command_args="--daemonize no --bind 127.0.0.1"
+command_background="yes"
+pidfile="/run/valkey.pid"
+
+depend() {
+    use net
+    after net
+}

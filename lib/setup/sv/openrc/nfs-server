@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+description="NFS server"
+command="/usr/sbin/rpc.mountd"
+command_args="-F"
+command_background="yes"
+pidfile="/run/nfs-server.pid"
+
+depend() {
+    use net
+    after net
+}
+
+start_pre() {
+	if command -v exportfs >/dev/null 2>&1; then exportfs -ra || :; fi
+	if command -v rpc.statd >/dev/null 2>&1; then rpc.statd --no-notify || :; fi
+	if command -v rpc.nfsd >/dev/null 2>&1; then rpc.nfsd 8 || :; fi
+}

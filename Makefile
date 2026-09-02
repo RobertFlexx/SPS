@@ -34,6 +34,7 @@ lint:
 		[ -f $$script ] || continue; \
 		$(POSIX_SHELL) -n $$script; \
 	done
+	@python3 -m py_compile tools/upgrade-recipes tools/write-stock-services.py
 	@set -e; for script in lib/mkiso/initrd-init lib/mkiso/live-rc \
 		lib/mkiso/live-plasma lib/mkiso/live-plasma-session \
 		lib/mkiso/live-init lib/mkiso/udhcpc-script; do \

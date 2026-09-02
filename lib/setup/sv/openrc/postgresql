@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+description="PostgreSQL database server"
+command="/usr/bin/postgres"
+command_args="-D /var/lib/postgres/data"
+command_background="yes"
+pidfile="/run/postgresql.pid"
+command_user="postgres"
+
+depend() {
+    use net
+    after net
+}
+
+start_pre() {
+	install -d -m 0755 /run/postgresql /var/lib/postgres/data || :
+}

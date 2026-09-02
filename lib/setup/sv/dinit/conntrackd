@@ -1,0 +1,4 @@
+type = process
+command = /usr/sbin/conntrackd -C /etc/conntrackd/conntrackd.conf
+restart = true
+smooth-recovery = true

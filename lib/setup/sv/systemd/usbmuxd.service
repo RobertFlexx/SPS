@@ -1,0 +1,10 @@
+[Unit]
+Description=iOS USB multiplexing daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/usbmuxd -f
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

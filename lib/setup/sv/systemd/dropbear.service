@@ -1,0 +1,10 @@
+[Unit]
+Description=Dropbear SSH server
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/dropbear -F -E
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

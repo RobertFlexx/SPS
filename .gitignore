@@ -5,3 +5,5 @@
 *.tmp
 .sps-*
 /dist/
+__pycache__/
+*.pyc

@@ -1,0 +1,10 @@
+[Unit]
+Description=distributed C/C++ compilation daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/distccd --no-detach --allow 127.0.0.1 --log-stderr
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

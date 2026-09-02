@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+description="memcached object cache"
+command="/usr/bin/memcached"
+command_args="-u nobody"
+command_background="yes"
+pidfile="/run/memcached.pid"
+
+depend() {
+    use net
+    after net
+}

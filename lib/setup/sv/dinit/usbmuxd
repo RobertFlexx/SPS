@@ -1,0 +1,4 @@
+type = process
+command = /usr/sbin/usbmuxd -f
+restart = true
+smooth-recovery = true
