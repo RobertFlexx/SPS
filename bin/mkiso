@@ -997,8 +997,8 @@ mkiso_verify_plasma()
 }
 
 # setup extras/sets/profiles may only name packages that exist in the
-# recipe trees on this image. An extras checklist entry for mpv with no
-# mpv recipe is how live setup died at "package 'mpv' not found".
+# recipe trees on this image. An extras checklist entry with no matching
+# recipe is how live setup died at "package not found".
 mkiso_verify_setup_catalog()
 {
 	mkiso_setupdir=$SPS_LIBDIR/setup

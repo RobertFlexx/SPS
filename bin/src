@@ -40,6 +40,38 @@ src_progress()
     printf '%s: %s\n' "$sps_prog" "$*" >&2
 }
 
+# True when the package directory has files/, patches/, or hooks/ (including
+# a dangling symlink of those names). Those still need the full definition
+# hasher; recipe-only packages can share one sha256sum batch.
+src_recipe_needs_support()
+{
+	src_support_dir=$1
+	for src_support_name in files patches hooks; do
+		if [ -e "$src_support_dir/$src_support_name" ] ||
+		   [ -L "$src_support_dir/$src_support_name" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Print hashing progress. Small repositories still log every recipe; large
+# ones log the first, last, and every 25th so stderr stays useful without
+# becoming the slow path.
+src_progress_hash()
+{
+	src_ph_repo=$1
+	src_ph_n=$2
+	src_ph_total=$3
+	src_ph_label=$4
+	if [ "$src_ph_total" -le 8 ] ||
+	   [ "$src_ph_n" -eq 1 ] ||
+	   [ "$src_ph_n" -eq "$src_ph_total" ] ||
+	   [ $((src_ph_n % 25)) -eq 0 ]; then
+		src_progress "$src_ph_repo $src_ph_n/$src_ph_total $src_ph_label"
+	fi
+}
+
 src_need_index()
 {
     [ -r "$sps_index" ] ||
@@ -55,6 +87,7 @@ src_cleanup_update()
 	if [ -n "${src_work:-}" ]; then
 		rm -f "$src_work/repos.raw" "$src_work/repos" \
 		      "$src_work/recipes.unsorted" "$src_work/recipes" \
+		      "$src_work/simple" "$src_work/simple.raw" \
 		      "$src_work/digests" "$src_work/packages.index"
 		rmdir "$src_work" 2>/dev/null || :
 		src_work=
@@ -101,9 +134,11 @@ src_sync_git()
 		src_progress "cloning '$src_git_name'"
 		# Depth 1 is enough for recipes. Later fetches stay full so
 		# fast-forward and divergence checks keep working.
-		# --progress keeps clone/fetch from looking hung when stderr
-		# is not a terminal (setup, logs, scripted live installs).
-		if ! git clone --depth 1 --single-branch --progress -- \
+		# --no-tags skips tag objects that would otherwise bloat fetch
+		# on remotes with a long tag history. Branch tips are still
+		# fetched. --progress keeps clone/fetch from looking hung when
+		# stderr is not a terminal (setup, logs, scripted live installs).
+		if ! git clone --depth 1 --single-branch --no-tags --progress -- \
 			"$src_git_source" "$src_clone_checkout"; then
 			sps_die "$SPS_EX_NETWORK" \
 				"cannot clone repository '$src_git_name'"
@@ -148,7 +183,7 @@ src_sync_git()
 	fi
 
 	src_progress "fetching '$src_git_name'"
-	if ! git -C "$src_git_checkout" fetch --progress origin; then
+	if ! git -C "$src_git_checkout" fetch --no-tags --progress origin; then
 		sps_die "$SPS_EX_NETWORK" \
 			"cannot fetch repository '$src_git_name'"
 	fi
@@ -304,9 +339,50 @@ src_update()
             src_failed=1
             break
         }
+        : > "$src_work/simple" || {
+            printf "%s: cannot create recipe hash list\n" "$sps_prog" >&2
+            src_failed=1
+            break
+        }
         src_repo_packages=0
         src_recipe_total=$(awk 'END { print NR + 0 }' "$src_work/recipes")
         src_progress "indexing '$src_repo_name' ($src_recipe_total recipes)"
+        while IFS= read -r src_recipe || [ -n "$src_recipe" ]
+        do
+            [ -n "$src_recipe" ] || continue
+            if src_recipe_needs_support "${src_recipe%/*}"; then
+                continue
+            fi
+            printf '%s\n' "$src_recipe" >> "$src_work/simple" || {
+                printf "%s: cannot record recipe hash list: %s\n" \
+                    "$sps_prog" "$src_recipe" >&2
+                src_failed=1
+                break
+            }
+        done < "$src_work/recipes"
+        [ "$src_failed" -eq 0 ] || break
+
+        src_batch_ok=0
+        if command -v sha256sum >/dev/null 2>&1 &&
+           command -v xargs >/dev/null 2>&1 &&
+           [ -s "$src_work/simple" ]; then
+            if tr '\n' '\0' < "$src_work/simple" |
+               xargs -0 sha256sum -- > "$src_work/simple.raw"; then
+                src_simple_n=$(awk 'END { print NR + 0 }' "$src_work/simple")
+                src_hash_n=$(awk 'END { print NR + 0 }' "$src_work/simple.raw")
+                if [ "$src_simple_n" -eq "$src_hash_n" ]; then
+                    src_batch_ok=1
+                fi
+            fi
+        fi
+        if [ "$src_batch_ok" -eq 1 ]; then
+            exec 3< "$src_work/simple.raw" || {
+                printf "%s: cannot read batched recipe hashes\n" \
+                    "$sps_prog" >&2
+                src_failed=1
+                break
+            }
+        fi
         while IFS= read -r src_recipe || [ -n "$src_recipe" ]
         do
             [ -n "$src_recipe" ] || continue
@@ -316,22 +392,39 @@ src_update()
                 src_failed=1
                 break
             fi
-			src_digest=$(sps_definition_sha256 "$src_recipe") || {
-				printf "%s: cannot hash package definition: %s\n" \
-					"$sps_prog" "$src_recipe" >&2
-                src_failed=1
-                break
-            }
+            if [ "$src_batch_ok" -eq 1 ] &&
+               ! src_recipe_needs_support "${src_recipe%/*}"; then
+                read -r src_file_hash src_hash_rest <&3 || {
+                    printf "%s: batched recipe hash missing: %s\n" \
+                        "$sps_prog" "$src_recipe" >&2
+                    src_failed=1
+                    break
+                }
+                src_digest=$(sps_definition_from_recipe_file_hash \
+                    "$src_file_hash") || {
+                    printf "%s: cannot hash package definition: %s\n" \
+                        "$sps_prog" "$src_recipe" >&2
+                    src_failed=1
+                    break
+                }
+            else
+                src_digest=$(sps_definition_sha256 "$src_recipe") || {
+                    printf "%s: cannot hash package definition: %s\n" \
+                        "$sps_prog" "$src_recipe" >&2
+                    src_failed=1
+                    break
+                }
+            fi
             case $src_digest in
                 ''|*[!0123456789abcdefABCDEF]*)
-					printf "%s: invalid package definition SHA-256: %s\n" \
+                    printf "%s: invalid package definition SHA-256: %s\n" \
                         "$sps_prog" "$src_recipe" >&2
                     src_failed=1
                     break
                     ;;
             esac
             if [ "${#src_digest}" -ne 64 ]; then
-				printf "%s: invalid package definition SHA-256: %s\n" \
+                printf "%s: invalid package definition SHA-256: %s\n" \
                     "$sps_prog" "$src_recipe" >&2
                 src_failed=1
                 break
@@ -346,8 +439,12 @@ src_update()
             src_repo_packages=$((src_repo_packages + 1))
             src_recipe_label=${src_recipe%/*}
             src_recipe_label=${src_recipe_label##*/}
-            src_progress "$src_repo_name $src_repo_packages/$src_recipe_total $src_recipe_label"
+            src_progress_hash "$src_repo_name" "$src_repo_packages" \
+                "$src_recipe_total" "$src_recipe_label"
         done < "$src_work/recipes"
+        if [ "$src_batch_ok" -eq 1 ]; then
+            exec 3<&-
+        fi
 
         [ "$src_failed" -eq 0 ] || break
         if [ "$src_repo_packages" -gt 0 ]; then
@@ -469,7 +566,26 @@ src_query()
 src_check()
 {
     src_check_deps=0
-    src_check_recipes=
+    src_check_recipes_file=
+    src_check_work=
+    src_check_cleanup()
+    {
+        [ -n "${src_check_recipes_file:-}" ] &&
+            rm -f "$src_check_recipes_file"
+        src_check_recipes_file=
+        if [ -n "${src_check_work:-}" ]; then
+            rm -f "$src_check_work/packages.index"
+            rmdir "$src_check_work" 2>/dev/null || :
+            src_check_work=
+        fi
+    }
+    src_check_recipes_file=$(mktemp "${TMPDIR:-/tmp}/sps-src-check.XXXXXX") ||
+        exit "$SPS_EX_PERMISSION"
+    trap src_check_cleanup 0
+    trap 'exit 129' 1
+    trap 'exit 130' 2
+    trap 'exit 131' 3
+    trap 'exit 143' 15
     while [ "$#" -gt 0 ]; do
         case $1 in
             --deps)
@@ -477,10 +593,14 @@ src_check()
                 ;;
             --help|-h)
                 printf '%s\n' 'usage: src check RECIPE... [--deps]'
+                src_check_cleanup
+                trap - 0 1 2 3 15
                 exit 0
                 ;;
             -*)
                 src_usage >&2
+                src_check_cleanup
+                trap - 0 1 2 3 15
                 exit "$SPS_EX_USAGE"
                 ;;
             *)
@@ -492,18 +612,23 @@ src_check()
                 if [ ! -f "$src_check_resolve" ] ||
                    [ -L "$src_check_resolve" ] ||
                    [ ! -r "$src_check_resolve" ]; then
+                    src_check_cleanup
+                    trap - 0 1 2 3 15
                     sps_die "$SPS_EX_NOTFOUND" \
                         "no readable recipe file at '$1'"
                 fi
-                src_check_recipes="$src_check_recipes $src_check_resolve"
+                printf '%s\n' "$src_check_resolve" >>"$src_check_recipes_file" ||
+                    sps_die "$SPS_EX_PERMISSION" "cannot record recipe path"
                 ;;
         esac
         shift
     done
-    [ -n "$src_check_recipes" ] || {
+    if [ ! -s "$src_check_recipes_file" ]; then
         printf '%s\n' 'usage: src check RECIPE... [--deps]' >&2
+        src_check_cleanup
+        trap - 0 1 2 3 15
         exit "$SPS_EX_USAGE"
-    }
+    fi
 
     if [ "$src_check_deps" -eq 1 ]; then
         src_check_work=$(sps_mktemp_dir "$SPS_BUILD/.check") || exit $?
@@ -514,7 +639,8 @@ src_check()
     src_check_failed=0
     src_check_count=0
     src_check_arch=${SPS_ARCH:-$(uname -m 2>/dev/null || printf unknown)}
-    for src_check_recipe in $src_check_recipes; do
+    while IFS= read -r src_check_recipe || [ -n "$src_check_recipe" ]
+    do
         [ -n "$src_check_recipe" ] || continue
         src_check_count=$((src_check_count + 1))
         src_check_digest=$(sps_definition_sha256 "$src_check_recipe") || {
@@ -550,11 +676,11 @@ src_check()
                 "$src_check_name" >&2
             src_check_failed=1
         fi
-    done
+    done < "$src_check_recipes_file"
 
     if [ "$src_check_failed" -ne 0 ]; then
-        rm -f "$src_check_index" 2>/dev/null || :
-        rmdir "$src_check_work" 2>/dev/null || :
+        src_check_cleanup
+        trap - 0 1 2 3 15
         sps_die "$SPS_EX_PACKAGE" \
             "$src_check_count recipe(s) checked: at least one failed"
     fi
@@ -562,20 +688,22 @@ src_check()
     if [ "$src_check_deps" -eq 1 ]; then
         if ! awk -v action=validate -v program=src \
                 -f "$SPS_LIBDIR/index.awk" "$src_check_index"; then
-            rmdir "$src_check_work" 2>/dev/null || :
+            src_check_cleanup
+            trap - 0 1 2 3 15
             sps_die "$SPS_EX_PACKAGE" "generated check index is malformed"
         fi
         if ! awk -v action=validate -v program=src \
                 -f "$SPS_LIBDIR/version.awk" -f "$SPS_LIBDIR/deps.awk" \
                 "$src_check_index"; then
-            rmdir "$src_check_work" 2>/dev/null || :
+            src_check_cleanup
+            trap - 0 1 2 3 15
             sps_die "$SPS_EX_DEPENDENCY" "checked dependency graph is invalid"
         fi
-        rm -f "$src_check_index" 2>/dev/null || :
-        rmdir "$src_check_work" 2>/dev/null || :
     fi
 
     printf 'checked %d recipe(s)\n' "$src_check_count"
+    src_check_cleanup
+    trap - 0 1 2 3 15
 }
 
 while [ "$#" -gt 0 ]; do

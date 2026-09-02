@@ -71,6 +71,14 @@ build dependencies may participate.
 Resolve and install requested packages. Requested roots are explicit; packages
 needed only by the graph are dependency-installed. Exact installed roots are
 promoted to explicit without an unnecessary reinstall.
+Build dependencies are installed only when a package will be compiled.
+If
+.BR cmake (1) ,
+.BR ninja (1) ,
+.BR meson (1) ,
+or another well-known build tool is already on
+.B PATH
+and is not a runtime requirement, that host command is used instead.
 .TP
 .B upgrade
 Resolve the installed explicit world set and upgrade its selected dependency

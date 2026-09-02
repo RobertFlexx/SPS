@@ -270,7 +270,8 @@ END {
             if (action == "plan")
                 print deps_package, deps_recipe[deps_package],
                       deps_recipe_sha256[deps_package], deps_version[deps_package],
-                      deps_release[deps_package], deps_arch[deps_package]
+                      deps_release[deps_package], deps_arch[deps_package],
+                      deps_build[deps_package]
             else
                 print deps_package
         }

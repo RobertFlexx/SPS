@@ -54,6 +54,12 @@ $src check "$tmp/ok/recipe" | grep -q '^check: ok ' ||
 # A directory argument resolves to its recipe file.
 $src check "$tmp/ok/recipe" >/dev/null 2>&1 || fail "file recipe rejected"
 
+# Paths with spaces must not be word-split.
+mkdir -p "$tmp/ok dir"
+cp "$tmp/ok/recipe" "$tmp/ok dir/recipe"
+$src check "$tmp/ok dir" | grep -q '^check: ok ' ||
+    fail "recipe path with a space was not accepted"
+
 # Missing the required install command is a syntax failure.
 cat >"$tmp/bad/recipe" <<'EOF'
 name        badpkg

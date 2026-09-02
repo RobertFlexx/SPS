@@ -116,7 +116,9 @@ Dependency lists are comma-separated. Field values may not contain tabs or
 newlines. The definition digest covers the recipe content and the relative
 paths, contents, and copied modes of its `files/`, `patches/`, and `hooks/`
 inputs, so a changed support file invalidates the index as well as a changed
-recipe.
+recipe. Recipe-only packages hash the same two-line manifest; `src update`
+batches those file hashes and then applies that manifest, so the digest
+matches the per-package hasher.
 
 When more than one configured repository supplies the same package, SPS picks
 the highest numeric priority. Configuration order breaks equal priorities. A
@@ -313,6 +315,16 @@ the upstream version, it must bump the package release.
 
 Runtime and build dependencies form a directed graph. `sget` computes a stable
 topological order and rejects missing dependencies and cycles.
+
+`sget install` resolves the runtime closure first. Build dependencies are added
+only for packages that will actually be compiled (not already installed at the
+selected version, and not a usable cached archive). Well-known build tools
+already on `PATH` (`cmake`, `ninja`, `meson`, `patch`, `pkgconf`, `gperf`,
+`python`, `go`, `rust`) are used in place of those packages when they are not
+themselves a runtime requirement. That is why `fastfetch` does not install
+`cmake` or `openssl` on a live image that already has cmake.
+
+`sget depends --build` still shows the full declared build graph.
 
 `sget upgrade` starts with the explicit `world` set and resolves its selected
 dependency closure. `sget dependees` shows reverse dependencies. `sget why`

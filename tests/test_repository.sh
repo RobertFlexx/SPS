@@ -136,6 +136,20 @@ status_output=$("$src" status)
 contains "$status_output" 'core: 2 packages'
 contains "$status_output" 'extra: 1 packages'
 
+# Batched recipe-only hashing and the support-tree hasher must agree with
+# sps_definition_sha256 so a large extra tree does not change index bytes.
+. "$project_dir/lib/common.sh"
+sps_program=test_repository
+tie_digest=$(sps_definition_sha256 "$tmp/core/base/tie/recipe") ||
+    fail 'could not hash recipe-only tie'
+alpha_digest=$(sps_definition_sha256 "$tmp/core/base/alpha/recipe") ||
+    fail 'could not hash support-tree alpha'
+[ "$(awk -F '\t' '$1 == "tie" { print $12; exit }' "$index")" = "$tie_digest" ] ||
+    fail 'indexed tie digest does not match sps_definition_sha256'
+[ "$(awk -F '\t' '$1 == "alpha" && $8 == "core" { print $12; exit }' "$index")" = \
+    "$alpha_digest" ] ||
+    fail 'indexed alpha digest does not match sps_definition_sha256'
+
 old_index=$(cksum "$index")
 cp "$tmp/repos.conf" "$tmp/repos.good"
 

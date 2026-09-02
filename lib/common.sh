@@ -88,45 +88,107 @@ sps_require_cmd()
 		sps_die "$SPS_EX_PACKAGE" "required command not found: $1"
 }
 
-# Print only the digest. Avoid an extra awk process here.
-sps_sha256()
+# Resolve the hasher once per process. src update hashes hundreds of recipes.
+sps_sha256_kind=
+
+sps_sha256_detect()
 {
+	[ -n "$sps_sha256_kind" ] && return 0
 	if command -v sha256sum >/dev/null 2>&1; then
-		sps_hash_line=$(sha256sum "$1") || return $?
-		printf '%s\n' "${sps_hash_line%% *}"
+		sps_sha256_kind=sha256sum
 	elif command -v sha256 >/dev/null 2>&1; then
-		sha256 -q "$1"
+		sps_sha256_kind=sha256
 	elif command -v shasum >/dev/null 2>&1; then
-		sps_hash_line=$(shasum -a 256 "$1") || return $?
-		printf '%s\n' "${sps_hash_line%% *}"
+		sps_sha256_kind=shasum
 	elif command -v openssl >/dev/null 2>&1; then
-		sps_hash_line=$(openssl dgst -sha256 "$1") || return $?
-		printf '%s\n' "${sps_hash_line##* }"
+		sps_sha256_kind=openssl
 	else
 		sps_die "$SPS_EX_CHECKSUM" \
 			"no SHA-256 utility found (tried sha256sum, sha256, shasum, openssl)"
 	fi
 }
 
+# Print only the digest. Avoid an extra awk process here.
+sps_sha256()
+{
+	sps_sha256_detect || return $?
+	case $sps_sha256_kind in
+		sha256sum)
+			sps_hash_line=$(sha256sum "$1") || return $?
+			printf '%s\n' "${sps_hash_line%% *}"
+			;;
+		sha256)
+			sha256 -q "$1"
+			;;
+		shasum)
+			sps_hash_line=$(shasum -a 256 "$1") || return $?
+			printf '%s\n' "${sps_hash_line%% *}"
+			;;
+		openssl)
+			sps_hash_line=$(openssl dgst -sha256 "$1") || return $?
+			printf '%s\n' "${sps_hash_line##* }"
+			;;
+		*)
+			sps_die "$SPS_EX_CHECKSUM" \
+				"no SHA-256 utility found (tried sha256sum, sha256, shasum, openssl)"
+			;;
+	esac
+}
+
 # Same digest as sps_sha256, from stdin. Used for the recipe-only definition
 # manifest so src update does not create a throwaway directory per package.
 sps_sha256_stream()
 {
-	if command -v sha256sum >/dev/null 2>&1; then
-		sps_hash_line=$(sha256sum) || return $?
-		printf '%s\n' "${sps_hash_line%% *}"
-	elif command -v sha256 >/dev/null 2>&1; then
-		sha256 -q
-	elif command -v shasum >/dev/null 2>&1; then
-		sps_hash_line=$(shasum -a 256) || return $?
-		printf '%s\n' "${sps_hash_line%% *}"
-	elif command -v openssl >/dev/null 2>&1; then
-		sps_hash_line=$(openssl dgst -sha256) || return $?
-		printf '%s\n' "${sps_hash_line##* }"
-	else
-		sps_die "$SPS_EX_CHECKSUM" \
-			"no SHA-256 utility found (tried sha256sum, sha256, shasum, openssl)"
-	fi
+	sps_sha256_detect || return $?
+	case $sps_sha256_kind in
+		sha256sum)
+			sps_hash_line=$(sha256sum) || return $?
+			printf '%s\n' "${sps_hash_line%% *}"
+			;;
+		sha256)
+			sha256 -q
+			;;
+		shasum)
+			sps_hash_line=$(shasum -a 256) || return $?
+			printf '%s\n' "${sps_hash_line%% *}"
+			;;
+		openssl)
+			sps_hash_line=$(openssl dgst -sha256) || return $?
+			printf '%s\n' "${sps_hash_line##* }"
+			;;
+		*)
+			sps_die "$SPS_EX_CHECKSUM" \
+				"no SHA-256 utility found (tried sha256sum, sha256, shasum, openssl)"
+			;;
+	esac
+}
+
+# Lowercase a SHA-256 hex digest. GNU sha256sum is already lowercase; skip tr.
+sps_hex_normalize()
+{
+	sps_hex_in=$1
+	case $sps_hex_in in
+		*[ABCDEF]*)
+			sps_hex_in=$(printf '%s\n' "$sps_hex_in" |
+				LC_ALL=C tr 'ABCDEF' 'abcdef') || return 1
+			;;
+	esac
+	case $sps_hex_in in
+		''|*[!0123456789abcdef]*) return 1 ;;
+	esac
+	[ "${#sps_hex_in}" -eq 64 ] || return 1
+	printf '%s\n' "$sps_hex_in"
+}
+
+# Recipe-only definition digest from the recipe file's SHA-256. Same two-line
+# manifest the support-tree path would write for a package with no files/,
+# patches/, or hooks/.
+sps_definition_from_recipe_file_hash()
+{
+	sps_rfh=$(sps_hex_normalize "$1") || return 1
+	sps_rfh_out=$(printf 'sps-package-definition\t1\nfile\t-\t%s\trecipe\n' \
+		"$sps_rfh" | sps_sha256_stream) || return 1
+	sps_hex_normalize "$sps_rfh_out"
 }
 
 # Hash every input which makes up one package definition.  The manifest uses
@@ -178,23 +240,11 @@ sps_definition_sha256()
 			sps_warn 'cannot hash package definition recipe'
 			return 1
 		}
-		sps_definition_hash=$(printf '%s\n' "$sps_definition_hash" |
-			LC_ALL=C tr 'ABCDEF' 'abcdef') || return 1
-		case $sps_definition_hash in
-			''|*[!0123456789abcdef]*) return 1 ;;
-		esac
-		[ "${#sps_definition_hash}" -eq 64 ] || return 1
-		sps_definition_out=$(printf 'sps-package-definition\t1\nfile\t-\t%s\trecipe\n' \
-			"$sps_definition_hash" | sps_sha256_stream) || {
+		sps_definition_out=$(sps_definition_from_recipe_file_hash \
+			"$sps_definition_hash") || {
 			sps_warn 'cannot hash package definition manifest'
 			return 1
 		}
-		sps_definition_out=$(printf '%s\n' "$sps_definition_out" |
-			LC_ALL=C tr 'ABCDEF' 'abcdef') || return 1
-		case $sps_definition_out in
-			''|*[!0123456789abcdef]*) return 1 ;;
-		esac
-		[ "${#sps_definition_out}" -eq 64 ] || return 1
 		printf '%s\n' "$sps_definition_out"
 		return 0
 	fi

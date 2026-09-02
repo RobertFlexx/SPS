@@ -1,6 +1,6 @@
 name        multimedia
 title       Multimedia
-description PipeWire, WirePlumber, FFmpeg, and desktop audio/video libraries.
+description PipeWire, WirePlumber, FFmpeg, mpv, and desktop audio/video libraries.
 default     0
 package     pipewire
 package     wireplumber
@@ -11,3 +11,9 @@ package     gst-plugins-good
 package     alsa-lib
 package     alsa-utils
 package     vulkan-loader
+package     mpv
+package     yt-dlp
+package     sox
+package     cmus
+package     libass
+package     dav1d

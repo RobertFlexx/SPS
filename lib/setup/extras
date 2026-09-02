@@ -1,20 +1,24 @@
 # Extra packages offered by setup(1). One name<TAB>title per line.
 # Names must exist as recipes in sps-core or sps-extra, appear once,
 # and stay in LC_ALL=C sort order. tests/test_setup_catalog.sh and
-# mkiso refuse anything else. Do not list unpackaged names (mpv, GIMP,
+# mkiso refuse anything else. Do not list unpackaged names (GIMP,
 # LibreOffice, and similar); the extra set or a later recipe is the place
 # for those.
 alsa-utils	ALSA utilities
 amd-ucode	AMD CPU microcode
 bat	bat
 bluez	BlueZ Bluetooth
+brightnessctl	brightnessctl
 btop	btop
+chrony	chrony
 cmake	CMake
 cryptsetup	cryptsetup
 cups	CUPS printing
 curl	curl
 dhcpcd	dhcpcd
+dmidecode	dmidecode
 doas	OpenDoas
+dos2unix	dos2unix
 dosfstools	dosfstools
 e2fsprogs	e2fsprogs
 emacs	GNU Emacs
@@ -24,17 +28,20 @@ eza	eza
 falkon	Falkon
 fastfetch	fastfetch
 fd	fd
+feh	feh
 firefox	Firefox
 fish	fish shell
 flatpak	Flatpak
 fzf	fzf
 gdb	GDB
 git	Git
+git-lfs	Git LFS
 gnupg	GnuPG
 go	Go
 gptfdisk	GPT fdisk
 helix	Helix editor
 htop	htop
+imagemagick	ImageMagick
 intel-ucode	Intel CPU microcode
 iperf3	iperf3
 iwd	iwd
@@ -49,6 +56,7 @@ mdadm	Linux MD RAID
 mesa	Mesa
 meson	Meson
 micro	micro editor
+mpv	mpv
 nano	GNU nano
 neovim	Neovim
 networkmanager	NetworkManager
@@ -60,7 +68,9 @@ nouveau	Nouveau (NVIDIA open driver)
 ntfs-3g	NTFS driver
 nvidia-open	NVIDIA open kernel modules
 openssh	OpenSSH
+pandoc	pandoc
 parted	GNU parted
+pass	pass
 perl	Perl
 pipewire	PipeWire
 python	Python
@@ -73,10 +83,15 @@ smartmontools	S.M.A.R.T. tools
 starship	starship prompt
 strace	strace
 sudo	sudo
+syncthing	Syncthing
+tig	tig
 tmux	tmux
 vim	Vim
 vulkan-tools	vulkaninfo
 wget	wget
 wireguard-tools	WireGuard tools
+xdg-utils	xdg-utils
 yq	yq
+yt-dlp	yt-dlp
+zellij	zellij
 zsh	Z shell

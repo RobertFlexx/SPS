@@ -269,6 +269,176 @@ sget_verify_artifact_identity()
 # Set by the upgrade path.
 sget_upgrade_mode=${sget_upgrade_mode:-0}
 
+# Build-only tools that a live disc already seeds. Skip installing the
+# package when it is not a runtime requirement and the host command exists.
+sget_host_build_tool()
+{
+    case $1 in
+        cmake) command -v cmake >/dev/null 2>&1 ;;
+        ninja) command -v ninja >/dev/null 2>&1 ;;
+        meson) command -v meson >/dev/null 2>&1 ;;
+        patch) command -v patch >/dev/null 2>&1 ;;
+        pkgconf) command -v pkg-config >/dev/null 2>&1 ||
+            command -v pkgconf >/dev/null 2>&1 ;;
+        gperf) command -v gperf >/dev/null 2>&1 ;;
+        python) command -v python3 >/dev/null 2>&1 ;;
+        go) command -v go >/dev/null 2>&1 ;;
+        rust) command -v rustc >/dev/null 2>&1 &&
+            command -v cargo >/dev/null 2>&1 ;;
+        unzip) command -v unzip >/dev/null 2>&1 ;;
+        lzip) command -v lzip >/dev/null 2>&1 ;;
+        *) return 1 ;;
+    esac
+}
+
+sget_selected_index_field()
+{
+    awk -F "$sps_tab" -v pkg="$1" -v col="$2" '
+        $1 == pkg {
+            pri = $9 + 0
+            if (!seen || pri > best) {
+                best = pri
+                val = $col
+                seen = 1
+            }
+        }
+        END { if (seen) print val }
+    ' "$sps_index"
+}
+
+sget_cache_usable()
+{
+    sget_cu_name=$1
+    sget_cu_version=$2
+    sget_cu_release=$3
+    sget_cu_arch=$4
+    sget_cu_hash=$5
+    sget_cu_base=$SPS_CACHE/packages/$sget_cu_name-$sget_cu_version-$sget_cu_release-$sget_cu_arch.pkg.tar
+    for sget_cu_candidate in "$sget_cu_base.zst" "$sget_cu_base.xz" \
+                             "$sget_cu_base.gz" "$sget_cu_base"
+    do
+        [ -f "$sget_cu_candidate" ] && [ ! -L "$sget_cu_candidate" ] || continue
+        sget_verify_artifact_identity "$sget_cu_candidate" "$sget_cu_name" \
+            "$sget_cu_version" "$sget_cu_release" "$sget_cu_arch" \
+            "$sget_cu_hash" >/dev/null 2>&1 || continue
+        return 0
+    done
+    return 1
+}
+
+# True when mkpkg will run for this selected record.
+sget_will_compile()
+{
+    sget_wc_name=$1
+    sget_wc_version=$2
+    sget_wc_release=$3
+    sget_wc_arch=$4
+    sget_wc_hash=$5
+    sget_wc_cache=$sget_work/will-compile/$sget_wc_name
+    if [ -f "$sget_wc_cache" ]; then
+        read -r sget_wc_cached <"$sget_wc_cache"
+        return "$sget_wc_cached"
+    fi
+    if sget_read_installed "$sget_wc_name"; then
+        if ! sget_wc_cmp=$(sget_compare_selected "$sget_wc_version" \
+            "$sget_wc_release" "$sget_installed_version" \
+            "$sget_installed_release")
+        then
+            printf '%s\n' 0 >"$sget_wc_cache"
+            return 0
+        fi
+        if [ "$sget_wc_cmp" -eq 0 ] &&
+           [ "$sget_installed_arch" = "$sget_wc_arch" ] &&
+           [ "$sget_reinstall" -eq 0 ]; then
+            printf '%s\n' 1 >"$sget_wc_cache"
+            return 1
+        fi
+    fi
+    if sget_cache_usable "$sget_wc_name" "$sget_wc_version" \
+        "$sget_wc_release" "$sget_wc_arch" "$sget_wc_hash"
+    then
+        printf '%s\n' 1 >"$sget_wc_cache"
+        return 1
+    fi
+    printf '%s\n' 0 >"$sget_wc_cache"
+    return 0
+}
+
+# Runtime closure first. Add builddeps only for packages that will be
+# compiled, and skip well-known tools already on PATH.
+sget_plan_with_builddeps()
+{
+    sget_all_roots=$sget_roots
+    sget_round=0
+    mkdir -p "$sget_work/will-compile"
+    while :
+    do
+        sget_round=$((sget_round + 1))
+        [ "$sget_round" -lt 32 ] ||
+            sps_die "$SPS_EX_DEPENDENCY" "build-dependency expansion did not settle"
+        if ! awk -v action=plan -v roots="$sget_all_roots" \
+            -v include_build=0 -v program=sget \
+            -v installed="$(sget_installed_names)" \
+            -f "$SPS_LIBDIR/version.awk" -f "$SPS_LIBDIR/deps.awk" \
+            "$sps_index" >"$sget_work/resolution"
+        then
+            sps_die "$SPS_EX_DEPENDENCY" "cannot resolve requested packages"
+        fi
+        : >"$sget_work/new-build-roots"
+        while IFS="$sps_tab" read -r sget_pl_name sget_pl_recipe sget_pl_hash \
+              sget_pl_version sget_pl_release sget_pl_arch sget_pl_bdeps || \
+              [ -n "$sget_pl_name" ]
+        do
+            [ -n "$sget_pl_name" ] || continue
+            sget_will_compile "$sget_pl_name" "$sget_pl_version" \
+                "$sget_pl_release" "$sget_pl_arch" "$sget_pl_hash" || continue
+            [ -n "$sget_pl_bdeps" ] || continue
+            sget_pl_saved_ifs=$IFS
+            IFS=,
+            set -- $sget_pl_bdeps
+            IFS=$sget_pl_saved_ifs
+            for sget_pl_bdep
+            do
+                sget_pl_bdep=$(printf '%s' "$sget_pl_bdep" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                [ -n "$sget_pl_bdep" ] || continue
+                case $sget_pl_bdep in
+                    *'>='*) sget_pl_bdep=${sget_pl_bdep%%>=*} ;;
+                    *'<='*) sget_pl_bdep=${sget_pl_bdep%%<=*} ;;
+                    *'='*) sget_pl_bdep=${sget_pl_bdep%%=*} ;;
+                    *'>'*) sget_pl_bdep=${sget_pl_bdep%%>*} ;;
+                    *'<'*) sget_pl_bdep=${sget_pl_bdep%%<*} ;;
+                esac
+                [ -n "$sget_pl_bdep" ] || continue
+                case ,$sget_all_roots, in
+                    *,"$sget_pl_bdep",*) continue ;;
+                esac
+                if sget_host_build_tool "$sget_pl_bdep"; then
+                    sget_note "using host $sget_pl_bdep to build $sget_pl_name"
+                    continue
+                fi
+                printf '%s\n' "$sget_pl_bdep" >>"$sget_work/new-build-roots"
+            done
+        done <"$sget_work/resolution"
+        [ -s "$sget_work/new-build-roots" ] || return 0
+        sget_new_roots=
+        while IFS= read -r sget_pl_bdep || [ -n "$sget_pl_bdep" ]
+        do
+            [ -n "$sget_pl_bdep" ] || continue
+            case ,$sget_all_roots, in
+                *,"$sget_pl_bdep",*) continue ;;
+            esac
+            case ,$sget_new_roots, in
+                *,"$sget_pl_bdep",*) continue ;;
+            esac
+            [ -n "$sget_new_roots" ] &&
+                sget_new_roots=$sget_new_roots,$sget_pl_bdep ||
+                sget_new_roots=$sget_pl_bdep
+        done <"$sget_work/new-build-roots"
+        [ -n "$sget_new_roots" ] || return 0
+        sget_all_roots=$sget_new_roots,$sget_all_roots
+    done
+}
+
 sget_install()
 {
     sget_plan=0
@@ -323,18 +493,13 @@ sget_install()
         done
     else
         sget_note "resolving $sget_roots"
-        if ! awk -v action=plan -v roots="$sget_roots" \
-            -v include_build=1 -v program=sget \
-            -v installed="$(sget_installed_names)" \
-            -f "$SPS_LIBDIR/version.awk" -f "$SPS_LIBDIR/deps.awk" \
-            "$sps_index" >"$sget_work/resolution"; then
-            sps_die "$SPS_EX_DEPENDENCY" "cannot resolve requested packages"
-        fi
+        sget_plan_with_builddeps
     fi
 
     sget_count=0
     while IFS="$sps_tab" read -r sget_package sget_recipe sget_recipe_hash \
-          sget_version sget_release sget_arch || [ -n "$sget_package" ]
+          sget_version sget_release sget_arch sget_unused_bdeps || \
+          [ -n "$sget_package" ]
     do
         [ -n "$sget_package" ] || continue
         case $sget_arch in

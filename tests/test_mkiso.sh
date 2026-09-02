@@ -357,6 +357,8 @@ grep -q SPS_HOST_LD_LIBRARY_PATH "$project_dir/bin/mkpkg" ||
 	fail 'mkpkg must keep host gcc from loading SPS_ROOT via LD_LIBRARY_PATH'
 grep -q SPS_TARGET_LIBRARY_PATH "$project_dir/bin/mkpkg" ||
 	fail 'mkpkg must put SPS_ROOT on LD_LIBRARY_PATH for just-built test programs'
+grep -q OPENSSL_MODULES "$project_dir/bin/mkpkg" ||
+	fail 'mkpkg must point OpenSSL at SPS_ROOT providers during target builds'
 grep -q CONFIG_SITE "$project_dir/bin/mkpkg" ||
 	fail 'mkpkg must export CONFIG_SITE so autoconf sees SPS_ROOT LDFLAGS'
 grep -q 'sps_say "unpacking' "$project_dir/bin/pkin" ||
@@ -372,8 +374,8 @@ then
 else
 	fail 'extras must not list htop, btop, or tmux more than once'
 fi
-if grep -E '^(mpv|gimp|libreoffice|qemu|screen)[[:space:]]' \
+if grep -E '^(gimp|libreoffice|qemu)[[:space:]]' \
 	"$project_dir/lib/setup/extras"
 then
-	fail 'extras must not offer unpackaged names such as mpv'
+	fail 'extras must not offer unpackaged names such as GIMP or LibreOffice'
 fi

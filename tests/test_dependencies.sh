@@ -28,6 +28,7 @@ trap 'rm -rf "$tmp"' 0 1 2 3 15
 mkdir -p "$tmp/root" "$tmp/cache" "$tmp/db/installed" "$tmp/build" \
     "$tmp/repo/base" "$tmp/repo/lib" "$tmp/repo/tool" "$tmp/repo/app" \
     "$tmp/repo/left" "$tmp/repo/right" "$tmp/repo/diamond" \
+    "$tmp/repo/openssl" "$tmp/repo/cmake" "$tmp/repo/gui" \
     "$tmp/fakebin"
 : > "$tmp/sps.conf"
 printf 'repo test %s 10\n' "$tmp/repo" > "$tmp/repos.conf"
@@ -58,6 +59,9 @@ make_recipe "$tmp/repo/app" app 4.0 'depend lib>=2.0' 'builddep tool'
 make_recipe "$tmp/repo/left" left 1.0 'depend base'
 make_recipe "$tmp/repo/right" right 1.0 'depend base'
 make_recipe "$tmp/repo/diamond" diamond 1.0 'depend right left'
+make_recipe "$tmp/repo/openssl" openssl 1.0
+make_recipe "$tmp/repo/cmake" cmake 1.0 'depend openssl'
+make_recipe "$tmp/repo/gui" gui 1.0 'depend base' 'builddep cmake'
 mkdir -p "$tmp/repo/app/files" "$tmp/repo/app/patches" \
     "$tmp/repo/app/hooks"
 printf '%s\n' 'default=true' >"$tmp/repo/app/files/app.conf"
@@ -94,9 +98,24 @@ why_path=$("$sget" why diamond base)
 plan=$("$sget" install --plan app)
 plan_names=$(printf '%s\n' "$plan" |
     awk '/^  / { print $2 }')
-expected_names=$(printf '%s\n' base lib tool app)
+expected_names=$(printf '%s\n' tool base lib app)
 [ "$plan_names" = "$expected_names" ] ||
     fail "unexpected dependency order: $plan_names"
+
+if command -v cmake >/dev/null 2>&1; then
+    gui_plan=$("$sget" install --plan gui)
+    case $gui_plan in
+        *cmake*) fail 'host cmake was still planned as a build-only tool' ;;
+        *openssl*) fail 'openssl was pulled only because cmake is a builddep' ;;
+    esac
+    contains "$gui_plan" gui
+    contains "$gui_plan" base
+    gui_err=$("$sget" install --plan gui 2>&1 >/dev/null) || true
+    case $gui_err in
+        *'using host cmake to build gui'*) ;;
+        *) fail "install plan did not report using host cmake: $gui_err" ;;
+    esac
+fi
 
 nodeps_plan=$("$sget" install --plan --nodeps app)
 nodeps_names=$(printf '%s\n' "$nodeps_plan" |

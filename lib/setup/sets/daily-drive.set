@@ -1,0 +1,5 @@
+name        daily-drive
+title       Daily driver extras
+description Media player, documents, sync, clipboard, and laptop tools on top of the QoL CLI set.
+default     0
+package     daily-drive

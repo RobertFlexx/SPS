@@ -164,6 +164,14 @@ pkg-config files
 .BR LIBRARY_PATH ,
 .BR PKG_CONFIG_SYSROOT_DIR ,
 .BR CMAKE_PREFIX_PATH ).
+.B OPENSSL_MODULES
+and
+.B OPENSSL_CONF
+point at providers and
+.B openssl.cnf
+already installed in that root so a just-built Python
+.B _ssl
+module does not load the live disc's OpenSSL.
 Live
 .BR setup (1)
 installs into a mounted target with the live compiler; without this, a

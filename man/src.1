@@ -21,14 +21,19 @@ checkouts together with configured local directory repositories.
 .B update
 Clone absent Git repositories with
 .B --depth 1
-(later fetches stay full), fetch existing clean Git repositories,
-fast-forward safe tracking branches, scan configured trees, validate recipes
-and the selected dependency graph, and atomically replace the local package
-index. Invalid input leaves the previous index in place. Recipe-only packages
-are hashed without a temporary directory; a repository is parsed in one AWK
-process rather than one process per recipe.
-Progress is written to stderr for each repository, each recipe hash, Git
-clone/fetch, and index validation so a long update does not look idle.
+and
+.B --no-tags
+(later fetches stay full and also skip tags), fetch existing clean Git
+repositories, fast-forward safe tracking branches, scan configured trees,
+validate recipes and the selected dependency graph, and atomically replace
+the local package index. Invalid input leaves the previous index in place.
+Recipe-only packages are hashed in one
+.B sha256sum
+batch; a repository is parsed in one AWK process rather than one process
+per recipe. The definition digest is unchanged.
+Progress is written to stderr for each repository, Git clone/fetch, and
+index validation. Recipe hashing logs the first and last package plus every
+25th in large trees so a long update does not look idle.
 .B -q
 keeps only the final summary line on stdout.
 .TP

@@ -93,8 +93,10 @@ optional doxygen
 ```
 
 Supported operators are `=`, `<`, `<=`, `>`, and `>=`. Constraints apply to
-the upstream version, not the package release. `sget install` installs build
-dependencies while building a dependency closure. `optional` is informational
+the upstream version, not the package release. `sget install` adds a package's
+build dependencies only when that package will be compiled. Well-known tools
+already on `PATH` (cmake, ninja, meson, patch, pkgconf, python, ...) satisfy a
+builddep without installing the package. `optional` is informational
 and is not installed automatically. Low-level `mkpkg` and `pkin` do not resolve
 dependencies.
 
@@ -184,7 +186,9 @@ A real `files/` directory is copied to `$SRC/files`; a real `patches/` directory
 is copied to `$SRC/patches`. Entries must be ordinary directories or regular
 files. Symlinks, special files, and paths containing tabs or newlines are
 rejected. The repository definition digest includes support paths, contents,
-and copied modes, so run `src update` after any of them changes. Nothing is
+and copied modes, so run `src update` after any of them changes. `src update`
+batches recipe-only hashes; the digest is the same as hashing one package at
+a time. Nothing is
 applied or installed automatically.
 
 For example:

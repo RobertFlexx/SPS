@@ -206,7 +206,7 @@ esac
 # installed there. Copying host libasound onto the live ISO would only
 # paper over alsa-utils; the next package would fail the same way.
 if command -v gcc >/dev/null 2>&1; then
-	mkdir -p "$tmp/root/usr/include" "$tmp/root/usr/lib64" \
+	mkdir -p "$tmp/root/usr/include" "$tmp/root/usr/lib64/ossl-modules" \
 		"$tmp/link-recipe" "$tmp/link-out"
 	cat >"$tmp/root/usr/include/spsprobe.h" <<'EOF'
 int sps_probe_lib(void);
@@ -290,11 +290,12 @@ arch        any
 description Confirms just-built binaries load libraries from SPS_ROOT
 configure   printf '%s\n' "$LD_LIBRARY_PATH" >"$WORK/ldpath"
 configure   printf '%s\n' "$SPS_TARGET_LIBRARY_PATH" >"$WORK/targetld"
+configure   printf '%s\n' "${OPENSSL_MODULES-}" >"$WORK/osslmod"
 configure   printf '%s\n' '#include <spsprobe.h>' 'int main(void){return sps_probe_lib();}' >"$WORK/probe.c"
 configure   gcc "$WORK/probe.c" -lspsprobe -o "$WORK/probe"
 configure   "$WORK/probe"
 install     mkdir -p "$PKG/usr/share/target-runtime-lib-probe" "$PKG/usr/bin"
-install     cp "$WORK/ldpath" "$WORK/targetld" "$PKG/usr/share/target-runtime-lib-probe/"
+install     cp "$WORK/ldpath" "$WORK/targetld" "$WORK/osslmod" "$PKG/usr/share/target-runtime-lib-probe/"
 install     cp "$WORK/probe" "$PKG/usr/bin/target-runtime-lib-probe"
 install     chmod 755 "$PKG/usr/bin/target-runtime-lib-probe"
 EOF
@@ -310,6 +311,9 @@ EOF
 	assert_equal "$tmp/root/usr/lib64:$tmp/root/usr/lib:$tmp/root/lib64:$tmp/root/lib" \
 		"$(cat "$tmp/run-extract/usr/share/target-runtime-lib-probe/targetld")" \
 		"SPS_TARGET_LIBRARY_PATH was not the target libdirs"
+	assert_equal "$tmp/root/usr/lib64/ossl-modules" \
+		"$(cat "$tmp/run-extract/usr/share/target-runtime-lib-probe/osslmod")" \
+		"OPENSSL_MODULES was not the target OpenSSL provider directory"
 	[ -x "$tmp/run-extract/usr/bin/target-runtime-lib-probe" ] ||
 		fail "runtime probe binary was not staged"
 fi

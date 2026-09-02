@@ -520,7 +520,8 @@ download_http()
 	download_url=$1
 	download_dest=$2
 	if command -v curl >/dev/null 2>&1; then
-		curl -fL --progress-bar -o "$download_dest" "$download_url"
+		curl -fL --retry 3 --retry-delay 1 --progress-bar \
+			-o "$download_dest" "$download_url"
 	elif command -v wget >/dev/null 2>&1; then
 		wget -O "$download_dest" "$download_url"
 	else
@@ -725,7 +726,7 @@ write_cc_wrapper()
 	{
 		printf '%s\n' '#!/bin/sh'
 		write_host_ld_restore
-		printf 'exec %s -isystem %s -L%s -L%s -L%s -L%s -Wl,-rpath-link,%s -Wl,-rpath-link,%s "$@"\n' \
+		printf 'exec %s -isystem %s -L%s -L%s -L%s -L%s -Wl,-rpath-link,%s -Wl,-rpath-link,%s -Wl,-rpath-link,%s -Wl,-rpath-link,%s "$@"\n' \
 			"$(shell_quote "$real_cc")" \
 			"$(shell_quote "$target_inc")" \
 			"$(shell_quote "$target_root/usr/lib64")" \
@@ -733,7 +734,9 @@ write_cc_wrapper()
 			"$(shell_quote "$target_root/lib64")" \
 			"$(shell_quote "$target_root/lib")" \
 			"$(shell_quote "$target_root/usr/lib64")" \
-			"$(shell_quote "$target_root/usr/lib")"
+			"$(shell_quote "$target_root/usr/lib")" \
+			"$(shell_quote "$target_root/lib64")" \
+			"$(shell_quote "$target_root/lib")"
 	} >"$wrapper_path"
 	chmod 755 "$wrapper_path"
 }
@@ -817,6 +820,22 @@ if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
 	LD_LIBRARY_PATH=$target_libpath${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 	export CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH \
 		SPS_HOST_LD_LIBRARY_PATH SPS_TARGET_LIBRARY_PATH LD_LIBRARY_PATH
+
+	# OpenSSL 3 looks up providers by a compiled-in MODULESDIR (/usr/lib64
+	# on the live disc). A just-built _ssl.so must load the target's
+	# modules, not the live ones, or CPython renames it *_failed.so.
+	if [ -d "$target_root/usr/lib64/ossl-modules" ]; then
+		OPENSSL_MODULES=$target_root/usr/lib64/ossl-modules
+	elif [ -d "$target_root/usr/lib/ossl-modules" ]; then
+		OPENSSL_MODULES=$target_root/usr/lib/ossl-modules
+	fi
+	if [ -n "${OPENSSL_MODULES:-}" ]; then
+		export OPENSSL_MODULES
+	fi
+	if [ -f "$target_root/etc/ssl/openssl.cnf" ]; then
+		OPENSSL_CONF=$target_root/etc/ssl/openssl.cnf
+		export OPENSSL_CONF
+	fi
 
 	CPPFLAGS="$target_cflags${CPPFLAGS:+ $CPPFLAGS}"
 	CFLAGS="$target_cflags${CFLAGS:+ $CFLAGS}"
