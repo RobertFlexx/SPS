@@ -348,4 +348,42 @@ case "$(cat "$tmp/m4-extract/usr/share/target-m4-path-probe/path")" in
 	*) fail "SPS_ROOT/usr/bin was not on PATH ahead of the host" ;;
 esac
 
+# Node's configure imports subprocess through python3. The wrapper must
+# be the live interpreter, not python just installed into SPS_ROOT.
+if command -v python3 >/dev/null 2>&1; then
+	mkdir -p "$tmp/root/usr/bin" "$tmp/py-recipe" "$tmp/py-out"
+	printf '%s\n' '#!/bin/sh' 'printf TARGET\n' >"$tmp/root/usr/bin/python3"
+	chmod 755 "$tmp/root/usr/bin/python3"
+	cat >"$tmp/py-recipe/recipe" <<'EOF'
+name        host-python-wrapper-probe
+version     1.0
+release     1
+arch        any
+description Confirms PATH python3 is the live interpreter, not SPS_ROOT
+configure   command -v python3 >"$WORK/which"
+configure   python3 -c 'import os,sys; open("exe","w").write(sys.executable+"\n"); open("home","w").write((os.environ.get("PYTHONHOME") or "")+"\n")'
+install     mkdir -p "$PKG/usr/share/host-python-wrapper-probe"
+install     cp "$WORK/which" "$WORK/exe" "$WORK/home" "$PKG/usr/share/host-python-wrapper-probe/"
+install     sed -n '1,20p' "$(cat "$WORK/which")" >"$PKG/usr/share/host-python-wrapper-probe/wrap"
+EOF
+	py_artifact=$(run_mkpkg --no-download --output "$tmp/py-out" \
+		"$tmp/py-recipe/recipe") ||
+		fail "host python3 wrapper probe failed"
+	mkdir "$tmp/py-extract"
+	tar -xf "$py_artifact" -C "$tmp/py-extract"
+	py_which=$(cat "$tmp/py-extract/usr/share/host-python-wrapper-probe/which")
+	py_exe=$(cat "$tmp/py-extract/usr/share/host-python-wrapper-probe/exe")
+	py_home=$(cat "$tmp/py-extract/usr/share/host-python-wrapper-probe/home")
+	case $py_which in
+		"$tmp/root"/*) fail "python3 on PATH was the target copy ($py_which)" ;;
+	esac
+	case $py_exe in
+		"$tmp/root"/*) fail "python3 executed the target copy ($py_exe)" ;;
+	esac
+	[ -z "$py_home" ] || fail "PYTHONHOME leaked into host python3 ($py_home)"
+	grep -q 'unset PYTHONHOME PYTHONPATH' \
+		"$tmp/py-extract/usr/share/host-python-wrapper-probe/wrap" ||
+		fail "python3 wrapper must unset PYTHONHOME"
+fi
+
 printf '%s\n' 'test_build: ok'

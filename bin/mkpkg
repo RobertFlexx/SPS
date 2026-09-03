@@ -749,6 +749,11 @@ write_host_tool_wrapper()
 	{
 		printf '%s\n' '#!/bin/sh'
 		write_host_ld_restore
+		case ${wrapper_path##*/} in
+			python|python3)
+				printf '%s\n' 'unset PYTHONHOME PYTHONPATH'
+				;;
+		esac
 		printf 'exec %s "$@"\n' "$(shell_quote "$real_tool")"
 	} >"$wrapper_path"
 	chmod 755 "$wrapper_path"
@@ -855,10 +860,33 @@ if [ -n "${SPS_ROOT:-}" ] && [ "$SPS_ROOT" != / ]; then
 	export ACLOCAL_PATH
 
 	mkdir -p "$build_dir/run"
-	host_path=$PATH
+	# Host gcc/python must be the live disc's, not a copy just unpacked
+	# into SPS_ROOT. Node's configure imports subprocess; a relocated
+	# target python3 without platlibdir cannot find _posixsubprocess.
+	host_path=
+	host_path_rest=$PATH
+	while [ -n "$host_path_rest" ]
+	do
+		host_dir=${host_path_rest%%:*}
+		if [ "$host_path_rest" = "$host_dir" ]; then
+			host_path_rest=
+		else
+			host_path_rest=${host_path_rest#*:}
+		fi
+		[ -n "$host_dir" ] || continue
+		case $host_dir in
+			"$target_root"|"$target_root"/*) continue ;;
+		esac
+		if [ -n "$host_path" ]; then
+			host_path=$host_path:$host_dir
+		else
+			host_path=$host_dir
+		fi
+	done
 	if [ -n "$build_root" ]; then
-		host_path=$build_root/usr/bin:$build_root/bin:$PATH
+		host_path=$build_root/usr/bin:$build_root/bin${host_path:+:$host_path}
 	fi
+	[ -n "$host_path" ] || host_path=/usr/bin:/bin
 	host_cc=$(PATH=$host_path command -v gcc 2>/dev/null) || host_cc=
 	host_cxx=$(PATH=$host_path command -v g++ 2>/dev/null) || host_cxx=
 	host_cc_alt=$(PATH=$host_path command -v cc 2>/dev/null) || host_cc_alt=

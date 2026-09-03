@@ -178,7 +178,9 @@ dies on `sharedinstall`. Host `gcc`, `python3`, `meson`, and `git` wrappers
 restore the previous `LD_LIBRARY_PATH` so those tools do not load a
 half-installed libc from the disk. Shared libraries belong in `lib64` on
 this architecture; pass `--libdir=/usr/lib64` (or Meson's `--libdir=lib64`)
-instead of relying on Autoconf's `/usr/lib` default.
+instead of relying on Autoconf's `/usr/lib` default. CPython also needs
+`--with-platlibdir=lib64` so `lib-dynload` matches `getpath`; otherwise a
+build under `SPS_ROOT` dies with `No module named '_posixsubprocess'`.
 
 ## Local files and patches
 
