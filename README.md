@@ -122,6 +122,17 @@ Put this in `/etc/sps/repos.conf`:
 dir local /usr/local/src/sps-local 200
 git core https://github.com/RobertFlexx/sps-core.git 100
 git extra https://github.com/RobertFlexx/sps-extra.git 80
+
+# Community recipes are not enabled by default.
+# git community https://github.com/RobertFlexx/sps-community.git 50
+```
+
+`setup`, `mkiso`, and `install-config` enable core and extra only. A third
+collection, [sps-community](https://github.com/RobertFlexx/sps-community), is
+opt-in. Uncomment that git line, or add it yourself:
+
+```text
+git community https://github.com/RobertFlexx/sps-community.git 50
 ```
 
 Then synchronize Git checkouts and build the local index:

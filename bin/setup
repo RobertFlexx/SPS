@@ -1966,6 +1966,7 @@ setup_write_repos_conf()
 		else
 			printf 'git extra https://github.com/RobertFlexx/sps-extra.git 80\n'
 		fi
+		sps_print_community_repos_hint
 	} >"$setup_root/etc/sps/repos.conf" ||
 		setup_fail "$SPS_EX_PERMISSION" "cannot write target repos.conf"
 }

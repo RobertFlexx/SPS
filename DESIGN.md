@@ -132,6 +132,12 @@ Repository declarations are `git NAME SOURCE [PRIORITY]` or
 alias for `dir`. Git checkouts live below `$SPS_REPO_ROOT`, defaulting to
 `/usr/src/sps`, while directory repositories stay at their configured paths.
 
+Splux enables `core` (100) and `extra` (80). `community`
+(`https://github.com/RobertFlexx/sps-community.git`, 50) is hosted with the
+same tools but is not written as an active line by `setup`, `mkiso`, or
+`install-config`. An administrator adds `git community` to opt in. Official
+names win when both trees supply the same package.
+
 `src update` clones an absent Git checkout, fetches an existing clean checkout,
 and fast-forwards only when its configured upstream is a descendant of `HEAD`.
 It leaves detached heads, branches without an `origin` upstream, and locally

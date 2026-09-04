@@ -102,3 +102,21 @@ sps_is_live_critical_path usr/bin/sh
 ! sps_is_live_critical_path usr/bin/openssl
 
 printf '%s\n' 'usr-merge and live helper tests passed'
+
+sps_print_community_repos_hint >"$tmp/community-hint"
+grep -qx '# Community recipes are not enabled by default.' \
+	"$tmp/community-hint" || {
+	printf '%s\n' 'community hint missing explanation' >&2
+	exit 1
+}
+grep -qx '# git community https://github.com/RobertFlexx/sps-community.git 50' \
+	"$tmp/community-hint" || {
+	printf '%s\n' 'community hint missing commented git line' >&2
+	exit 1
+}
+if grep -E '^[[:space:]]*git community ' "$tmp/community-hint" >/dev/null
+then
+	printf '%s\n' 'community hint must not be an active git line' >&2
+	exit 1
+fi
+printf '%s\n' 'community repository hint tests passed'

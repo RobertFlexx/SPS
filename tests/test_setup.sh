@@ -231,8 +231,13 @@ grep -qx 'dir core /usr/src/sps/core 100' "$root_seed/etc/sps/repos.conf" ||
 	fail 'installed repos.conf must use /usr/src/sps paths'
 grep -qx 'dir extra /usr/src/sps/extra 80' "$root_seed/etc/sps/repos.conf" ||
 	fail 'installed repos.conf must keep bundled extra as a dir repo'
-if grep -q 'git ' "$root_seed/etc/sps/repos.conf"; then
+if grep -E '^[[:space:]]*git ' "$root_seed/etc/sps/repos.conf" >/dev/null; then
 	fail 'bundled live trees must not fall back to git'
+fi
+grep -F 'sps-community.git' "$root_seed/etc/sps/repos.conf" >/dev/null ||
+	fail 'installed repos.conf must document opt-in community'
+if grep -E '^[[:space:]]*git community ' "$root_seed/etc/sps/repos.conf" >/dev/null; then
+	fail 'setup must not enable community'
 fi
 
 # No bundled trees: repos.conf is git clones, and --no-update must not
@@ -259,6 +264,11 @@ grep -q 'git core https://github.com/RobertFlexx/sps-core.git' \
 grep -q 'git extra https://github.com/RobertFlexx/sps-extra.git' \
 	"$root_git/etc/sps/repos.conf" ||
 	fail 'empty live root should write git extra'
+if grep -E '^[[:space:]]*git community ' "$root_git/etc/sps/repos.conf" >/dev/null; then
+	fail 'git-fallback setup must not enable community'
+fi
+grep -F 'sps-community.git' "$root_git/etc/sps/repos.conf" >/dev/null ||
+	fail 'git-fallback repos.conf must document opt-in community'
 
 # Later plans use the real profiles, not the fixture directory.
 unset SPS_SETUP_DIR

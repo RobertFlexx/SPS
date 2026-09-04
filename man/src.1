@@ -16,6 +16,13 @@ src status [--raw]
 manages source repository metadata. It never builds or installs packages.
 It synchronizes configured Git repositories conservatively and indexes those
 checkouts together with configured local directory repositories.
+Splux writes core and extra into
+.B repos.conf
+by default. Community recipes
+.RI ( https://github.com/RobertFlexx/sps-community.git ,
+priority 50) are documented as a comment only; add
+.B git community
+to enable them.
 .SH COMMANDS
 .TP
 .B update

@@ -638,6 +638,16 @@ sps_print_default_conf()
 		'preserve etc'
 }
 
+# Comment-only. setup, mkiso, and install-config never write an active
+# community line. Administrators add `git community` themselves.
+sps_print_community_repos_hint()
+{
+	printf '%s\n' \
+		'' \
+		'# Community recipes are not enabled by default.' \
+		'# git community https://github.com/RobertFlexx/sps-community.git 50'
+}
+
 sps_load_config()
 {
 	[ "${SPS_ROOT+x}" = x ] && sps_env_root=1 || sps_env_root=0

@@ -104,6 +104,10 @@ Declare everything needed in a controlled build root. A successful build on a
 maintainer workstation is insufficient if undeclared host tools or libraries
 made it succeed.
 
+New packages that are not ready for extra belong in
+[sps-community](https://github.com/RobertFlexx/sps-community). That tree is
+opt-in. Do not reuse a `name` from core or extra.
+
 ## Architecture and release
 
 Omit `arch` for compiled packages. It then defaults to the exact configured

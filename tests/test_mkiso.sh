@@ -67,6 +67,11 @@ if [ -f "$layout/sbin/init" ]; then
 	fi
 fi
 [ -f "$layout/etc/sps/repos.conf" ] || fail 'repos.conf missing'
+if grep -E '^[[:space:]]*git community ' "$layout/etc/sps/repos.conf" >/dev/null; then
+	fail 'live ISO must not enable community'
+fi
+grep -F 'sps-community.git' "$layout/etc/sps/repos.conf" >/dev/null ||
+	fail 'live ISO repos.conf must document opt-in community'
 if [ -x "$layout/bin/busybox" ] && [ -L "$layout/bin/mkdir" ]; then
 	target=$(readlink "$layout/bin/mkdir")
 	case $target in

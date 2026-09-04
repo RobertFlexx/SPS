@@ -39,6 +39,12 @@ for required in \
 do
     [ -f "$required" ] || fail "installed file is missing: $required"
 done
+grep -F 'sps-community.git' "$image/etc/sps/repos.conf" >/dev/null ||
+    fail 'install-config repos.conf must document opt-in community'
+if grep -E '^[[:space:]]*git community ' "$image/etc/sps/repos.conf" >/dev/null
+then
+    fail 'install-config must not enable community'
+fi
 
 cp "$project_dir/examples/sps.conf" "$root/etc/sps/sps.conf"
 printf 'repo examples %s 100\n' "$project_dir/examples" >"$root/etc/sps/repos.conf"

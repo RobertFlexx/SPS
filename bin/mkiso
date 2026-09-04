@@ -1608,6 +1608,7 @@ git core https://github.com/RobertFlexx/sps-core.git 100
 git extra https://github.com/RobertFlexx/sps-extra.git 80
 EOF
 fi
+sps_print_community_repos_hint >>"$mkiso_repos"
 
 # dialog and glibc/libtinfo on every image, including --no-seed.
 if [ -f "$mkiso_libdir/live-bins" ]; then
