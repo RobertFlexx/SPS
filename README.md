@@ -30,7 +30,7 @@ the core/extra collections because that is how Splux is built and installed.
 
 If you take SPS into an LFS (or any other) project, do not assume `setup`
 will do the right thing for you. The installer partitions disks, writes
-fstab, chooses systemd or OpenRC, copies a Splux hostname, and installs
+fstab, chooses systemd or OpenRC (and **others**, copies a Splux hostname, and installs
 distro profiles. Your LFS book already has its own disk, boot, and
 configuration story. Use `sget` and `mkpkg` there; skip `setup` and `mkiso`
 unless you actually want SPS Linux on that machine.
