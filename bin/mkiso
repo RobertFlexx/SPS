@@ -333,19 +333,42 @@ mkiso_copy_gcc_deps()
 # friends, not mesonbuild. The setuptools /usr/bin/meson then dies with
 # ModuleNotFoundError, which looks like a Python error at the first
 # meson recipe (often libxml2).
+# The live root's interpreter is the /usr/bin/python3 that seed-bins
+# copies, so seed the stdlib and Meson for that same interpreter. A PATH
+# that puts a relocated python (Linuxbrew, pyenv) first must not drag the
+# seed onto a different minor version.
+mkiso_seed_python()
+{
+	for mkiso_probe in /usr/bin/python3 /usr/bin/python3.12 python3
+	do
+		mkiso_probe_cmd=$(command -v "$mkiso_probe" 2>/dev/null) || continue
+		[ -x "$mkiso_probe_cmd" ] || continue
+		printf '%s\n' "$mkiso_probe_cmd"
+		return 0
+	done
+	return 1
+}
+
 mkiso_python_version()
 {
-	python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' \
+	mkiso_py_probe=$(mkiso_seed_python) ||
+		mkiso_py_probe=/usr/bin/python3
+	"$mkiso_py_probe" -c \
+		'import sys; print("%d.%d" % sys.version_info[:2])' \
 		2>/dev/null || printf '%s\n' 3.12
 }
 
 mkiso_copy_python_stdlib()
 {
 	mkiso_pyver=$(mkiso_python_version)
+	mkiso_seeded_pylib=
 	for mkiso_pylib in /usr/lib64/python$mkiso_pyver \
 		/usr/lib/python$mkiso_pyver
 	do
 		[ -d "$mkiso_pylib" ] || continue
+		if [ -d "$mkiso_pylib/encodings" ]; then
+			mkiso_seeded_pylib=$mkiso_pylib
+		fi
 		printf '%s: copying Python %s stdlib from %s\n' \
 			"$sps_prog" "$mkiso_pyver" "$mkiso_pylib" >&2
 		for mkiso_pyent in "$mkiso_pylib"/*; do
@@ -367,6 +390,49 @@ mkiso_copy_python_stdlib()
 			done
 		fi
 	done
+	# Relocated pythons (Linuxbrew, pyenv) keep stdlib beside the
+	# interpreter, not under /usr/lib. Map it onto the standard live
+	# path so the seeded interpreter finds encodings and modules.
+	if [ -z "$mkiso_seeded_pylib" ]; then
+		mkiso_py_probe=$(mkiso_seed_python) ||
+			mkiso_py_probe=/usr/bin/python3
+		mkiso_pysrc=$("$mkiso_py_probe" -c \
+			'import sys, os; print(os.path.join(sys.base_prefix, "lib", "python%d.%d" % sys.version_info[:2]))' \
+			2>/dev/null) || mkiso_pysrc=
+		if [ -n "$mkiso_pysrc" ] && [ -d "$mkiso_pysrc" ] &&
+			[ -d "$mkiso_pysrc/encodings" ]
+		then
+			printf '%s: copying Python %s stdlib from %s\n' \
+				"$sps_prog" "$mkiso_pyver" "$mkiso_pysrc" >&2
+			mkdir -p "$mkiso_live/usr/lib/python$mkiso_pyver"
+			for mkiso_pyent in "$mkiso_pysrc"/*; do
+				[ -e "$mkiso_pyent" ] || continue
+				mkiso_pybase=${mkiso_pyent##*/}
+				case $mkiso_pybase in
+					test|idlelib|ensurepip|turtledemo|site-packages)
+						continue
+						;;
+				esac
+				cp -a --reflink=auto "$mkiso_pyent" \
+					"$mkiso_live/usr/lib/python$mkiso_pyver/" \
+					2>/dev/null ||
+					cp -a "$mkiso_pyent" \
+						"$mkiso_live/usr/lib/python$mkiso_pyver/" \
+					2>/dev/null ||
+					cp -R "$mkiso_pyent" \
+						"$mkiso_live/usr/lib/python$mkiso_pyver/" \
+					2>/dev/null || :
+			done
+			if [ -d "$mkiso_pysrc/lib-dynload" ]; then
+				for mkiso_pyso in "$mkiso_pysrc/lib-dynload"/*.so \
+					"$mkiso_pysrc/lib-dynload"/*.so.*
+				do
+					[ -e "$mkiso_pyso" ] || continue
+					mkiso_copy_libs "$mkiso_pyso"
+				done
+			fi
+		fi
+	fi
 }
 
 # Install Meson as meson.py next to mesonbuild so it does not need
@@ -375,7 +441,10 @@ mkiso_copy_python_stdlib()
 mkiso_install_meson()
 {
 	mkiso_mod=
-	mkiso_mod=$(python3 -c 'import mesonbuild, os; print(os.path.dirname(mesonbuild.__file__))' \
+	mkiso_py_probe=$(mkiso_seed_python) ||
+		mkiso_py_probe=/usr/bin/python3
+	mkiso_mod=$("$mkiso_py_probe" -c \
+		'import mesonbuild, os; print(os.path.dirname(mesonbuild.__file__))' \
 		2>/dev/null) || mkiso_mod=
 	if [ -z "$mkiso_mod" ] || [ ! -d "$mkiso_mod" ]; then
 		for mkiso_cand in \
@@ -391,10 +460,14 @@ mkiso_install_meson()
 	printf '%s: copying Meson from %s\n' "$sps_prog" "$mkiso_mod" >&2
 	mkdir -p "$mkiso_live/usr/share/meson" "$mkiso_live/usr/bin"
 	rm -rf "$mkiso_live/usr/share/meson/mesonbuild"
-	cp -a --reflink=auto "$mkiso_mod" \
+	# Homebrew and other foreign layouts symlink module files into a
+	# per-version Cellar tree. cp -a preserves those links, and a link
+	# whose target points outside the live root dangles once packed.
+	# Dereference so the seeded mesonbuild is self-contained.
+	cp -aL --reflink=auto "$mkiso_mod" \
 		"$mkiso_live/usr/share/meson/mesonbuild" 2>/dev/null ||
-		cp -a "$mkiso_mod" "$mkiso_live/usr/share/meson/mesonbuild" 2>/dev/null ||
-		cp -R "$mkiso_mod" "$mkiso_live/usr/share/meson/mesonbuild"
+		cp -aL "$mkiso_mod" "$mkiso_live/usr/share/meson/mesonbuild" 2>/dev/null ||
+		cp -LR "$mkiso_mod" "$mkiso_live/usr/share/meson/mesonbuild"
 	cat >"$mkiso_live/usr/share/meson/meson.py" <<'EOF'
 #!/usr/bin/python3
 import sys
