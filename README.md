@@ -199,8 +199,11 @@ SSH, and more. `setup --list-sets` prints them. There is also an extra-package
 checklist (`--extra`) plus locale and login-shell screens.
 
 The installer writes hostname, timezone, keymap, and a first user into the
-target, then copies bundled live recipe trees (when present), runs
-`src update`, and `sget install`. Guided partitioning is optional and waits
+target, indexes the bundled live recipe trees in place (when present), runs
+`src update`, and `sget install`. The installed system is registered with
+the official `sps-core`/`sps-extra` Git repositories, so it keeps receiving
+recipe updates after install; only the install-time indexing uses the live
+bundles. Guided partitioning is optional and waits
 until the last confirmation. Choose systemd, OpenRC, s6, runit, dinit, Shepherd, or SysV as PID 1 (`--init`); those packages conflict. `grub-install` still needs
 `--install-bootloader` and `--disk`.
 

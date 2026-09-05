@@ -1739,8 +1739,9 @@ setup_apply_config()
 	fi
 
 	setup_write_answers_file "$setup_etc/sps/setup-answers"
-	# Installed-system paths. src update during setup used $setup_root
-	# prefixes so it could index the copied trees before first boot.
+	# Installed-system paths. src update during setup used the live
+	# system's bundled trees; the installed machine tracks the official
+	# Git remotes so it keeps receiving recipe updates.
 	setup_write_repos_conf ""
 
 	if [ ! -f "$setup_etc/passwd" ]; then
@@ -1903,10 +1904,12 @@ EOF
 	fi
 }
 
-# Copy bundled live recipe trees into the target and write repos.conf so
-# src update indexes local dir repos. Live ISOs already have those trees
-# at /usr/src/sps/{core,extra}; cloning GitHub during setup is what made
-# "updating source repositories" hang or fail offline.
+# Index the live system's bundled recipe trees in place (read-only) and
+# write repos.conf so src update during setup works offline. Live ISOs
+# already have those trees at /usr/src/sps/{core,extra}; cloning GitHub
+# during setup is what made "updating source repositories" hang or fail
+# offline. The installed machine re-points to the official Git remotes so
+# it keeps receiving recipe updates after install.
 setup_tree_has_recipe()
 {
 	setup_probe=$1
@@ -1922,46 +1925,30 @@ setup_tree_has_recipe()
 setup_seed_one_tree()
 {
 	setup_seed_name=$1
-	setup_seed_src=$setup_live_root/usr/src/sps/$setup_seed_name
-	setup_seed_dest=$setup_root/usr/src/sps/$setup_seed_name
+	setup_seed_src=${setup_live_root%/}/usr/src/sps/$setup_seed_name
 	setup_tree_has_recipe "$setup_seed_src" || return 1
-	setup_seed_src_abs=$(CDPATH= cd -P "$setup_seed_src" 2>/dev/null &&
-		pwd -P) || return 1
-	if [ -d "$setup_seed_dest" ]; then
-		setup_seed_dest_abs=$(CDPATH= cd -P "$setup_seed_dest" \
-			2>/dev/null && pwd -P) || setup_seed_dest_abs=
-		if [ -n "$setup_seed_dest_abs" ] &&
-		   [ "$setup_seed_src_abs" = "$setup_seed_dest_abs" ]; then
-			return 0
-		fi
-		if setup_tree_has_recipe "$setup_seed_dest"; then
-			return 0
-		fi
-	fi
-	printf '%s: copying live %s recipes into the target\n' \
-		"$sps_prog" "$setup_seed_name" >&2
-	mkdir -p "$setup_seed_dest" || return 1
-	cp -a "$setup_seed_src"/. "$setup_seed_dest"/ || return 1
-	rm -rf "$setup_seed_dest/.git"
 	return 0
 }
 
 setup_write_repos_conf()
 {
 	setup_repos_prefix=$1
+	setup_repos_mode=${2:-installed}
 	setup_repos_core=/usr/src/sps/core
 	setup_repos_extra=/usr/src/sps/extra
-	if [ -n "$setup_repos_prefix" ]; then
+	if [ -n "$setup_repos_prefix" ] && [ "$setup_repos_prefix" != / ]; then
 		setup_repos_core=$setup_repos_prefix$setup_repos_core
 		setup_repos_extra=$setup_repos_prefix$setup_repos_extra
 	fi
 	{
-		if [ "${setup_have_core:-0}" -eq 1 ]; then
+		if [ "$setup_repos_mode" = seed ] &&
+		   [ "${setup_have_core:-0}" -eq 1 ]; then
 			printf 'dir core %s 100\n' "$setup_repos_core"
 		else
 			printf 'git core https://github.com/RobertFlexx/sps-core.git 100\n'
 		fi
-		if [ "${setup_have_extra:-0}" -eq 1 ]; then
+		if [ "$setup_repos_mode" = seed ] &&
+		   [ "${setup_have_extra:-0}" -eq 1 ]; then
 			printf 'dir extra %s 80\n' "$setup_repos_extra"
 		else
 			printf 'git extra https://github.com/RobertFlexx/sps-extra.git 80\n'
@@ -1995,12 +1982,13 @@ setup_seed_recipe_trees()
 		setup_have_extra=1
 	fi
 
-	# Paths must exist on this system during src update. apply_config
-	# rewrites them to /usr/src/sps/... for the installed machine.
-	setup_write_repos_conf "$setup_root"
+	# During setup, the live system's bundled trees must exist for src
+	# update to index them in place. apply_config later re-points the
+	# installed machine at the official Git remotes.
+	setup_write_repos_conf "${setup_live_root%/}" seed
 
 	if [ "$setup_have_core" -eq 1 ] && [ "$setup_have_extra" -eq 1 ]; then
-		printf '%s: using bundled recipes; src update indexes them locally\n' \
+		printf '%s: indexing live bundled recipes; the installed system tracks the official Git repositories\n' \
 			"$sps_prog" >&2
 	else
 		printf '%s: missing bundled recipes; src update will clone from the network\n' \

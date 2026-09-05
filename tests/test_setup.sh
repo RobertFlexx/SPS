@@ -186,7 +186,8 @@ grep -q 'wheel:.*tester' "$root_pw/etc/group" ||
 
 printf '%s\n' 'setup fixture tests passed'
 
-# Bundled live recipes: copy into the target and index locally (no Git clone).
+# Bundled live recipes: index them in place offline during setup, but the
+# installed machine re-points at the official Git repositories.
 live=$tmp/live
 mkdir -p "$live/usr/src/sps/core/hello" "$live/usr/src/sps/extra/placeholder"
 cat >"$live/usr/src/sps/core/hello/recipe" <<'EOF'
@@ -225,15 +226,15 @@ mkdir -p "$root_seed" "$db_seed" "$cache_seed" "$build_seed"
 
 [ "$(cat "$root_seed/usr/share/sps-test/hello")" = bundled ] ||
 	fail 'bundled hello was not installed'
-[ -f "$root_seed/usr/src/sps/core/hello/recipe" ] ||
-	fail 'live recipe tree was not copied into the target'
-grep -qx 'dir core /usr/src/sps/core 100' "$root_seed/etc/sps/repos.conf" ||
-	fail 'installed repos.conf must use /usr/src/sps paths'
-grep -qx 'dir extra /usr/src/sps/extra 80' "$root_seed/etc/sps/repos.conf" ||
-	fail 'installed repos.conf must keep bundled extra as a dir repo'
-if grep -E '^[[:space:]]*git ' "$root_seed/etc/sps/repos.conf" >/dev/null; then
-	fail 'bundled live trees must not fall back to git'
+if grep -E '^[[:space:]]*dir (core|extra) ' "$root_seed/etc/sps/repos.conf" >/dev/null; then
+	fail 'installed repos.conf must not keep bundled trees as dir repos'
 fi
+grep -qx 'git core https://github.com/RobertFlexx/sps-core.git 100' \
+	"$root_seed/etc/sps/repos.conf" ||
+	fail 'installed repos.conf must track git core by default'
+grep -qx 'git extra https://github.com/RobertFlexx/sps-extra.git 80' \
+	"$root_seed/etc/sps/repos.conf" ||
+	fail 'installed repos.conf must track git extra by default'
 grep -F 'sps-community.git' "$root_seed/etc/sps/repos.conf" >/dev/null ||
 	fail 'installed repos.conf must document opt-in community'
 if grep -E '^[[:space:]]*git community ' "$root_seed/etc/sps/repos.conf" >/dev/null; then
