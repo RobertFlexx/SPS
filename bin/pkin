@@ -589,6 +589,12 @@ sps_install_sps_new()
         fi
         sps_new_target=$sps_target.sps-new.$sps_version-$sps_release
     fi
+    # Never clobber a second existing default that differs from what we would
+    # write; leave it for the admin to review and drop instead of losing bytes.
+    if [ -e "$sps_new_target" ] || [ -L "$sps_new_target" ]; then
+        sps_warn "/$sps_path collision; keeping existing ${sps_new_target#${SPS_ROOT%/}}"
+        return 0
+    fi
     sps_new_parent=${sps_new_target%/*}
     sps_file_tmp=$(mktemp "$sps_new_parent/.sps-file.XXXXXX") ||
         sps_fail 8 "cannot stage preserved update for /$sps_path"

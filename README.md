@@ -274,6 +274,20 @@ package also changed its copy, the new one is written beside it as `.sps-new`
 
 SPS never attempts to merge the two files automatically.
 
+To review what a round of upgrades left for you, run:
+
+```sh
+sget config-status            # list protected files that changed locally
+sget config-status openssl    # limit the list to one package
+sget config-status --raw      # tab-separated records for scripts
+sget config-status --diff /etc/ssl/openssl.cnf   # unified diff vs the new default
+```
+
+`config-status` is read-only. It reports the local file, its installed
+package, and whether an upgrade wrote a packaged default beside it as
+`.sps-new`, so you can merge by hand before the next upgrade. `pkcheck
+--modified` remains the low-level way to see every locally-changed owned file.
+
 `pkin` is still a direct installer. `sget upgrade` starts from the explicit
 `world` set, resolves that dependency closure, and upgrades it in dependency
 order. A locally newer version is kept unless `--downgrade` is requested.

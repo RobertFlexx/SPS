@@ -379,12 +379,55 @@ sps_definition_sha256()
 	sps_definition_hash_file "$sps_definition_manifest"
 )
 
+# True when $1 is a package-relative config path whose packaged default pkin
+# wrote beside it during an upgrade (".sps-new*"). Kept in common.sh so the
+# config review command and the post-upgrade reminder share one definition.
+sps_config_review_pending()
+{
+	[ "${SPS_PRESERVE:-etc}" != none ] || return 1
+	[ -d "$SPS_DB/installed" ] && [ ! -L "$SPS_DB/installed" ] || return 1
+	sps_cr_tab=$(printf '\tX')
+	sps_cr_tab=${sps_cr_tab%X}
+	for sps_cr_record in "$SPS_DB/installed"/*; do
+		[ -d "$sps_cr_record" ] && [ ! -L "$sps_cr_record" ] || continue
+		[ -f "$sps_cr_record/hashes" ] && [ ! -L "$sps_cr_record/hashes" ] || continue
+		while IFS="$sps_cr_tab" read -r sps_cr_algo sps_cr_expected sps_cr_path \
+		      || [ -n "$sps_cr_path" ]; do
+			[ -n "$sps_cr_path" ] || continue
+			sps_is_preserved_path "$sps_cr_path" || continue
+			if sps_config_new_defaults "$sps_cr_path" | grep -q .; then
+				return 0
+			fi
+		done <"$sps_cr_record/hashes"
+	done
+	return 1
+}
+
 sps_validate_package_name()
 {
 	case ${1-} in
 		''|[!A-Za-z0-9]*|*/*|*[!A-Za-z0-9_+.-]*) return 1 ;;
 		*) return 0 ;;
 	esac
+}
+
+# Print the packaged config default that pkin wrote beside a kept local file.
+# $1 is the package-relative path. The only legal derivations are the plain
+# ".sps-new" sibling and the ".sps-new.VERSION-RELEASE" collision spelling.
+# Anything else is left for the caller to report, never followed or removed.
+sps_config_new_defaults()
+{
+	sps_default_base=$1
+	sps_default_dir=${sps_default_base%/*}
+	[ "$sps_default_dir" != "$sps_default_base" ] || sps_default_dir=
+	[ -n "$sps_default_dir" ] ||
+		sps_default_dir=.
+	case $sps_default_base in
+		*"*"*|*"?"*|*"["*|*"]"*) return 0 ;;
+	esac
+	LC_ALL=C find "$(sps_root_path /$sps_default_dir)" -maxdepth 1 \
+		-name "$(basename "$sps_default_base")"'.sps-new*' \
+		-type f ! -type l 2>/dev/null | LC_ALL=C sort
 }
 
 sps_tab_safe()

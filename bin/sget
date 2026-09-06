@@ -46,6 +46,8 @@ usage: sget [-q|--quiet] [-v|--verbose] search PATTERN [--raw]
        sget [-q|--quiet] [-v|--verbose] install [--plan] [--nodeps] [--reinstall] PACKAGE...
        sget [-q|--quiet] [-v|--verbose] upgrade [--plan] [--downgrade]
        sget [-q|--quiet] [-v|--verbose] remove [--plan] [--nodeps] PACKAGE...
+       sget [-q|--quiet] [-v|--verbose] config-status [--raw] [PACKAGE]
+       sget [-q|--quiet] [-v|--verbose] config-status --diff PATH
 EOF_USAGE
 }
 
@@ -722,6 +724,9 @@ sget_install()
         [ "$sget_upgrade_mode" -eq 1 ] && printf '%s\n' 'System packages are up to date.' ||
             printf '%s\n' 'All requested packages are already installed.'
     fi
+    if [ "${sget_plan:-0}" -eq 0 ] && sps_config_review_pending; then
+        sget_note "run 'sget config-status' to review protected configuration changes from this update"
+    fi
     sget_cleanup_install
     trap - 0 1 2 3 15
 }
@@ -860,12 +865,232 @@ sget_remove()
         pkdel "$sget_package" || exit $?
     done <"$sget_remove_work/order"
     rm -rf "$sget_remove_work"
+    if [ "$sget_remove_plan" -eq 0 ] && sps_config_review_pending; then
+        sget_note "run 'sget config-status' to review protected configuration changes"
+    fi
     sps_lock_release
     trap - 0 1 2 3 15
 }
 
 # Keep a whole sget install/upgrade/remove from interleaving with another one.
 # Low-level tools still use their shorter database lock. Queries and plans do not.
+
+# Read-only. Report protected configuration files that differ from what their
+# installed package recorded, and which of those have a packaged default that
+# an earlier upgrade wrote beside them (".sps-new*"). The admin reviews and
+# merges those by hand; nothing here writes to the filesystem.
+sget_config_status()
+{
+	sget_cs_diff=0
+	sget_cs_raw=0
+	sget_cs_scope=
+	sget_cs_nargs=0
+	while [ "$#" -gt 0 ]; do
+		case $1 in
+			--diff) sget_cs_diff=1; shift ;;
+			--raw) sget_cs_raw=1; shift ;;
+			--)
+				shift
+				while [ "$#" -gt 0 ]; do
+					sget_cs_scope=$1; sget_cs_nargs=$((sget_cs_nargs + 1)); shift
+				done
+				break
+				;;
+			-*)
+				sget_usage >&2
+				exit "$SPS_EX_USAGE"
+				;;
+			*)
+				sget_cs_scope=$1; sget_cs_nargs=$((sget_cs_nargs + 1)); shift
+				;;
+		esac
+	done
+	if [ "$sget_cs_diff" -eq 1 ]; then
+		[ "$sget_cs_nargs" -eq 1 ] ||
+			sps_die "$SPS_EX_USAGE" "config --diff takes exactly one path"
+		sps_require_cmd diff ||
+			sps_die "$SPS_EX_NOTFOUND" "diff is required for config --diff"
+	else
+		[ "$sget_cs_nargs" -le 1 ] ||
+			sps_die "$SPS_EX_USAGE" "config takes at most one package name"
+		if [ -n "$sget_cs_scope" ]; then
+			sps_validate_package_name "$sget_cs_scope" ||
+				sps_die "$SPS_EX_USAGE" "invalid package name '$sget_cs_scope'"
+		fi
+	fi
+
+	[ -d "$SPS_DB/installed" ] && [ ! -L "$SPS_DB/installed" ] ||
+		sps_die "$SPS_EX_DATABASE" "installed database is missing or is not a real directory"
+	[ -f "$SPS_DB/owners" ] && [ ! -L "$SPS_DB/owners" ] ||
+		sps_die "$SPS_EX_DATABASE" "ownership database is missing or is not a real file"
+
+	sget_cs_work=$(sps_mktemp_dir "${TMPDIR:-/tmp}" config) ||
+		sps_die "$SPS_EX_PERMISSION" "cannot create config review workspace"
+	sget_cs_cleanup()
+	{
+		rm -rf "$sget_cs_work"
+	}
+	trap 'sget_cs_cleanup' 0
+
+	# --diff accepts the plain path, the ".sps-new" sibling, or the
+	# ".sps-new.VERSION-RELEASE" spelling. Normalize to the package-relative
+	# base path before matching hash records.
+	sget_cs_want=
+	if [ "$sget_cs_diff" -eq 1 ]; then
+		case "$SPS_ROOT" in
+			/) case $sget_cs_scope in /*) sget_cs_want=${sget_cs_scope#/} ;; *) sget_cs_want=$sget_cs_scope ;; esac ;;
+			*)
+				case $sget_cs_scope in
+					"$SPS_ROOT"/*) sget_cs_want=${sget_cs_scope#"$SPS_ROOT"/} ;;
+					/*) sget_cs_want=${sget_cs_scope#/} ;;
+					*) sget_cs_want=$sget_cs_scope ;;
+				esac
+				;;
+		esac
+		sget_cs_want=${sget_cs_want%/}
+		case $sget_cs_want in
+			*.sps-new) sget_cs_want=${sget_cs_want%.sps-new} ;;
+			*.sps-new.*) sget_cs_want=${sget_cs_want%.sps-new.*} ;;
+		esac
+		[ -n "$sget_cs_want" ] ||
+			sps_die "$SPS_EX_USAGE" "invalid config path '$sget_cs_scope'"
+		if ! printf '%s\n' "$sget_cs_want" | awk -v sps_action=validate-paths \
+			-v sps_program=sget -f "$SPS_LIBDIR/package.awk"; then
+			sps_die "$SPS_EX_USAGE" "invalid config path '$sget_cs_scope'"
+		fi
+		sget_cs_owner=$(awk -v sps_action=owners-query -v sps_path="$sget_cs_want" \
+			-v sps_program=sget -f "$SPS_LIBDIR/db.awk" "$SPS_DB/owners" 2>/dev/null) || :
+		[ -n "$sget_cs_owner" ] ||
+			sps_die "$SPS_EX_NOTFOUND" "no installed package owns /$sget_cs_want"
+	fi
+
+	# Walk installed hash records for preserved paths. Config files that live
+	# under SPS_PRESERVE and changed locally are the ones an upgrade refused to
+	# overwrite, so those are the interesting cases for review.
+	: >"$sget_cs_work/rows"
+	for sget_cs_record in "$SPS_DB/installed"/*; do
+		[ -d "$sget_cs_record" ] && [ ! -L "$sget_cs_record" ] || continue
+		sget_cs_name=${sget_cs_record##*/}
+		case $sget_cs_name in .|..) continue ;; esac
+		[ -f "$sget_cs_record/hashes" ] && [ ! -L "$sget_cs_record/hashes" ] || continue
+		[ -f "$sget_cs_record/meta" ] && [ ! -L "$sget_cs_record/meta" ] || continue
+		if [ "$sget_cs_diff" -eq 0 ] && [ -n "$sget_cs_scope" ] &&
+		   [ "$sget_cs_name" != "$sget_cs_scope" ]; then
+			continue
+		fi
+		while IFS="$sps_tab" read -r sget_cs_algo sget_cs_expected sget_cs_path \
+		      || [ -n "$sget_cs_path" ]; do
+			[ -n "$sget_cs_path" ] || continue
+			if [ "$sget_cs_diff" -eq 1 ]; then
+				[ "$sget_cs_path" = "$sget_cs_want" ] || continue
+			fi
+			sps_is_preserved_path "$sget_cs_path" || continue
+			sget_cs_target=$(sps_root_path "/$sget_cs_path")
+			sget_cs_state=clean
+			if [ -f "$sget_cs_target" ] && [ ! -L "$sget_cs_target" ]; then
+				sget_cs_live=$(sps_sha256 "$sget_cs_target") || sget_cs_live=
+				set -- $sget_cs_live
+				sget_cs_live=$1
+				if [ -n "$sget_cs_live" ] && [ "$sget_cs_live" != "$sget_cs_expected" ]; then
+					sget_cs_state=modified
+				fi
+			elif [ "$sget_cs_diff" -eq 1 ]; then
+				sget_cs_state=missing
+			else
+				continue
+			fi
+			sget_cs_defaults=$(sps_config_new_defaults "$sget_cs_path")
+			sget_cs_has_default=0
+			for sget_cs_def in $sget_cs_defaults; do
+				[ -n "$sget_cs_def" ] && sget_cs_has_default=1
+			done
+			printf '%s\t%s\t%s\t%s\n' \
+				"$sget_cs_name" "$sget_cs_path" "$sget_cs_state" \
+				"$sget_cs_has_default" >>"$sget_cs_work/rows"
+		done <"$sget_cs_record/hashes"
+	done
+	LC_ALL=C sort "$sget_cs_work/rows" | LC_ALL=C uniq >"$sget_cs_work/rows.sorted"
+	mv -f "$sget_cs_work/rows.sorted" "$sget_cs_work/rows"
+
+	if [ "$sget_cs_diff" -eq 1 ]; then
+		sget_cs_found=0
+		sget_cs_state=clean
+		while IFS="$sps_tab" read -r sget_cs_name sget_cs_path sget_cs_state \
+		     sget_cs_has_default; do
+			[ -n "$sget_cs_name" ] || continue
+			sget_cs_found=1
+		done <"$sget_cs_work/rows"
+		[ "$sget_cs_found" -eq 1 ] ||
+			sps_die "$SPS_EX_NOTFOUND" "/$sget_cs_want is not a managed protected config file"
+		sget_cs_live_path=$(sps_root_path "/$sget_cs_want")
+		sget_cs_defaults=$(sps_config_new_defaults "$sget_cs_want")
+		sget_cs_first=0
+		if [ "$sget_cs_state" = missing ]; then
+			sget_cs_first=1
+			printf '%s\n' "# /$sget_cs_want (owned by $sget_cs_owner)"
+			printf '%s\n' 'The local file is missing.'
+			for sget_cs_default in $sget_cs_defaults; do
+				[ -f "$sget_cs_default" ] && [ ! -L "$sget_cs_default" ] || continue
+				diff -u /dev/null "$sget_cs_default"
+			done
+			[ -n "$sget_cs_defaults" ] ||
+				printf '%s\n' 'No packaged default (.sps-new) is present for this file.'
+			exit 0
+		fi
+		for sget_cs_default in $sget_cs_defaults; do
+			[ -f "$sget_cs_default" ] && [ ! -L "$sget_cs_default" ] || continue
+			if [ "$sget_cs_first" -eq 0 ]; then
+				printf '%s\n' "# /$sget_cs_want (owned by $sget_cs_owner)"
+				printf '%s\n' 'Local file versus packaged default (written as .sps-new during an upgrade):'
+				sget_cs_first=1
+			fi
+			diff -u "$sget_cs_live_path" "$sget_cs_default"
+		done
+		if [ "$sget_cs_first" -eq 0 ]; then
+			printf '%s\n' "# /$sget_cs_want (owned by $sget_cs_owner)"
+			printf '%s\n' 'No packaged default (.sps-new) is present for this file.'
+		fi
+		exit 0
+	fi
+
+	sget_cs_any=0
+	sget_cs_pending=0
+	if [ -s "$sget_cs_work/rows" ]; then
+		while IFS="$sps_tab" read -r sget_cs_name sget_cs_path sget_cs_state \
+		     sget_cs_has_default; do
+			[ -n "$sget_cs_name" ] || continue
+			case $sget_cs_state in
+				modified)
+					sget_cs_pending=$((sget_cs_pending + 1))
+					if [ "$sget_cs_has_default" -eq 1 ]; then
+						sget_cs_label='new packaged default available'
+					else
+						sget_cs_label='modified locally'
+					fi
+					;;
+				*)
+					[ "$sget_cs_has_default" -eq 1 ] || continue
+					sget_cs_label='matches package; .sps-new left over'
+					;;
+			esac
+			sget_cs_any=1
+			if [ "$sget_cs_raw" -eq 1 ]; then
+				printf '%s\t%s\t%s\t%s\n' \
+					"$sget_cs_name" "$sget_cs_path" "$sget_cs_state" \
+					"$sget_cs_has_default"
+			else
+				printf '%-18s  /%-32s  %s\n' \
+					"$sget_cs_name" "$sget_cs_path" "$sget_cs_label"
+			fi
+		done <"$sget_cs_work/rows"
+	fi
+	if [ "$sget_cs_any" -eq 0 ] && [ "$sget_cs_raw" -eq 0 ]; then
+		printf '%s\n' 'no protected configuration changes found'
+	fi
+	printf '%s\n' "summary: $sget_cs_pending config file(s) differ from their packaged default" >&2
+	exit 0
+}
+
 sget_quiet=0
 sget_verbose=0
 while [ "$#" -gt 0 ]; do
@@ -914,6 +1139,8 @@ case ${1-} in
         shift; sget_upgrade "$@" ;;
     remove)
         shift; sget_remove "$@" ;;
+    config-status)
+        shift; sget_config_status "$@" ;;
     -h|--help)
         sget_usage ;;
     *)

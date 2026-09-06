@@ -308,6 +308,30 @@ installed package:
 
 SPS reports the situation and leaves merging to the administrator.
 
+### Reviewing protected-file updates
+
+`sget config-status` is a read-only review of protected files. It walks the
+installed hashes for paths under `SPS_PRESERVE`, hashes the live file, and
+reports:
+
+- a file that differs from its recorded digest (locally modified), with a flag
+  when an upgrade also wrote a packaged default beside it as `.sps-new` or
+  `.sps-new.VERSION-RELEASE`; and
+- a `.sps-new*` sibling left next to a file that matches its recorded digest
+  (the packaged default changed while the admin later returned the file to the
+  packaged content, or the sibling was never cleaned up).
+
+`config-status --diff PATH` prints `diff -u` between the live local file and
+the packaged default sibling. `--raw` prints `name`, package-relative `path`,
+`clean`/`modified`, and a `0`/`1` pending-default flag as sorted,
+tab-separated records. The command never writes, merges, renames, or removes
+files; merging belongs to the administrator.
+
+`.sps-new*` file names are not package state and SPS never parses them as one.
+The review finds them on the filesystem next to recorded hash paths, which is
+why the collision-proofing in `pkin` (`.sps-new`, then a versioned spelling)
+keeps review deterministic.
+
 ## Binary package cache
 
 `sget` stores completed package artifacts under `$SPS_CACHE/packages`.

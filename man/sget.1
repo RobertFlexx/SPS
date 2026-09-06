@@ -11,6 +11,8 @@ sget [-q|--quiet] [-v|--verbose] why PACKAGE DEPENDENCY [--build]
 sget [-q|--quiet] [-v|--verbose] install [--plan] [--nodeps] [--reinstall] PACKAGE...
 sget [-q|--quiet] [-v|--verbose] upgrade [--plan] [--downgrade]
 sget [-q|--quiet] [-v|--verbose] remove [--plan] [--nodeps] PACKAGE...
+sget [-q|--quiet] [-v|--verbose] config-status [--raw] [PACKAGE]
+sget [-q|--quiet] [-v|--verbose] config-status --diff PATH
 .fi
 .SH DESCRIPTION
 .B sget
@@ -91,6 +93,38 @@ Remove packages through
 .BR pkdel (1).
 By default SPS refuses a removal when another installed package outside the
 requested removal set directly requires it.
+.TP
+.BI "config-status [" "package" "]"
+Review protected configuration files without changing them.  SPS protects
+regular files below the configured
+.B SPS_PRESERVE
+prefixes (default
+.BR etc ).
+When an administrator has changed such a file and an upgrade brings a new
+packaged copy, SPS keeps the local file and writes the packaged default beside
+it as
+.IR path .sps-new
+(or the versioned
+.IR path .sps-new. VERSION - RELEASE
+spelling).  Without arguments,
+.B config-status
+lists every protected file that differs from what its installed package
+recorded, plus stale
+.B .sps-new
+files, grouped by package.  Pass a package name to narrow to one package.
+The command is read-only: it never rewrites, merges, or removes files.
+.TP
+.BI "config-status --diff " path
+Print a unified diff of a protected local file against the packaged default
+that an upgrade wrote beside it.  The
+.I path
+may be the plain path, the
+.I .sps-new
+sibling, or the versioned
+.I .sps-new.VERSION-RELEASE
+spelling.
+.B diff (1)
+must be installed.  Like the list form, this only reads files.
 .SH OPTIONS
 .TP
 .BR -q ", " --quiet
@@ -120,6 +154,17 @@ override.
 .B --reinstall
 With install, rebuild/reinstall an exact selected package when necessary;
 an exact cached binary artifact may be reused.
+.TP
+.B --raw
+With
+.B config-status
+(and the query commands), print stable tab-separated records instead of
+aligned human-readable output, suitable for scripts.  The
+.B config-status
+records are:
+.IR "package" , "path" , "state" ,
+and a flag for whether a packaged default is pending.  A summary line still
+goes to standard error.
 .TP
 .B --downgrade
 With upgrade, permit the configured repository selection to replace a newer
