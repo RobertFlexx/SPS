@@ -216,7 +216,7 @@ until the last confirmation. Choose systemd, OpenRC, s6, runit, dinit, Shepherd,
 console, mount a destination filesystem on `/mnt`, and run `setup`. Ready-made
 images:
 
-https://github.com/RobertFlexx/SPS/releases/tag/live-2026-09-04-1
+https://github.com/RobertFlexx/SPS/releases/tag/live-2026-09-06-1
 
 ```sh
 mkiso --output dist/sps-live.iso --init systemd \
