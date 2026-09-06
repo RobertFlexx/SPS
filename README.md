@@ -1,6 +1,9 @@
 # SPS Source Package System
 
 ## SPS is currently under active testing and development, usage is not recommended if you arent a tester.
+
+> ***SPS*** **is solo developed, and small amounts of AI is used (for debugging, releases, testing)! it is in slow, but fast development. patience is a virtue, people!**
+
 ----------------------------------------
 
 SPS is a source package system for small, administrator-run Unix-like systems.
