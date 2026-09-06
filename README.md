@@ -2,7 +2,7 @@
 
 ## SPS is currently under active testing and development, usage is not recommended if you arent a tester.
 
-> ***SPS*** **is solo developed, and small amounts of AI is used (for debugging, releases, testing)! it is in slow, but fast development. patience is a virtue, people!**
+> ***SPS*** **is solo developed, and a small amount of AI is used (for debugging, releases, testing)! it is in slow, but fast development. patience is a virtue, people!**
 
 ----------------------------------------
 
